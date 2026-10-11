@@ -27,6 +27,14 @@ type Producer struct {
 
 const diagnosticPublishedAtHeader = "im_diag_published_at_unix_nano"
 
+type producerMessageMetadata struct {
+	ID         string
+	LockToken  string
+	RetryCount int
+	EventType  string
+	CreatedAt  time.Time
+}
+
 func NewProducer(
 	client *Client,
 	router *TopicRouter,
@@ -197,36 +205,40 @@ func (p *Producer) dispatchBatch(ctx context.Context, items []*outboxport.Entry)
 		return err
 	}
 	messages := make([]*sarama.ProducerMessage, 0, len(items))
-	successMessages := make([]outboxport.Lease, 0)
-	retryMessages := make([]outboxport.RetryUpdate, 0)
-	deadMessages := make([]outboxport.DeadUpdate, 0)
+	sent := make([]outboxport.Lease, 0)
+	retry := make([]outboxport.RetryUpdate, 0)
+	dead := make([]outboxport.DeadUpdate, 0)
 	failedAt := time.Now()
-	collectFailure := func(item *outboxport.Entry, lastError string) {
-		lease := outboxport.Lease{ID: item.ID, LockToken: item.LockToken}
-		if item.RetryCount >= p.options.MaxRetries {
-			deadMessages = append(deadMessages, outboxport.DeadUpdate{Lease: lease, LastError: lastError})
+	collectFailure := func(metadata producerMessageMetadata, lastError string) {
+		lease := outboxport.Lease{ID: metadata.ID, LockToken: metadata.LockToken}
+		if metadata.RetryCount >= p.options.MaxRetries {
+			dead = append(dead, outboxport.DeadUpdate{Lease: lease, LastError: lastError})
 			return
 		}
-		retryDelay := min(time.Duration(float64(time.Duration(p.options.BaseRetryWaitSeconds)*time.Second)*math.Pow(2, float64(item.RetryCount))), 5*time.Minute)
-		retryMessages = append(retryMessages, outboxport.RetryUpdate{Lease: lease, NextRetryAt: failedAt.Add(retryDelay), LastError: lastError})
+		retryDelay := min(time.Duration(float64(time.Duration(p.options.BaseRetryWaitSeconds)*time.Second)*math.Pow(2, float64(metadata.RetryCount))), 5*time.Minute)
+		retry = append(retry, outboxport.RetryUpdate{Lease: lease, NextRetryAt: failedAt.Add(retryDelay), LastError: lastError})
 	}
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
+		metadata := producerMessageMetadata{
+			ID: item.ID, LockToken: item.LockToken, RetryCount: item.RetryCount,
+			EventType: item.EventType, CreatedAt: item.CreatedAt,
+		}
 		message, err := p.newProducerMessage(eventbus.IntegrationEvent{
 			EventID: item.ID, Name: item.EventType, PartitionKey: item.MessageKey, Payload: item.Payload,
 		})
 		if err != nil {
-			log.Printf("构造 Kafka 消息失败：event_id=%s err=%v", item.ID, err)
-			collectFailure(item, err.Error())
+			log.Printf("构造 Kafka 消息失败：event_id=%s err=%v", metadata.ID, err)
+			collectFailure(metadata, err.Error())
 			continue
 		}
-		message.Metadata = item
+		message.Metadata = metadata
 		messages = append(messages, message)
 	}
 	if len(messages) == 0 {
-		return p.markBatchResults(ctx, successMessages, retryMessages, deadMessages)
+		return p.markBatchResults(ctx, sent, retry, dead)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -246,45 +258,45 @@ func (p *Producer) dispatchBatch(ctx context.Context, items []*outboxport.Entry)
 
 	// 批量投递后需要逐条分析哪个消息没有投递成功
 	for _, message := range messages {
-		item := message.Metadata.(*outboxport.Entry)
+		metadata := message.Metadata.(producerMessageMetadata)
 
 		publishErr := batchErrs
 		if partialFailure {
 			publishErr = failedMessages[message]
 		}
 		createdAge := time.Duration(0)
-		if !item.CreatedAt.IsZero() {
-			createdAge = publishStartedAt.Sub(item.CreatedAt)
+		if !metadata.CreatedAt.IsZero() {
+			createdAge = publishStartedAt.Sub(metadata.CreatedAt)
 		}
 		if publishErr != nil {
-			diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=failed_pending_update error=%q", item.ID, item.EventType, createdAge.Milliseconds(), publishDuration.Microseconds(), publishErr.Error())
-			collectFailure(item, publishErr.Error())
+			diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=failed_pending_update error=%q", metadata.ID, metadata.EventType, createdAge.Milliseconds(), publishDuration.Microseconds(), publishErr.Error())
+			collectFailure(metadata, publishErr.Error())
 			continue
 		}
-		diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=published_pending_mark_sent", item.ID, item.EventType, createdAge.Milliseconds(), publishDuration.Microseconds())
-		successMessages = append(successMessages, outboxport.Lease{ID: item.ID, LockToken: item.LockToken})
+		diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=published_pending_mark_sent", metadata.ID, metadata.EventType, createdAge.Milliseconds(), publishDuration.Microseconds())
+		sent = append(sent, outboxport.Lease{ID: metadata.ID, LockToken: metadata.LockToken})
 	}
-	return p.markBatchResults(ctx, successMessages, retryMessages, deadMessages)
+	return p.markBatchResults(ctx, sent, retry, dead)
 }
 
-func (p *Producer) markBatchResults(ctx context.Context, successMessages []outboxport.Lease, retryMessages []outboxport.RetryUpdate, deadMessages []outboxport.DeadUpdate) error {
+func (p *Producer) markBatchResults(ctx context.Context, sent []outboxport.Lease, retry []outboxport.RetryUpdate, dead []outboxport.DeadUpdate) error {
 	var result error
-	if len(successMessages) > 0 {
+	if len(sent) > 0 {
 		startedAt := time.Now()
-		err := p.repository.MarkSentBatch(ctx, successMessages, startedAt)
-		diagnostics.Logf("stage=producer_mark_sent_batch size=%d update_us=%d error=%v", len(successMessages), time.Since(startedAt).Microseconds(), err)
+		err := p.repository.MarkSentBatch(ctx, sent, startedAt)
+		diagnostics.Logf("stage=producer_mark_sent_batch size=%d update_us=%d error=%v", len(sent), time.Since(startedAt).Microseconds(), err)
 		result = errors.Join(result, err)
 	}
-	if len(retryMessages) > 0 {
+	if len(retry) > 0 {
 		startedAt := time.Now()
-		err := p.repository.MarkRetryBatch(ctx, retryMessages)
-		diagnostics.Logf("stage=producer_mark_retry_batch size=%d update_us=%d error=%v", len(retryMessages), time.Since(startedAt).Microseconds(), err)
+		err := p.repository.MarkRetryBatch(ctx, retry)
+		diagnostics.Logf("stage=producer_mark_retry_batch size=%d update_us=%d error=%v", len(retry), time.Since(startedAt).Microseconds(), err)
 		result = errors.Join(result, err)
 	}
-	if len(deadMessages) > 0 {
+	if len(dead) > 0 {
 		startedAt := time.Now()
-		err := p.repository.MarkDeadBatch(ctx, deadMessages)
-		diagnostics.Logf("stage=producer_mark_dead_batch size=%d update_us=%d error=%v", len(deadMessages), time.Since(startedAt).Microseconds(), err)
+		err := p.repository.MarkDeadBatch(ctx, dead)
+		diagnostics.Logf("stage=producer_mark_dead_batch size=%d update_us=%d error=%v", len(dead), time.Since(startedAt).Microseconds(), err)
 		result = errors.Join(result, err)
 	}
 	return result
