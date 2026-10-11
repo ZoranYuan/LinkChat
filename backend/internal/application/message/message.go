@@ -689,30 +689,29 @@ func (ma *MessageApplication) validateMessageCType(dto SendMessageDTO) error {
 // HandleSendMessage 在请求内提交消息、会话序号和 Outbox，提交成功后返回 ACK。
 func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMessageDTO) (*MessageAckDTO, error) {
 	failedAck := &MessageAckDTO{ClientMessageID: dto.ClientMessageID, Status: string(protocol.AckStatusFailed)}
-	fail := func(err error) (*MessageAckDTO, error) { return failedAck, err }
 	if err := ctx.Err(); err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 	if ma == nil || ma.txManager == nil || ma.messageOutboxRepository == nil {
-		return fail(errors.New("消息出箱组件未配置"))
+		return failedAck, errors.New("消息出箱组件未配置")
 	}
 	conversationId := conversationentity.GetConversationID(dto.SenderID, dto.ReceiverID, dto.ConversationType)
 	dto.ConversationID = conversationId
 
 	if err := ma.validateMessageCType(dto); err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 
 	requestHash, err := buildMessageRequestHash(dto)
 	if err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 
 	// Redis 加速重试检查；数据库唯一约束负责缓存失效和并发请求下的幂等。
 	if dto.ClientMessageID != "" && ma.messageCache != nil {
 		if entry, err := ma.messageCache.GetDedupEntry(ctx, dto.SenderID, dto.ClientMessageID); err == nil && entry.MessageID != "" {
 			if entry.RequestHash != requestHash {
-				return fail(messageentity.ErrClientMessageConflict)
+				return failedAck, messageentity.ErrClientMessageConflict
 			}
 
 			if entry.ConversationID != "" && entry.Seq > 0 {
@@ -730,16 +729,16 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMes
 	}
 
 	if err := ma.checkConvMember(ctx, dto); err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 
 	if err := ma.normalizeMediaDTO(ctx, &dto); err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 
 	messageId, err := ma.idGenerator.Generate()
 	if err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 
 	messageType := messagevo.CType(dto.Type)
@@ -760,7 +759,7 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMes
 	failedAck.MessageID = messageId
 	mediaWriter, err := ma.buildMediaWriter(&dto, messageId)
 	if err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 
 	userConv := conversationentity.BuildUserConversation(
@@ -879,7 +878,7 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMes
 		existing, findErr := ma.messageRepository.FindByClientMsgID(ctx, dto.SenderID, dto.ClientMessageID)
 		if findErr == nil && existing != nil {
 			if !sameClientMessage(dto, existing, requestHash) {
-				return fail(messageentity.ErrClientMessageConflict)
+				return failedAck, messageentity.ErrClientMessageConflict
 			}
 			result := ma.existingMessageResult(ctx, dto, existing)
 			if result != nil && ma.messageCache != nil {
@@ -900,7 +899,7 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMes
 	}
 
 	if err != nil {
-		return fail(err)
+		return failedAck, err
 	}
 
 	// 标记已处理，5 分钟内同一 clientMsgId 幂等返回
@@ -928,7 +927,6 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMes
 }
 
 // existingMessageResult 将数据库中的已有消息转换成幂等请求的返回值。
-// ACK 只依赖消息主表和附件关联，不需要查询文件元数据或生成访问 URL。
 func (ma *MessageApplication) existingMessageResult(
 	ctx context.Context,
 	dto SendMessageDTO,
