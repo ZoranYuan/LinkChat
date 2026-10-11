@@ -1,6 +1,7 @@
 package room
 
 import (
+	roomentity "IM_backend/internal/domain/room/entity"
 	roomvo "IM_backend/internal/domain/room/value_object"
 	"IM_backend/internal/shared/protocol"
 	"context"
@@ -43,4 +44,11 @@ type RoomMemberCache interface {
 	SetMemberIfVersionGreater(ctx context.Context, roomID, userID string, state *MemberState) (bool, error)
 	SetMemberNotFound(ctx context.Context, roomID, userID string) error
 	DeleteMember(ctx context.Context, roomID, userID string) error
+}
+
+// RoomInfoCache 缓存房间相对稳定的基础信息；成员总数变化后由应用层主动失效。
+type RoomInfoCache interface {
+	GetRoomInfo(ctx context.Context, roomID string) (*roomentity.Room, bool, error)
+	SetRoomInfo(ctx context.Context, room *roomentity.Room, ttl time.Duration) error
+	DeleteRoomInfo(ctx context.Context, roomID string) error
 }

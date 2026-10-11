@@ -16,6 +16,7 @@ import (
 	filerepo "IM_backend/internal/application/ports/persistence/repository/file"
 	messagerepo "IM_backend/internal/application/ports/persistence/repository/message"
 	roomrepo "IM_backend/internal/application/ports/persistence/repository/room"
+	roomapp "IM_backend/internal/application/room"
 	conversationentity "IM_backend/internal/domain/conversation/entity"
 	fileentity "IM_backend/internal/domain/file/entity"
 	messageentity "IM_backend/internal/domain/message/entity"
@@ -128,6 +129,40 @@ func TestSendMessageRollbackAndDuplicateDoNotRecordActivity(t *testing.T) {
 		}
 		if cache.records != 0 || len(cache.warmed) != 0 {
 			t.Fatal("rollback and duplicate must not update activity or warm cache")
+		}
+	}
+}
+
+func TestRoomActiveHoldContinuesWarmupAndDoesNotRenewOnNormalOrError(t *testing.T) {
+	for _, activityErr := range []error{nil, errors.New("Redis unavailable")} {
+		app, tx, _, _, _ := newSendTestApplication()
+		tx.committed.Store(true)
+		app.roomRepository = sendTestRoomRepository{members: 10}
+		app.config.Message.RoomRealtimeFanoutLimit = 500
+		cache := &sendTestRoomCache{tx: tx, level: roomcache.RoomActivityActive}
+		app.roomCache = cache
+		event := protocol.MessageEvent{ConvType: protocol.RoomChat, ConversationId: "room", Seq: 1}
+		app.warmRoomMessageCache(context.Background(), event)
+		if !app.roomActivityState.IsActive("room", time.Now()) {
+			t.Fatal("ACTIVE must immediately mark shared state")
+		}
+		// 用公开接口设置剩余一分钟的标识，验证 NORMAL 和统计失败不会将其续期。
+		now := time.Now()
+		app.roomActivityState = roomapp.NewRoomActivityState(2 * time.Minute)
+		app.roomActivityState.MarkActive("room", now.Add(-time.Minute))
+		cache.level, cache.activityErr = roomcache.RoomActivityNormal, activityErr
+		event.Seq = 2
+		app.warmRoomMessageCache(context.Background(), event)
+		if cache.records != 2 || len(cache.warmed) != 2 {
+			t.Fatal("hold must preserve per-message activity checks and warmup")
+		}
+		if app.roomActivityState.IsActive("room", now.Add(90*time.Second)) {
+			t.Fatal("NORMAL or activity error must not renew ACTIVE")
+		}
+		event.Seq = 3
+		app.warmRoomMessageCache(context.Background(), event)
+		if cache.records != 3 || len(cache.warmed) != 2 {
+			t.Fatal("expired small room must stop warmup when not WARN/ACTIVE")
 		}
 	}
 }
@@ -258,7 +293,8 @@ func newSendTestApplication() (*MessageApplication, *sendTestTransaction, *sendT
 	outbox := &sendTestOutbox{tx: tx}
 	notifier := &sendTestNotifier{tx: tx}
 	return &MessageApplication{
-		txManager: tx, idGenerator: &sendTestIDs{}, roomMemberCache: sendTestMembers{},
+		roomActivityState: roomapp.NewRoomActivityState(2 * time.Minute),
+		txManager:         tx, idGenerator: &sendTestIDs{}, roomMemberCache: sendTestMembers{},
 		messageRepository: messages, conversationRepository: &sendTestConversations{tx: tx},
 		userConversationRepository: &sendTestUserConversations{tx: tx},
 		messageOutboxRepository:    outbox, producerNotifier: notifier,

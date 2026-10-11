@@ -40,6 +40,17 @@ func (rr *RoomRepository) FindActiveRoom(roomId string, status int) (*roomentity
 	return toDomain(m), nil
 }
 
+func (rr *RoomRepository) FindByID(ctx context.Context, roomID string) (*roomentity.Room, error) {
+	var m model.Room
+	if err := rr.db.WithContext(ctx).Where("room_id = ?", roomID).First(&m).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, roomentity.ErrRoomNotFound
+		}
+		return nil, err
+	}
+	return toDomain(m), nil
+}
+
 func (rr *RoomRepository) IncrementMemberCount(ctx context.Context, roomId string, status int) (bool, error) {
 	result := rr.db.WithContext(ctx).
 		Model(&model.Room{}).

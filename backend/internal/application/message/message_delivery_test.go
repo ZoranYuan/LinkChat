@@ -7,8 +7,90 @@ import (
 	"testing"
 	"time"
 
+	"IM_backend/configs"
+	roomcache "IM_backend/internal/application/ports/persistence/cache/room"
+	roomapp "IM_backend/internal/application/room"
 	"IM_backend/internal/shared/protocol"
 )
+
+type policyTestRealtime struct{ calls int }
+
+func (*policyTestRealtime) DeliverToUser(string, string, []byte) error { return nil }
+func (d *policyTestRealtime) DeliverToOnlineRoomMembers(string, string, []byte, string) error {
+	d.calls++
+	return nil
+}
+
+func TestDeliveryUsesLocalActiveHoldAndKeepsLargeRoomsPulling(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		members  int
+		markedAt time.Duration
+		marked   bool
+		wantPull bool
+	}{
+		{name: "normal", members: 10},
+		{name: "active", members: 10, marked: true, wantPull: true},
+		{name: "expired", members: 10, marked: true, markedAt: -3 * time.Minute},
+		{name: "large_expired", members: 501, marked: true, markedAt: -3 * time.Minute, wantPull: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := roomapp.NewRoomActivityState(2 * time.Minute)
+			if test.marked {
+				state.MarkActive("room", time.Now().Add(test.markedAt))
+			}
+			realtime := &policyTestRealtime{}
+			delivery := NewMessageDelivery(realtime, sendTestRoomRepository{members: test.members}, state,
+				configs.MessageConfig{RoomRealtimeFanoutLimit: 500, LargeRoomNoticeLingerMilliseconds: 3600000, LargeRoomNoticeShardCount: 1})
+			t.Cleanup(func() { delivery.Close(context.Background()) })
+			err := delivery.Deliver(context.Background(), protocol.EventTypeSendMessage, "room",
+				protocol.Envelope{From: "sender", Payload: []byte(`{}`)},
+				protocol.MessageEvent{ConvType: protocol.RoomChat, ConversationId: "room", Seq: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (realtime.calls == 0) != test.wantPull {
+				t.Fatalf("pull=%v immediate fanout calls=%d", test.wantPull, realtime.calls)
+			}
+			if test.wantPull {
+				delivery.messageBatcher.shards[0].flush(context.Background())
+				if realtime.calls != 1 {
+					t.Fatal("pull notice was not delivered")
+				}
+			}
+		})
+	}
+}
+
+func TestCommittedActiveMessageImmediatelyChangesConsumerPolicy(t *testing.T) {
+	app, tx, _, _, _ := newSendTestApplication()
+	cache := &sendTestRoomCache{tx: tx, level: roomcache.RoomActivityActive}
+	app.roomCache = cache
+	app.roomRepository = sendTestRoomRepository{members: 10}
+	app.config.Message.RoomRealtimeFanoutLimit = 500
+	realtime := &policyTestRealtime{}
+	delivery := NewMessageDelivery(realtime, app.roomRepository, app.roomActivityState,
+		configs.MessageConfig{RoomRealtimeFanoutLimit: 500, LargeRoomNoticeLingerMilliseconds: 3600000, LargeRoomNoticeShardCount: 1})
+	t.Cleanup(func() { delivery.Close(context.Background()) })
+	ack, err := app.HandleSendMessage(context.Background(), sendTestDTO())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cache.warmed) != 1 || cache.warmed[0].Seq != ack.Seq {
+		t.Fatal("committed ACTIVE message was not warmed")
+	}
+	if err := delivery.Deliver(context.Background(), protocol.EventTypeSendMessage, "room",
+		protocol.Envelope{From: "sender", Payload: []byte(`{}`)}, cache.warmed[0]); err != nil {
+		t.Fatal(err)
+	}
+	if realtime.calls != 0 {
+		t.Fatal("consumer failed to observe sender's shared ACTIVE state")
+	}
+	delivery.messageBatcher.shards[0].flush(context.Background())
+	if realtime.calls != 1 {
+		t.Fatal("shared ACTIVE state did not produce a pull notice")
+	}
+}
 
 type noticeTestDelivery func(string, string, []byte, string) error
 

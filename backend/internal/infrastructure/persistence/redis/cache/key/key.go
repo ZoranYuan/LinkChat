@@ -53,6 +53,10 @@ func RoomInvite(roomId string) string {
 	return Build("room", roomId, "invite")
 }
 
+func RoomInfo(roomID string) string {
+	return Build("room", roomID, "info")
+}
+
 func RoomMember(roomID, userID string) string {
 	return Build("room", roomID, "member", "v2", userID)
 }

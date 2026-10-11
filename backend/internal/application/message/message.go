@@ -20,6 +20,7 @@ import (
 	txmanager "IM_backend/internal/application/ports/persistence/tx_manager"
 	"IM_backend/internal/application/ports/realtime"
 	objectstorage "IM_backend/internal/application/ports/storage/object"
+	roomapp "IM_backend/internal/application/room"
 	conversationentity "IM_backend/internal/domain/conversation/entity"
 	conversationvo "IM_backend/internal/domain/conversation/value_object"
 	fileentity "IM_backend/internal/domain/file/entity"
@@ -52,6 +53,8 @@ type MessageApplication struct {
 	messageCache                 messagecache.MessageCache
 	roomMemberCache              roomcache.RoomMemberCache
 	roomCache                    roomcache.RoomCache
+	roomApplication              *roomapp.RoomApplication
+	roomActivityState            *roomapp.RoomActivityState
 	roomUnreadSnapshotCache      roomunreadcache.RoomUnreadSnapshotCache
 	messageRepository            messagerepo.MessageRepository
 	txManager                    txmanager.TxManager
@@ -88,12 +91,27 @@ func (ma *MessageApplication) SetRoomOnlineSessionCounter(counter realtime.RoomO
 	ma.roomOnlineSessionCounter = counter
 }
 
+func (ma *MessageApplication) SetRoomApplication(application *roomapp.RoomApplication) {
+	if ma != nil {
+		ma.roomApplication = application
+	}
+}
+
 // warmRoomMessageCache 只处理已经提交的新群消息；失败不改变发送结果。
 func (ma *MessageApplication) warmRoomMessageCache(ctx context.Context, event protocol.MessageEvent) {
 	if event.ConvType != protocol.RoomChat || ma.roomCache == nil || ma.roomRepository == nil {
 		return
 	}
-	room, err := ma.roomRepository.FindActiveRoom(event.ConversationId, int(roomvo.Normal))
+	var room *roomentity.Room
+	var err error
+	if ma.roomApplication != nil {
+		room, err = ma.roomApplication.GetRoomInfo(ctx, event.ConversationId)
+		if err == nil && room != nil && room.Status != roomvo.Normal {
+			err = roomentity.ErrRoomNotFound
+		}
+	} else {
+		room, err = ma.roomRepository.FindActiveRoom(event.ConversationId, int(roomvo.Normal))
+	}
 	if err != nil || room == nil {
 		log.Printf("读取群消息缓存策略失败：room=%s error=%v", event.ConversationId, err)
 		return
@@ -111,7 +129,13 @@ func (ma *MessageApplication) warmRoomMessageCache(ctx context.Context, event pr
 		log.Printf("记录房间活跃度失败：room=%s error=%v", event.ConversationId, err)
 		level = roomcache.RoomActivityNormal
 	}
-	if room.MemberCount <= ma.config.Message.RoomRealtimeFanoutLimit && level < roomcache.RoomActivityWarn {
+	now := time.Now()
+	if level == roomcache.RoomActivityActive {
+		ma.roomActivityState.MarkActive(event.ConversationId, now)
+	}
+	// ACTIVE 保持期间即使窗口计数下降，也继续预热供 Consumer 拉模式使用的消息。
+	if room.MemberCount <= ma.config.Message.RoomRealtimeFanoutLimit && level < roomcache.RoomActivityWarn &&
+		!ma.roomActivityState.IsActive(event.ConversationId, now) {
 		return
 	}
 	if err := ma.roomCache.AppendRecentMessageSeq(ctx, event.ConversationId, event); err != nil {
@@ -130,6 +154,7 @@ func NewMessageApplication(
 	messageCache messagecache.MessageCache,
 	roomMemberCache roomcache.RoomMemberCache,
 	roomCache roomcache.RoomCache,
+	roomActivityState *roomapp.RoomActivityState,
 	userCache usercach.UserCache,
 	txManager txmanager.TxManager,
 	userConversationRepository conversationrepo.UserConversationRepository,
@@ -150,11 +175,15 @@ func NewMessageApplication(
 	messageAttachmentsRepository messagerepo.MessageAttachmentRepository,
 
 ) *MessageApplication {
+	if roomActivityState == nil {
+		panic("房间 ACTIVE 状态未配置")
+	}
 	app := &MessageApplication{
 		friendCache:                  friendCache,
 		messageCache:                 messageCache,
 		roomMemberCache:              roomMemberCache,
 		roomCache:                    roomCache,
+		roomActivityState:            roomActivityState,
 		roomUnreadSnapshotCache:      roomUnreadSnapshotCache,
 		userCache:                    userCache,
 		txManager:                    txManager,

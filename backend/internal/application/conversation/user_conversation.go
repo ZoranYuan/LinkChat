@@ -6,9 +6,11 @@ import (
 	messagerepo "IM_backend/internal/application/ports/persistence/repository/message"
 	roomrepo "IM_backend/internal/application/ports/persistence/repository/room"
 	userrepo "IM_backend/internal/application/ports/persistence/repository/user"
+	roomapp "IM_backend/internal/application/room"
 	conversationentity "IM_backend/internal/domain/conversation/entity"
 	conversationvo "IM_backend/internal/domain/conversation/value_object"
 	friendentity "IM_backend/internal/domain/friend/entity"
+	roomentity "IM_backend/internal/domain/room/entity"
 	roomvo "IM_backend/internal/domain/room/value_object"
 	"context"
 	"sort"
@@ -18,9 +20,16 @@ type UserConversationApplication struct {
 	friendRepository           friendrepo.FriendRepository
 	userRepository             userrepo.UserRepository
 	roomRepository             roomrepo.RoomRepository
+	roomApplication            *roomapp.RoomApplication
 	userConversationRepository conversationrepo.UserConversationRepository
 	conversationRepository     conversationrepo.ConversationRepository
 	messageRepository          messagerepo.MessageRepository
+}
+
+func (uc *UserConversationApplication) SetRoomApplication(application *roomapp.RoomApplication) {
+	if uc != nil {
+		uc.roomApplication = application
+	}
 }
 
 func NewUserConversationApplication(
@@ -145,7 +154,16 @@ func (uc *UserConversationApplication) GetUserConversationsByUserID(ctx context.
 
 	roomByID := make(map[string]RoomDTO, len(roomIDs))
 	for _, roomID := range roomIDs {
-		room, err := uc.roomRepository.FindActiveRoom(roomID, int(roomvo.Normal))
+		var room *roomentity.Room
+		var err error
+		if uc.roomApplication != nil {
+			room, err = uc.roomApplication.GetRoomInfo(ctx, roomID)
+			if err == nil && room != nil && room.Status != roomvo.Normal {
+				err = roomentity.ErrRoomNotFound
+			}
+		} else {
+			room, err = uc.roomRepository.FindActiveRoom(roomID, int(roomvo.Normal))
+		}
 		if err != nil || room == nil {
 			continue
 		}

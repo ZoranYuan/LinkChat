@@ -51,6 +51,7 @@ message:
   max_identifier_length: 128
   attachment_ttl_seconds: 1209600
   room_activity_window_seconds: 30
+  room_activity_hold_seconds: 120 # 最后一次判定 ACTIVE 后保持拉模式，不影响 Redis 消息缓存的 10 分钟 TTL。
   room_activity_bucket_seconds: 5
   room_activity_key_ttl_seconds: 60
   # 阈值单位为统计窗口内的消息数 × 在线 WebSocket 会话数；6000/18000 保持约 200 个在线会话时原有 30/90 条消息的切换点。
@@ -139,3 +140,6 @@ cache:
   room_unread_snapshot:
     # 用户进入房间前的未读摘要范围缓存时间。
     ttl_seconds: 120
+  room_info:
+    # 房间基础信息缓存；成员数在入群、退群提交后主动失效。
+    ttl_seconds: 60

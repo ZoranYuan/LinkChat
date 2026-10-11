@@ -21,7 +21,7 @@ WebSocket MessageReq
 
 发送请求直接执行单条 MySQL 事务，不经过应用层写入队列或凑批窗口。会话序号由事务内锁定会话行逐条分配，不由 Redis INCR 生成。Kafka 分区键使相同会话进入同一分区，但不能单独保证多实例 Outbox 投递时的 seq 顺序；客户端仍需按 seq 去重、排序和补齐缺口。
 
-普通房间推送完整消息；大群或活跃房间使用 `room_msg_notice` 合并通知，客户端通过 `/messages/sync` 补拉。新群消息事务提交后记录活跃度，并为大群或 WARN/ACTIVE 房间写入近期消息缓存；缓存失败不影响成功 ACK。Consumer 只读取当前活跃等级选择投递方式，通知合并器每房间只保留最大 seq 对应的轻量通知，定时向所有在线成员推送，不保存完整消息或预热缓存。待通知房间数不设固定上限。房间判断和通知聚合参数位于 [config.yaml](backend/configs/config.yaml)。
+普通房间推送完整消息；大群或活跃房间使用 `room_msg_notice` 合并通知，客户端通过 `/messages/sync` 补拉。新群消息事务提交后逐条记录 Redis 活跃度，达到 ACTIVE 时立即更新发送端与 Consumer 共享的本地标识；最后一次 ACTIVE 后保持 120 秒，Consumer 读取不续期，也不再查询 Redis 活跃度。大群、WARN/ACTIVE 房间及本地 ACTIVE 保持期间的新增消息继续预热，Redis 近期消息 TTL 仍为 10 分钟；缓存失败不改变成功 ACK。该标识仅在当前节点有效，重启后丢失，不是多实例共享状态。通知合并器每房间只保留最大 seq 对应的轻量通知，定时向所有在线成员推送，不保存完整消息或预热缓存。待通知房间数不设固定上限。房间判断和通知聚合参数位于 [config.yaml](backend/configs/config.yaml)。
 
 Kafka Key 仍使用会话 ID；Consumer 的本地 worker 调度与 Kafka 分区独立。普通新消息按 eventId 分片，允许同会话不同消息并发处理、乱序到达；其他事件仍按原 Key 串行处理。客户端从本地连续水位补齐缺口后有序展示，worker 独立执行、更新 Inbox 和重试；消费循环持续接收，只有 worker 队列满时施加背压。worker 完成业务和 Inbox 状态更新后直接标记 offset，不维护连续完成水位；较大的 offset 可能先提交，重启后较小的未完成事件可能不再被 Kafka 重放。聊天推送依赖客户端同步补偿，其他事件也需要对应的业务恢复机制。
 

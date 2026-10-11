@@ -51,6 +51,11 @@ type CacheConfig struct {
 	AttachmentAccess   AttachmentAccessConfig   `yaml:"attachment_access"`
 	AttachmentFileCard AttachmentFileCardConfig `yaml:"attachment_file_card"`
 	RoomUnreadSnapshot RoomUnreadSnapshotConfig `yaml:"room_unread_snapshot"`
+	RoomInfo           RoomInfoConfig           `yaml:"room_info"`
+}
+
+type RoomInfoConfig struct {
+	TTLSeconds int `yaml:"ttl_seconds"`
 }
 
 type RoomUnreadSnapshotConfig struct {
@@ -178,6 +183,7 @@ type MessageConfig struct {
 	LargeRoomNoticeLingerMilliseconds int   `yaml:"large_room_notice_linger_milliseconds"`
 	LargeRoomNoticeShardCount         int   `yaml:"large_room_notice_shard_count"`
 	RoomActivityWindowSeconds         int   `yaml:"room_activity_window_seconds"`
+	RoomActivityHoldSeconds           int   `yaml:"room_activity_hold_seconds"`
 	RoomActivityBucketSeconds         int   `yaml:"room_activity_bucket_seconds"`
 	RoomActivityKeyTTLSeconds         int   `yaml:"room_activity_key_ttl_seconds"`
 	RoomActivityWarnFanoutWork        int   `yaml:"room_activity_warn_fanout_work"`
@@ -337,9 +343,15 @@ func (c Config) Validate() error {
 		c.WebSocket.PingPeriodSeconds <= 0 || c.WebSocket.PingPeriodSeconds >= c.WebSocket.PongWaitSeconds {
 		return fmt.Errorf("WebSocket 配置无效")
 	}
+	if c.Message.RoomActivityHoldSeconds <= 0 {
+		return fmt.Errorf("房间 ACTIVE 保持时间必须大于 0")
+	}
 	if c.Message.RoomMemberStateTTLSeconds <= 0 ||
 		c.Message.RoomMemberNegativeTTLSeconds <= 0 {
 		return fmt.Errorf("房间成员缓存 TTL 配置无效")
+	}
+	if c.Cache.RoomInfo.TTLSeconds <= 0 {
+		return fmt.Errorf("房间基础信息缓存 TTL 配置无效")
 	}
 	if strings.EqualFold(c.App.Env, "production") {
 		if len(c.JWT.Secret) < 32 || c.JWT.Secret == "U2FsdGVkX19anQGSRtiUwgRLpWV333jI4xjlCF32dek=" {

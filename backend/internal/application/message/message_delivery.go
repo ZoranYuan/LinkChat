@@ -2,9 +2,9 @@ package message
 
 import (
 	"IM_backend/configs"
-	roomcache "IM_backend/internal/application/ports/persistence/cache/room"
 	roomrepo "IM_backend/internal/application/ports/persistence/repository/room"
 	"IM_backend/internal/application/ports/realtime"
+	roomapp "IM_backend/internal/application/room"
 	roomentity "IM_backend/internal/domain/room/entity"
 	roomvo "IM_backend/internal/domain/room/value_object"
 	"IM_backend/internal/shared/diagnostics"
@@ -24,19 +24,29 @@ type LargeRoomMessageBatchOptions struct {
 }
 
 type MessageDelivery struct {
-	realtime       realtime.RealtimeDelivery
-	roomCache      roomcache.RoomCache
-	roomRepository roomrepo.RoomRepository
-	config         configs.MessageConfig
-	messageBatcher *largeRoomMessageBatcher
+	realtime          realtime.RealtimeDelivery
+	roomActivityState *roomapp.RoomActivityState
+	roomApplication   *roomapp.RoomApplication
+	roomRepository    roomrepo.RoomRepository
+	config            configs.MessageConfig
+	messageBatcher    *largeRoomMessageBatcher
+}
+
+func (delivery *MessageDelivery) SetRoomApplication(application *roomapp.RoomApplication) {
+	if delivery != nil {
+		delivery.roomApplication = application
+	}
 }
 
 func NewMessageDelivery(
 	delivery realtime.RealtimeDelivery,
 	roomRepository roomrepo.RoomRepository,
-	roomCache roomcache.RoomCache,
+	roomActivityState *roomapp.RoomActivityState,
 	config configs.MessageConfig,
 ) *MessageDelivery {
+	if roomActivityState == nil {
+		panic("房间 ACTIVE 状态未配置")
+	}
 	if config.RoomRealtimeFanoutLimit <= 0 ||
 		config.LargeRoomNoticeLingerMilliseconds <= 0 ||
 		config.LargeRoomNoticeShardCount <= 0 {
@@ -44,10 +54,10 @@ func NewMessageDelivery(
 	}
 
 	return &MessageDelivery{
-		realtime:       delivery,
-		roomRepository: roomRepository,
-		roomCache:      roomCache,
-		config:         config,
+		realtime:          delivery,
+		roomRepository:    roomRepository,
+		roomActivityState: roomActivityState,
+		config:            config,
 		messageBatcher: newLargeRoomMessageBatcher(delivery, LargeRoomMessageBatchOptions{
 			Linger:     time.Duration(config.LargeRoomNoticeLingerMilliseconds) * time.Millisecond,
 			ShardCount: config.LargeRoomNoticeShardCount,
@@ -88,7 +98,16 @@ func (delivery *MessageDelivery) deliverRoomMessage(
 ) error {
 	startedAt := time.Now()
 	roomLookupStartedAt := time.Now()
-	room, err := delivery.roomRepository.FindActiveRoom(roomID, int(roomvo.Normal))
+	var room *roomentity.Room
+	var err error
+	if delivery.roomApplication != nil {
+		room, err = delivery.roomApplication.GetRoomInfo(ctx, roomID)
+		if err == nil && room != nil && room.Status != roomvo.Normal {
+			err = roomentity.ErrRoomNotFound
+		}
+	} else {
+		room, err = delivery.roomRepository.FindActiveRoom(roomID, int(roomvo.Normal))
+	}
 	roomLookupDuration := time.Since(roomLookupStartedAt)
 	if err != nil {
 		diagnostics.Logf("stage=room_delivery message_id=%s seq=%d room_id=%s room_lookup_us=%d outcome=room_lookup_error error=%q",
@@ -101,37 +120,17 @@ func (delivery *MessageDelivery) deliverRoomMessage(
 		return roomentity.ErrRoomNotFound
 	}
 
-	activityLevel := roomcache.RoomActivityNormal
-	activityDuration := time.Duration(0)
-	onlineSessions := room.MemberCount
-	if delivery.roomCache != nil {
-		activityStartedAt := time.Now()
-		if counter, ok := delivery.realtime.(realtime.RoomOnlineSessionCounter); ok {
-			if count, countErr := counter.OnlineRoomSessionCount(ctx, roomID); countErr != nil {
-				log.Printf("读取房间在线连接数失败，使用成员数保守估算: room=%s err=%v", roomID, countErr)
-			} else {
-				onlineSessions = count
-			}
-		}
-		level, err := delivery.roomCache.ActivateLevel(ctx, roomID, onlineSessions)
-		if err != nil {
-			log.Printf("读取房间活跃度失败: room=%s err=%v", roomID, err)
-		} else {
-			activityLevel = level
-		}
-		activityDuration = time.Since(activityStartedAt)
-	}
-
-	// 成员数是硬阈值；消息频率达到 ACTIVE 后也切换为 PULL。
-	// 这里只读取当前活跃等级，消息计数和缓存预热在发送事务提交后完成。
+	policyStartedAt := time.Now()
+	activePull := delivery.roomActivityState.IsActive(roomID, policyStartedAt)
+	policyDuration := time.Since(policyStartedAt)
+	// Consumer 只读本地 ACTIVE 标识，不查 Redis、不续期；大群成员数仍是硬阈值。
 	hardPull := room.MemberCount > delivery.config.RoomRealtimeFanoutLimit
-	activePull := activityLevel == roomcache.RoomActivityActive
 	if hardPull || activePull {
 		noticeStartedAt := time.Now()
 		err := delivery.deliverLargeRoomNotice(roomID, event)
-		diagnostics.Logf("stage=room_delivery message_id=%s seq=%d room_id=%s room_lookup_us=%d activity_us=%d notice_enqueue_us=%d total_us=%d member_count=%d online_sessions=%d activity_level=%d mode=light_notice outcome=%s",
-			event.MessageId, event.Seq, roomID, roomLookupDuration.Microseconds(), activityDuration.Microseconds(), time.Since(noticeStartedAt).Microseconds(),
-			time.Since(startedAt).Microseconds(), room.MemberCount, onlineSessions, activityLevel, deliveryOutcome(err))
+		diagnostics.Logf("stage=room_delivery message_id=%s seq=%d room_id=%s room_lookup_us=%d policy_us=%d notice_enqueue_us=%d total_us=%d member_count=%d active=%t mode=light_notice outcome=%s",
+			event.MessageId, event.Seq, roomID, roomLookupDuration.Microseconds(), policyDuration.Microseconds(), time.Since(noticeStartedAt).Microseconds(),
+			time.Since(startedAt).Microseconds(), room.MemberCount, activePull, deliveryOutcome(err))
 		return err
 	}
 
@@ -142,9 +141,9 @@ func (delivery *MessageDelivery) deliverRoomMessage(
 		envelope.Payload,
 		envelope.From,
 	)
-	diagnostics.Logf("stage=room_delivery message_id=%s seq=%d room_id=%s room_lookup_us=%d activity_us=%d fanout_us=%d total_us=%d member_count=%d online_sessions=%d activity_level=%d mode=fanout outcome=%s",
-		event.MessageId, event.Seq, roomID, roomLookupDuration.Microseconds(), activityDuration.Microseconds(), time.Since(fanoutStartedAt).Microseconds(),
-		time.Since(startedAt).Microseconds(), room.MemberCount, onlineSessions, activityLevel, deliveryOutcome(err))
+	diagnostics.Logf("stage=room_delivery message_id=%s seq=%d room_id=%s room_lookup_us=%d policy_us=%d fanout_us=%d total_us=%d member_count=%d active=%t mode=fanout outcome=%s",
+		event.MessageId, event.Seq, roomID, roomLookupDuration.Microseconds(), policyDuration.Microseconds(), time.Since(fanoutStartedAt).Microseconds(),
+		time.Since(startedAt).Microseconds(), room.MemberCount, activePull, deliveryOutcome(err))
 	return err
 }
 

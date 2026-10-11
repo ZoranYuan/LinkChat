@@ -111,6 +111,7 @@ func main() {
 
 	authCache := authcache.NewAuthCache(redisClient)
 	roomCache := roomcache.NewRoomCache(redisClient, cfg.Message)
+	roomInfoCache := roomcache.NewRoomInfoCache(redisClient)
 	roomUnreadSnapshotCache := roomunreadcache.NewRoomUnreadSnapshotCache(redisClient)
 	roomMemberCache := roomcache.NewRoomMemberCache(redisClient, cfg.Message)
 	fileCache := filecache.NewFileCache(redisClient)
@@ -265,14 +266,22 @@ func main() {
 		realtimeGateway,
 		outboxRepository,
 	)
+	roomApp.SetRoomInfoCache(roomInfoCache, time.Duration(cfg.Cache.RoomInfo.TTLSeconds)*time.Second)
 	roomHandle := roomhttp.NewRoomHandle(roomApp)
 
+	roomActivityState := roomapp.NewRoomActivityState(time.Duration(cfg.Message.RoomActivityHoldSeconds) * time.Second)
+	activityStateDone := make(chan struct{})
+	go func() {
+		defer close(activityStateDone)
+		roomActivityState.Run(ctx)
+	}()
 	messageDelivery := messageapp.NewMessageDelivery(
 		realtimeGateway,
 		roomRepository,
-		roomCache,
+		roomActivityState,
 		cfg.Message,
 	)
+	messageDelivery.SetRoomApplication(roomApp)
 	defer messageDelivery.Close(context.Background())
 	messageSendHandler := mqhandler.NewMessageHandler(messageDelivery)
 	readNotifyHandler := mqhandler.NewReadHandler(realtimeGateway)
@@ -331,6 +340,7 @@ func main() {
 		messageCache,
 		roomMemberCache,
 		roomCache,
+		roomActivityState,
 		userCache,
 		txManager,
 		userConversationRepository,
@@ -350,6 +360,7 @@ func main() {
 		roomUnreadSnapshotCache,
 		messageAttachmentsRepository,
 	)
+	messageApplication.SetRoomApplication(roomApp)
 	messageApplication.SetProducerNotifier(messageProducer)
 	messageApplication.SetRoomOnlineSessionCounter(realtimeGateway)
 
@@ -378,6 +389,7 @@ func main() {
 		userRepository,
 		roomRepository,
 	)
+	userConversationApplication.SetRoomApplication(roomApp)
 
 	userConversationHandler := userconversationhttp.NewUserConversationHandle(userConversationApplication)
 
@@ -446,7 +458,7 @@ func main() {
 		log.Printf("关闭 WebSocket 会话失败：%v", err)
 	}
 	cancel()
-	for _, done := range []<-chan struct{}{cleanupDone, consumerDone, producerDone} {
+	for _, done := range []<-chan struct{}{cleanupDone, consumerDone, producerDone, activityStateDone} {
 		select {
 		case <-done:
 		case <-shutdownCtx.Done():

@@ -28,6 +28,8 @@ type RoomApplication struct {
 	conversationRepository     conversationrepo.ConversationRepository
 	roomCache                  roomcache.RoomCache
 	roomMemberCache            roomcache.RoomMemberCache
+	roomInfoCache              roomcache.RoomInfoCache
+	roomInfoCacheTTL           time.Duration
 	txManager                  txmanager.TxManager
 	idGenerator                idport.Generator
 	roomPresence               realtime.RoomPresence
@@ -66,6 +68,24 @@ func (ra *RoomApplication) SetProducerNotifier(notifier eventbus.ProducerNotifie
 		return
 	}
 	ra.producerNotifier = notifier
+}
+
+func (ra *RoomApplication) SetRoomInfoCache(cache roomcache.RoomInfoCache, ttl time.Duration) {
+	if ra != nil {
+		ra.roomInfoCache = cache
+		ra.roomInfoCacheTTL = ttl
+	}
+}
+
+func (ra *RoomApplication) findActiveRoom(ctx context.Context, roomID string, status int) (*roomentity.Room, error) {
+	room, err := ra.GetRoomInfo(ctx, roomID)
+	if err != nil {
+		return nil, err
+	}
+	if int(room.Status) != status {
+		return nil, roomentity.ErrRoomNotFound
+	}
+	return room, nil
 }
 
 func (ra *RoomApplication) notifyProducer() {
@@ -148,6 +168,7 @@ func (ra *RoomApplication) Create(ctx context.Context, userId, roomName, avatar,
 		return nil, err
 	}
 	ra.notifyProducer()
+	ra.cacheRoomInfo(ctx, room)
 
 	ra.invalidateRoomMemberCache(ctx, roomId, userId)
 	if ra.roomPresence != nil {
@@ -158,7 +179,7 @@ func (ra *RoomApplication) Create(ctx context.Context, userId, roomName, avatar,
 }
 
 func (ra *RoomApplication) Invite(ctx context.Context, userId, roomId string) (string, error) {
-	room, err := ra.roomRepository.FindActiveRoom(roomId, int(roomvo.Normal))
+	room, err := ra.findActiveRoom(ctx, roomId, int(roomvo.Normal))
 	if err != nil {
 		if errors.Is(err, roomentity.ErrRoomNotFound) {
 			return "", ErrRoomNotFound
@@ -208,14 +229,13 @@ func (ra *RoomApplication) Join(ctx context.Context, userId, inviteCode string) 
 	conversationId := roomId
 
 	var persistedMember *roomentity.RoomUser
-	var room *roomentity.Room
+	room, err := ra.findActiveRoom(ctx, roomId, int(roomvo.Normal))
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if err := ra.txManager.WithinTransaction(ctx, func(tx any) error {
-		room, err = ra.roomRepository.WithTx(tx).FindActiveRoom(roomId, int(roomvo.Normal))
-
-		if err != nil {
-			return err
-		}
+		transactionRoomRepository := ra.roomRepository.WithTx(tx)
 
 		member, err := ra.roomUserRepository.WithTx(tx).GetRelationByIDs(userId, roomId)
 
@@ -225,11 +245,14 @@ func (ra *RoomApplication) Join(ctx context.Context, userId, inviteCode string) 
 			newRoomUser := roomentity.NewRoomUser(userId, roomId, roomvo.RegularUser)
 			newRoomUser.Join()
 
-			updated, err := ra.roomRepository.WithTx(tx).IncrementMemberCount(ctx, roomId, int(roomvo.Normal))
+			updated, err := transactionRoomRepository.IncrementMemberCount(ctx, roomId, int(roomvo.Normal))
 			if err != nil {
 				return err
 			}
 			if !updated {
+				if _, checkErr := transactionRoomRepository.FindActiveRoom(roomId, int(roomvo.Normal)); checkErr != nil {
+					return checkErr
+				}
 				return ErrRoomFull
 			}
 
@@ -247,11 +270,14 @@ func (ra *RoomApplication) Join(ctx context.Context, userId, inviteCode string) 
 				return err
 			}
 
-			updated, err := ra.roomRepository.WithTx(tx).IncrementMemberCount(ctx, roomId, int(roomvo.Normal))
+			updated, err := transactionRoomRepository.IncrementMemberCount(ctx, roomId, int(roomvo.Normal))
 			if err != nil {
 				return err
 			}
 			if !updated {
+				if _, checkErr := transactionRoomRepository.FindActiveRoom(roomId, int(roomvo.Normal)); checkErr != nil {
+					return checkErr
+				}
 				return ErrRoomFull
 			}
 
@@ -290,6 +316,7 @@ func (ra *RoomApplication) Join(ctx context.Context, userId, inviteCode string) 
 		return nil, nil, err
 	}
 	ra.notifyProducer()
+	ra.invalidateRoomInfo(ctx, roomId)
 
 	ra.invalidateRoomMemberCache(ctx, roomId, userId)
 	if ra.roomPresence != nil {
@@ -405,6 +432,7 @@ func (ra *RoomApplication) Leave(ctx context.Context, userId, roomId string) err
 		return err
 	}
 	ra.notifyProducer()
+	ra.invalidateRoomInfo(ctx, roomId)
 
 	ra.invalidateRoomMemberCache(ctx, roomId, userId)
 	if ra.roomPresence != nil {
@@ -412,4 +440,51 @@ func (ra *RoomApplication) Leave(ctx context.Context, userId, roomId string) err
 	}
 
 	return nil
+}
+
+// GetRoomInfo 先读 Redis；缓存未命中或不可用时回源 MySQL 并尝试回填。
+func (ra *RoomApplication) GetRoomInfo(ctx context.Context, roomID string) (*roomentity.Room, error) {
+	if ra == nil || ra.roomRepository == nil {
+		return nil, errors.New("房间应用未配置")
+	}
+	if roomID == "" {
+		return nil, roomentity.ErrRoomNotFound
+	}
+	if ra.roomInfoCache != nil {
+		cached, found, err := ra.roomInfoCache.GetRoomInfo(ctx, roomID)
+		if err == nil && found && cached != nil {
+			return cached, nil
+		}
+		if err != nil {
+			log.Printf("读取房间基础信息缓存失败，回源 MySQL：room=%s error=%v", roomID, err)
+		}
+	}
+
+	room, err := ra.roomRepository.FindByID(ctx, roomID)
+	if err != nil {
+		return nil, err
+	}
+	if room == nil {
+		return nil, roomentity.ErrRoomNotFound
+	}
+	ra.cacheRoomInfo(ctx, room)
+	return room, nil
+}
+
+func (ra *RoomApplication) cacheRoomInfo(ctx context.Context, room *roomentity.Room) {
+	if ra == nil || ra.roomInfoCache == nil || room == nil || ra.roomInfoCacheTTL <= 0 {
+		return
+	}
+	if err := ra.roomInfoCache.SetRoomInfo(ctx, room, ra.roomInfoCacheTTL); err != nil {
+		log.Printf("写入房间基础信息缓存失败：room=%s error=%v", room.RoomId, err)
+	}
+}
+
+func (ra *RoomApplication) invalidateRoomInfo(ctx context.Context, roomID string) {
+	if ra == nil || ra.roomInfoCache == nil || roomID == "" {
+		return
+	}
+	if err := ra.roomInfoCache.DeleteRoomInfo(ctx, roomID); err != nil {
+		log.Printf("删除房间基础信息缓存失败：room=%s error=%v", roomID, err)
+	}
 }
