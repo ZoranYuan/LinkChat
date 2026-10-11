@@ -1,3 +1,5 @@
+import { MessageType } from "../../../constants/message.js";
+
 export const createClientMessageId = () => (
   globalThis.crypto?.randomUUID?.()
   || `message-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -15,7 +17,7 @@ export const createOutgoingMessage = (conversation, payload, currentUser) => {
     content: payload.content || "",
     cType: payload.cType,
     convType: payload.convType,
-    fileId: payload.fileId || "",
+    attachmentId: payload.attachmentId || "",
     fileName: payload.fileName || "",
     fileSize: payload.fileSize || 0,
     mediaUrl: payload.mediaUrl || "",
@@ -26,6 +28,24 @@ export const createOutgoingMessage = (conversation, payload, currentUser) => {
     sendTime,
     status: 1,
   };
+};
+
+/** 独立构造发往服务端的消息请求，不复用会话里的展示占位对象。 */
+export const createMessageRequest = (conversation, payload) => {
+  const request = {
+    clientMsgId: payload.clientMsgId,
+    recvId: conversation.targetId,
+    convType: conversation.convType,
+    cType: payload.cType,
+  };
+
+  if (Number(payload.cType) === MessageType.TEXT) {
+    request.content = payload.content || "";
+  } else if (payload.fileId) {
+    request.fileId = payload.fileId;
+  }
+
+  return request;
 };
 
 export const createConversationPreview = (conversation, message, currentUser) => ({

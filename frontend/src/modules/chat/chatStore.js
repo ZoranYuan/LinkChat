@@ -50,6 +50,7 @@ import {
 import {
   createClientMessageId,
   createConversationPreview,
+  createMessageRequest,
   createOutgoingMessage,
 } from "./utils/messageComposer.js";
 import {
@@ -78,6 +79,8 @@ const state = reactive({
 
 const attachmentResolver = createAttachmentResolver(getAttachmentAccessURLs);
 const pendingMessages = new Map();
+// 独立保存 WS 请求数据，失败重试不依赖会话展示对象。
+const pendingSendRequests = new Map();
 // 只在内存中保存上传任务，便于失败后复用 File 或已完成的 fileId 重试。
 const pendingUploadTasks = new Map();
 const historyRequests = new Map();
@@ -260,29 +263,26 @@ const watchUploadTask = (task, session) => watch(
   },
 );
 
-/** 使用已有 fileId 发送消息；失败时保留占位消息供用户重试。 */
-const sendPendingMessage = (clientMsgId, conversation, session = captureSession()) => {
+/** 发送独立的 WS 请求对象；失败时保留请求供用户重试。 */
+const sendPendingMessage = (clientMsgId, conversation, request, session = captureSession()) => {
   const message = findPendingMessage(clientMsgId, conversation?.conversationId);
-  if (!message || !isSessionActive(session)) return null;
+  if (!message || !request || !isSessionActive(session)) return null;
 
-  const payload = {
-    clientMsgId,
-    recvId: conversation.targetId,
-    convType: conversation.convType,
-    cType: message.cType,
-  };
-  if (Number(message.cType) === MessageType.TEXT) {
-    payload.content = message.content || "";
-  } else if (message.fileId) {
-    payload.fileId = message.fileId;
+  const pendingRequest = { ...request, clientMsgId };
+  if (
+    Number(pendingRequest.cType) !== MessageType.TEXT
+    && !pendingRequest.fileId
+  ) {
+    throw new Error("媒体文件尚未上传完成，无法发送消息。");
   }
+  pendingSendRequests.set(clientMsgId, pendingRequest);
 
   updatePendingMessage(clientMsgId, conversation.conversationId, {
     error: "",
   });
 
   try {
-    if (!wsClient.sendMessage(payload)) {
+    if (!wsClient.sendMessage({ ...pendingRequest })) {
       throw new Error("消息发送失败，请重新连接后重试。");
     }
   } catch (error) {
@@ -302,14 +302,18 @@ const uploadAndSendAttachment = async (task, conversation, session) => {
 
     task.fileId = uploaded.fileId;
     updatePendingMessage(task.clientMsgId, task.conversationId, {
-      fileId: uploaded.fileId,
       cType: uploaded.cType,
       uploadStage: "completed",
       uploadProgress: 100,
       error: "",
     });
 
-    return sendPendingMessage(task.clientMsgId, conversation, session);
+    const request = createMessageRequest(conversation, {
+      clientMsgId: task.clientMsgId,
+      cType: task.cType,
+      fileId: task.fileId,
+    });
+    return sendPendingMessage(task.clientMsgId, conversation, request, session);
   } catch (error) {
     if (isSessionActive(session)) {
       markPendingMessageFailed(task.clientMsgId, task.conversationId, error);
@@ -556,6 +560,9 @@ const handleMessageAck = (ack) => {
     pendingMessages.set(ack.clientMsgId, storedMessage || updated);
   } else {
     pendingMessages.delete(ack.clientMsgId);
+    pendingSendRequests.delete(ack.clientMsgId);
+    const uploadTask = pendingUploadTasks.get(ack.clientMsgId);
+    if (uploadTask) uploadTask.fileId = "";
   }
 
   if (storedMessage) {
@@ -785,6 +792,7 @@ const clearAuthState = () => {
   sessionGeneration += 1;
   startupCatchupGeneration = -1;
   pendingMessages.clear();
+  pendingSendRequests.clear();
   for (const task of pendingUploadTasks.values()) {
     task.cancelRequested = true;
     if (task.running) {
@@ -1044,27 +1052,23 @@ export const useChatStore = defineStore("chat", () => {
     if (!text || !conversation) return null;
     if (!wsClient.isConnected()) throw new Error("实时连接尚未建立，请稍后重试。");
 
-    const payload = {
-      clientMsgId: createClientMessageId(),
-      recvId: conversation.targetId,
+    const clientMsgId = createClientMessageId();
+    const displayData = {
+      clientMsgId,
       convType: conversation.convType,
       cType: MessageType.TEXT,
       content: text,
     };
-    appendOutgoingMessage(conversation, payload, {
+    appendOutgoingMessage(conversation, displayData, {
       error: "",
     });
 
-    try {
-      if (!wsClient.sendMessage(payload)) {
-        throw new Error("消息发送失败，请重新连接后重试。");
-      }
-    } catch (error) {
-      markPendingMessageFailed(payload.clientMsgId, conversation.conversationId, error);
-      throw error;
-    }
-
-    return findPendingMessage(payload.clientMsgId, conversation.conversationId);
+    const request = createMessageRequest(conversation, {
+      clientMsgId,
+      cType: MessageType.TEXT,
+      content: text,
+    });
+    return sendPendingMessage(clientMsgId, conversation, request);
   };
 
   const sendAttachment = async (file, cType) => {
@@ -1076,16 +1080,15 @@ export const useChatStore = defineStore("chat", () => {
 
     const clientMsgId = createClientMessageId();
     const previewURL = createLocalPreviewURL(file, cType);
-    const payload = {
+    const displayData = {
       clientMsgId,
-      recvId: conversation.targetId,
       convType: conversation.convType,
       cType,
       fileName: file.name || "",
       fileSize: file.size || 0,
       mediaUrl: previewURL,
     };
-    appendOutgoingMessage(conversation, payload, {
+    appendOutgoingMessage(conversation, displayData, {
       uploadStage: "queued",
       uploadProgress: 0,
       error: "",
@@ -1132,11 +1135,23 @@ export const useChatStore = defineStore("chat", () => {
       throw new Error("实时连接尚未建立，请稍后重试。");
     }
 
+    const request = pendingSendRequests.get(clientMsgId);
+    if (request) {
+      return sendPendingMessage(clientMsgId, conversation, request, session);
+    }
+
     const task = pendingUploadTasks.get(clientMsgId);
     const isText = Number(pending.cType) === MessageType.TEXT;
-    if (isText || task?.fileId || pending.fileId) {
-      if (task?.fileId) pending.fileId = task.fileId;
-      return sendPendingMessage(clientMsgId, conversation, session);
+    if (isText) {
+      throw new Error("待发送消息请求已失效，请重新发送。");
+    }
+    if (task?.fileId) {
+      const mediaRequest = createMessageRequest(conversation, {
+        clientMsgId,
+        cType: task.cType,
+        fileId: task.fileId,
+      });
+      return sendPendingMessage(clientMsgId, conversation, mediaRequest, session);
     }
 
     if (!task?.file) {
@@ -1193,7 +1208,10 @@ export const useChatStore = defineStore("chat", () => {
     state.historyCursor[conversationId] = 0;
     state.historyHasMore[conversationId] = false;
     for (const [clientMsgId, message] of pendingMessages) {
-      if (message.conversationId === conversationId) pendingMessages.delete(clientMsgId);
+      if (message.conversationId === conversationId) {
+        pendingMessages.delete(clientMsgId);
+        pendingSendRequests.delete(clientMsgId);
+      }
     }
     await deleteMessagesByConversation(currentUserId(), conversationId);
     const conversation = findConversation(state.conversations, conversationId);
