@@ -103,7 +103,7 @@ func consumerTestMessage(id string, offset int64) *sarama.ConsumerMessage {
 		Headers: []*sarama.RecordHeader{{Key: []byte("event_id"), Value: []byte(id)}}}
 }
 
-func newConsumerTest(t *testing.T, handler consumerTestHandler, workers, queue int) (*Consumer, *consumerTestInbox, saramaAdapter) {
+func newConsumerTest(t *testing.T, handler consumerTestHandler) (*Consumer, *consumerTestInbox, saramaAdapter) {
 	t.Helper()
 	name := protocol.EventTypeSendMessage
 	router, err := NewTopicRouter(map[string]string{name: "messages"})
@@ -111,11 +111,8 @@ func newConsumerTest(t *testing.T, handler consumerTestHandler, workers, queue i
 		t.Fatal(err)
 	}
 	inbox := &consumerTestInbox{attempts: map[string]int{}, terminal: map[string]bool{}, completed: make(chan string, 20)}
-	c := &Consumer{workerPool: newConsumerWorkerPool(workers, queue), handlers: map[string]eventbus.Handler{name: handler},
+	c := &Consumer{handlers: map[string]eventbus.Handler{name: handler},
 		inbox: inbox, txManager: consumerTestTx{}, leaseStaleAfter: time.Minute, maxRetries: 3, deadLetterSuffix: ".dlq"}
-	ctx, cancel := context.WithCancel(context.Background())
-	c.workerPool.Start(ctx)
-	t.Cleanup(func() { cancel(); c.workerPool.Wait() })
 	return c, inbox, saramaAdapter{consumer: c, topicRouter: router}
 }
 
@@ -131,12 +128,8 @@ func consumerTestReceive[T any](t *testing.T, channel <-chan T) T {
 	}
 }
 
-func TestConsumerDispatchesLaterMessageBeforeEarlierCompletes(t *testing.T) {
+func TestConsumerProcessesPartitionMessagesSequentially(t *testing.T) {
 	firstID, secondID := "a", "b"
-	if messageKeyHash(consumerWorkerKey(eventbus.IncomingEvent{Name: protocol.EventTypeSendMessage, EventID: firstID}))%2 ==
-		messageKeyHash(consumerWorkerKey(eventbus.IncomingEvent{Name: protocol.EventTypeSendMessage, EventID: secondID}))%2 {
-		t.Fatal("test events must use different workers")
-	}
 	release := make(chan struct{})
 	started := make(chan string, 2)
 	_, inbox, adapter := newConsumerTest(t, func(ctx context.Context, event eventbus.IncomingEvent) error {
@@ -149,7 +142,7 @@ func TestConsumerDispatchesLaterMessageBeforeEarlierCompletes(t *testing.T) {
 			}
 		}
 		return nil
-	}, 2, 4)
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	session := consumerTestSession{ctx: ctx, marked: make(chan int64, 4)}
@@ -159,30 +152,45 @@ func TestConsumerDispatchesLaterMessageBeforeEarlierCompletes(t *testing.T) {
 	close(claim.messages)
 	done := make(chan error, 1)
 	go func() { done <- adapter.ConsumeClaim(session, claim) }()
-	consumerTestReceive(t, started)
-	consumerTestReceive(t, started)
-	if id := consumerTestReceive(t, inbox.completed); id != secondID {
-		t.Fatalf("later task should finish first, got %s", id)
+	if id := consumerTestReceive(t, started); id != firstID {
+		t.Fatalf("first started event = %s, want %s", id, firstID)
 	}
-	if offset := consumerTestReceive(t, session.marked); offset != 47 {
-		t.Fatalf("later task should mark immediately, got %d", offset)
+	select {
+	case id := <-started:
+		t.Fatalf("later event %s started before the earlier event completed", id)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if len(session.marked) != 0 {
+		t.Fatal("offset must not be marked before the current event completes")
 	}
 	close(release)
+	if id := consumerTestReceive(t, inbox.completed); id != firstID {
+		t.Fatalf("first completed event = %s, want %s", id, firstID)
+	}
+	if offset := consumerTestReceive(t, session.marked); offset != 42 {
+		t.Fatalf("first marked offset = %d, want 42", offset)
+	}
+	if id := consumerTestReceive(t, started); id != secondID {
+		t.Fatalf("second started event = %s, want %s", id, secondID)
+	}
+	if id := consumerTestReceive(t, inbox.completed); id != secondID {
+		t.Fatalf("second completed event = %s, want %s", id, secondID)
+	}
+	if offset := consumerTestReceive(t, session.marked); offset != 47 {
+		t.Fatalf("second marked offset = %d, want 47", offset)
+	}
 	if err := consumerTestReceive(t, done); err != nil {
 		t.Fatal(err)
 	}
-	if offset := consumerTestReceive(t, session.marked); offset != 42 {
-		t.Fatalf("earlier task should mark independently, got %d", offset)
-	}
 }
 
-func TestConsumerSessionCancellationStopsActiveAndQueuedTasks(t *testing.T) {
+func TestConsumerSessionCancellationStopsCurrentAndLaterMessages(t *testing.T) {
 	started := make(chan string, 4)
 	_, _, adapter := newConsumerTest(t, func(ctx context.Context, event eventbus.IncomingEvent) error {
 		started <- event.EventID
 		<-ctx.Done()
 		return ctx.Err()
-	}, 1, 4)
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	session := consumerTestSession{ctx: ctx, marked: make(chan int64, 4)}
@@ -211,7 +219,7 @@ func TestConsumerRetriesFailedCompletionBeforeMarkingOffset(t *testing.T) {
 	_, inbox, adapter := newConsumerTest(t, func(context.Context, eventbus.IncomingEvent) error {
 		attempts <- struct{}{}
 		return nil
-	}, 1, 4)
+	})
 	completeCalls := 0
 	inbox.complete = func(string) error {
 		completeCalls++
@@ -249,7 +257,7 @@ func TestConsumerLeaseLossCancelsHandler(t *testing.T) {
 	c, inbox, _ := newConsumerTest(t, func(ctx context.Context, _ eventbus.IncomingEvent) error {
 		<-ctx.Done()
 		return ctx.Err()
-	}, 1, 4)
+	})
 	c.leaseStaleAfter = 30 * time.Millisecond
 	inbox.renew = func() error { return inboxport.ErrLeaseLost }
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -266,7 +274,7 @@ func TestConsumerLeaseLossCancelsHandler(t *testing.T) {
 func TestConsumerDeadLetterMustPublishBeforeTerminalState(t *testing.T) {
 	c, inbox, _ := newConsumerTest(t, func(context.Context, eventbus.IncomingEvent) error {
 		return eventbus.NonRetryable(errors.New("invalid payload"))
-	}, 1, 4)
+	})
 	publishCalls := 0
 	c.deadLetterPublisher = consumerTestPublisher(func(context.Context, eventbus.IntegrationEvent) error {
 		publishCalls++

@@ -76,8 +76,6 @@ kafka:
     version: "2.6.0"
     assignor: "range"   # range / roundrobin / sticky
     max_retries: 3
-    worker_count: 16
-    queue_size: 1024
     lease_stale_after_seconds: 10
     consume_retry_interval_seconds: 1
     dead_letter_suffix: ".dlq"

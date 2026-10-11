@@ -91,8 +91,6 @@ type KafkaTopics struct {
 }
 
 type KafkaConsumerConfig struct {
-	WorkerCount              int    `yaml:"worker_count"`
-	QueueSize                int    `yaml:"queue_size"`
 	GroupID                  string `yaml:"group_id"`
 	Version                  string `yaml:"version"`
 	Assignor                 string `yaml:"assignor"` // range / roundrobin / sticky
