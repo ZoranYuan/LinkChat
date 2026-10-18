@@ -54,8 +54,7 @@ test("媒体 WS 请求单独携带 fileId，不复用占位消息对象", () => 
   assert.notStrictEqual(request, placeholder);
   assert.deepEqual(request, {
     clientMsgId: "client-msg-2",
-    recvId: "room-1",
-    convType: 2,
+    conversationId: "conversation-1",
     cType: MessageType.FILE,
     fileId: "uploaded-file-2",
   });

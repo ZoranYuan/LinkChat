@@ -18,16 +18,19 @@ message MessageReadAckReq {
   reserved 2;
 }
 
+message ConnectionVisibilityReq {
+  optional bool hidden = 1;
+}
+
 message MessageReq {
   string client_msg_id  = 1;
-  string recv_id        = 2;
-  int32  conv_type      = 3;
   int32  c_type         = 4;
   string content        = 5;
   string file_id        = 10;
   reserved 6, 7;
   string sticker_id     = 17;
   string pack_id        = 18;
+  string conversation_id = 19;
 }
 
 message MessageAck {

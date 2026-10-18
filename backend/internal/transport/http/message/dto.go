@@ -5,25 +5,25 @@ import (
 )
 
 type MessageHistoryRequest struct {
-	ConversationID string `form:"conversationId" binding:"required"`
+	ConversationID string `form:"conversationId" binding:"required,max=64"`
 	Cursor         int64  `form:"cursor"`
 	Limit          int    `form:"limit"`
 }
 
 type MessageSyncRequest struct {
-	ConversationID string `form:"conversationId" binding:"required"`
+	ConversationID string `form:"conversationId" binding:"required,max=64"`
 	AfterSeq       int64  `form:"afterSeq"`
 }
 
 type MessageOfflineRequest struct {
-	ConversationID string `form:"conversationId" binding:"required"`
+	ConversationID string `form:"conversationId" binding:"required,max=64"`
 	AfterSeq       int64  `form:"afterSeq"`
 	SnapshotSeq    int64  `form:"snapshotSeq" binding:"required,gt=0"`
 	Limit          int    `form:"limit"`
 }
 
 type MessageSeqsRequest struct {
-	ConversationID string `form:"conversationId" binding:"required"`
+	ConversationID string `form:"conversationId" binding:"required,max=64"`
 	Seqs           string `form:"seqs" binding:"required"`
 }
 

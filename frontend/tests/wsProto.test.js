@@ -4,11 +4,14 @@ import { encodeFrame, decodeFrame, decodePayload } from "../src/wsProto.js";
 
 test("普通视频发送保留 fileId，不再包含一起看时间字段", () => {
   const frame = decodeFrame(encodeFrame("msg", "messageReq", {
-    clientMsgId: "client-video-1", recvId: "room-1", convType: 2, cType: 3, fileId: "file-1",
+    clientMsgId: "client-video-1", conversationId: "conversation-1", cType: 3, fileId: "file-1",
   }));
   const message = decodePayload("messageReq", frame.data);
   assert.equal(message.fileId, "file-1");
   assert.equal(message.cType, 3);
+  assert.equal(message.conversationId, "conversation-1");
+  assert.equal(Object.hasOwn(message, "recvId"), false);
+  assert.equal(Object.hasOwn(message, "convType"), false);
   assert.equal(Object.hasOwn(message, "videoTime"), false);
   assert.equal(Object.hasOwn(message, "hasVideoTime"), false);
 });

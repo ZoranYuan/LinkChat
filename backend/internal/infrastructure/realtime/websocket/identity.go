@@ -3,9 +3,11 @@ package websocket
 import (
 	"errors"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
-var ErrInvalidSessionIdentity = errors.New("非法的会话身份")
+var ErrInvalidConnectionIdentity = errors.New("非法的连接身份")
 
 type Platform string
 
@@ -15,29 +17,33 @@ const (
 	// 后期扩展
 )
 
-type SessionIdentity struct {
-	Platform  Platform
-	UserId    string
-	SessionId string
-	DeviceId  string
+// ConnectionIdentity 区分认证登录会话与具体的 WebSocket 连接。
+type ConnectionIdentity struct {
+	Platform      Platform
+	UserID        string
+	DeviceID      string
+	AuthSessionID string
+	ConnectionID  string
 }
 
-func NewSessionIdentity(userID, deviceID, platform, sessionID string) (SessionIdentity, error) {
-	identity := SessionIdentity{
-		UserId:    strings.TrimSpace(userID),
-		DeviceId:  strings.TrimSpace(deviceID),
-		Platform:  Platform(strings.ToLower(strings.TrimSpace(platform))),
-		SessionId: strings.TrimSpace(sessionID),
+// NewConnectionIdentity 为每次连接生成独立 ID；AuthSessionID 仍来自 JWT 的 sid。
+func NewConnectionIdentity(userID, deviceID, platform, authSessionID string) (ConnectionIdentity, error) {
+	identity := ConnectionIdentity{
+		UserID:        strings.TrimSpace(userID),
+		DeviceID:      strings.TrimSpace(deviceID),
+		Platform:      Platform(strings.ToLower(strings.TrimSpace(platform))),
+		AuthSessionID: strings.TrimSpace(authSessionID),
+		ConnectionID:  uuid.NewString(),
 	}
 
-	if identity.UserId == "" || identity.DeviceId == "" || identity.SessionId == "" {
-		return SessionIdentity{}, ErrInvalidSessionIdentity
+	if identity.UserID == "" || identity.DeviceID == "" || identity.AuthSessionID == "" {
+		return ConnectionIdentity{}, ErrInvalidConnectionIdentity
 	}
 
 	switch identity.Platform {
 	case PlatfromWeb:
 		return identity, nil
 	default:
-		return SessionIdentity{}, ErrInvalidSessionIdentity
+		return ConnectionIdentity{}, ErrInvalidConnectionIdentity
 	}
 }

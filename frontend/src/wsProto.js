@@ -6,8 +6,9 @@ package im.ws;
 message WsFrame { string op = 1; bytes data = 2; }
 message WsBatch { repeated WsFrame frames = 1; }
 message MessageReadAckReq { string message_id = 1; }
+message ConnectionVisibilityReq { optional bool hidden = 1; }
 message MessageReq {
-  string client_msg_id = 1; string recv_id = 2; int32 conv_type = 3; int32 c_type = 4;
+  string client_msg_id = 1; string conversation_id = 19; int32 c_type = 4;
   string content = 5; reserved 6, 7;
   string file_id = 10;
   string sticker_id = 17; string pack_id = 18;
@@ -27,6 +28,7 @@ const root = protobuf.parse(schema).root;
 const types = {
   frame: root.lookupType("im.ws.WsFrame"),
   batch: root.lookupType("im.ws.WsBatch"),
+  connectionVisibility: root.lookupType("im.ws.ConnectionVisibilityReq"),
   messageReq: root.lookupType("im.ws.MessageReq"),
   messageAck: root.lookupType("im.ws.MessageAck"),
   roomMessageNotice: root.lookupType("im.ws.RoomMessageNotice"),

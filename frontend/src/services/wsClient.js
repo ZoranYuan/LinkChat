@@ -31,6 +31,10 @@ export function createWsClient(callbacks = {}) {
   let reconnectAttempts = 0;
   let manualClose = false;
   let reconnectPreparation = null;
+  let visibilityListenerAttached = false;
+
+  const isPageVisible = () =>
+    typeof document === "undefined" || document.visibilityState === "visible";
 
   /** 向上层报告连接状态变化。 */
   const notifyState = (state) => callbacks.onStateChange?.(state);
@@ -50,13 +54,14 @@ export function createWsClient(callbacks = {}) {
 
   /** 延迟重连；必须先完成服务端会话快照和离线消息补齐。 */
   const scheduleReconnect = () => {
-    if (manualClose || !authenticated) return;
+    if (manualClose || !authenticated || !isPageVisible()) return;
     reconnectAttempts += 1;
     const delay = Math.min(reconnectAttempts * 1000, 5000);
     reconnectTimer = window.setTimeout(async () => {
+      if (!isPageVisible()) return;
       try {
         await prepareReconnect();
-        if (manualClose || !authenticated) return;
+        if (manualClose || !authenticated || !isPageVisible()) return;
         if (!socket || socket.readyState === WebSocket.CLOSED) open();
       } catch (error) {
         callbacks.onReconnectPreparationError?.(error);
@@ -117,6 +122,7 @@ export function createWsClient(callbacks = {}) {
       const recovered = reconnectAttempts > 0;
       reconnectAttempts = 0;
       notifyState("connected");
+      reportPageVisibility();
       callbacks.onOpen?.({ recovered });
     };
     socket.onmessage = dispatchFrame;
@@ -127,8 +133,40 @@ export function createWsClient(callbacks = {}) {
     socket.onclose = () => {
       if (manualClose || !authenticated) return;
       notifyState("disconnected");
-      scheduleReconnect();
+      if (isPageVisible()) scheduleReconnect();
     };
+  };
+
+  const reportPageVisibility = () => send(
+    "connection_visibility",
+    "connectionVisibility",
+    { hidden: !isPageVisible() },
+  );
+
+  const handleVisibilityChange = () => {
+    if (!isPageVisible()) {
+      reportPageVisibility();
+      return;
+    }
+
+    if (socket?.readyState === WebSocket.OPEN) {
+      reportPageVisibility();
+      return;
+    }
+    if (socket?.readyState === WebSocket.CONNECTING) return;
+    void reconnect();
+  };
+
+  const attachVisibilityListener = () => {
+    if (visibilityListenerAttached || typeof document === "undefined") return;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    visibilityListenerAttached = true;
+  };
+
+  const detachVisibilityListener = () => {
+    if (!visibilityListenerAttached || typeof document === "undefined") return;
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    visibilityListenerAttached = false;
   };
 
   /** 在认证状态允许时启动连接；重复调用不会创建重复连接。 */
@@ -142,6 +180,7 @@ export function createWsClient(callbacks = {}) {
 
     authenticated = nextState;
     manualClose = false;
+    if (authenticated) attachVisibilityListener();
     open();
   };
 
@@ -149,6 +188,7 @@ export function createWsClient(callbacks = {}) {
   const disconnect = () => {
     manualClose = true;
     authenticated = false;
+    detachVisibilityListener();
     window.clearTimeout(reconnectTimer);
     if (socket) {
       socket.onclose = null;
@@ -160,13 +200,13 @@ export function createWsClient(callbacks = {}) {
 
   /** 手动重连沿用自动重连前的离线补齐流程。 */
   const reconnect = async () => {
-    if (!authenticated) return;
+    if (!authenticated || !isPageVisible()) return;
     if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
     manualClose = false;
     window.clearTimeout(reconnectTimer);
     try {
       await prepareReconnect();
-      if (authenticated && !manualClose && (!socket || socket.readyState === WebSocket.CLOSED)) open();
+      if (authenticated && !manualClose && isPageVisible() && (!socket || socket.readyState === WebSocket.CLOSED)) open();
     } catch (error) {
       callbacks.onReconnectPreparationError?.(error);
       scheduleReconnect();

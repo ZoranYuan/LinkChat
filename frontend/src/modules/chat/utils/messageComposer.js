@@ -34,8 +34,7 @@ export const createOutgoingMessage = (conversation, payload, currentUser) => {
 export const createMessageRequest = (conversation, payload) => {
   const request = {
     clientMsgId: payload.clientMsgId,
-    recvId: conversation.targetId,
-    convType: conversation.convType,
+    conversationId: conversation.conversationId,
     cType: payload.cType,
   };
 

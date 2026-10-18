@@ -11,21 +11,6 @@ func encodeWebSocketPayload(op string, payload []byte) ([]byte, error) {
 	return realtimews.EncodePayload(op, payload)
 }
 
-// messageReqFromPB 将 WebSocket 层的 protobuf 请求转换为业务层发送请求。
-// 请求中的接收方、会话类型和文件标识等控制字段只用于服务端处理，不属于推送消息本体。
-func messageReqFromPB(pb *wspb.MessageReq) MessageReq {
-	return MessageReq{
-		ClientMsgId: pb.GetClientMsgId(),
-		RecvId:      pb.GetRecvId(),
-		ConvType:    int(pb.GetConvType()),
-		CType:       int(pb.GetCType()),
-		Content:     pb.GetContent(),
-		FileId:      pb.GetFileId(),
-		StickerId:   pb.GetStickerId(),
-		PackId:      pb.GetPackId(),
-	}
-}
-
 // messageAckToPB 将业务层生成的消息 ACK 转换为 WebSocket protobuf 响应。
 func messageAckToPB(event protocol.MessageAckEvent) *wspb.MessageAck {
 	return &wspb.MessageAck{

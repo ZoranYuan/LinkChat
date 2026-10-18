@@ -37,7 +37,7 @@ const (
 	// BatchFailed 写入失败，当前连接不再重试。
 	BatchFailed
 
-	// BatchCancelled Session 关闭，批次被取消。
+	// BatchCancelled Connection 关闭，批次被取消。
 	BatchCancelled
 )
 
@@ -78,7 +78,7 @@ const (
 	// 遇到需要立即发送的控制消息。
 	FlushReasonImmediate
 
-	// Session 正常关闭前刷新。
+	// Connection 正常关闭前刷新。
 	FlushReasonShutdown
 )
 
