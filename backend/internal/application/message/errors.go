@@ -1,17 +1,18 @@
 package message
 
 import (
+	conversationapp "IM_backend/internal/application/conversation"
 	friendentity "IM_backend/internal/domain/friend/entity"
 	roomentity "IM_backend/internal/domain/room/entity"
 	"errors"
 )
 
 var (
-	ErrUnknownConversationType = errors.New("未知的会话类型")
+	ErrUnknownConversationType = conversationapp.ErrUnknownConversationType
 	ErrMessageSave             = errors.New("保存消息失败")
 
 	ErrMessageSeq           = errors.New("错误的消息序号")
-	ErrConversationNotFound = errors.New("会话不存在")
+	ErrConversationNotFound = conversationapp.ErrConversationNotFound
 
 	ErrUserConversationNotFound = errors.New("用户会话不存在")
 	ErrMessageNotFound          = errors.New("消息不存在")

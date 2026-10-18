@@ -37,17 +37,33 @@ func TestRoomCacheActivityLevelScalesWithOnlineSessions(t *testing.T) {
 	roomID := "room-activity-fanout"
 	now := time.Unix(1_000_000, 0)
 
-	level, err := cache.recordActivityAndGetLevelAt(ctx, roomID, now, 1)
+	level, err := cache.recordActivityAndGetLevelAt(ctx, roomID, 1, now, 1)
 	if err != nil || level != roomcache.RoomActivityNormal {
 		t.Fatalf("1 条消息 × 1 个在线会话应为 normal：level=%d err=%v", level, err)
 	}
-	level, err = cache.recordActivityAndGetLevelAt(ctx, roomID, now, 1)
+	level, err = cache.recordActivityAndGetLevelAt(ctx, roomID, 1, now, 1)
 	if err != nil || level != roomcache.RoomActivityWarn {
 		t.Fatalf("2 条消息 × 1 个在线会话应为 warn：level=%d err=%v", level, err)
 	}
-	level, err = cache.recordActivityAndGetLevelAt(ctx, roomID, now, 2)
+	level, err = cache.recordActivityAndGetLevelAt(ctx, roomID, 1, now, 2)
 	if err != nil || level != roomcache.RoomActivityActive {
 		t.Fatalf("3 条消息 × 2 个在线会话应为 active：level=%d err=%v", level, err)
+	}
+}
+
+func TestRoomCacheActivityBatchCountsMessagesInOneBucket(t *testing.T) {
+	cache, client, _ := newActivityCacheTest(t)
+	ctx := context.Background()
+	roomID := "room-activity-batch"
+	now := time.Unix(1_000_000, 0)
+
+	level, err := cache.recordActivityAndGetLevelAt(ctx, roomID, 2, now, 1)
+	if err != nil || level != roomcache.RoomActivityWarn {
+		t.Fatalf("同批 2 条消息 × 1 个在线会话应为 warn：level=%d err=%v", level, err)
+	}
+	count, err := client.HGet(ctx, ActivateLevelKey(roomID), "100000").Int64()
+	if err != nil || count != 2 {
+		t.Fatalf("同一时间桶应一次增加 2 条：count=%d err=%v", count, err)
 	}
 }
 

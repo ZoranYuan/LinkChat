@@ -28,7 +28,7 @@ type Producer struct {
 const diagnosticPublishedAtHeader = "im_diag_published_at_unix_nano"
 
 type producerMessageMetadata struct {
-	ID         string
+	EventID    string
 	LockToken  string
 	RetryCount int
 	EventType  string
@@ -210,7 +210,7 @@ func (p *Producer) dispatchBatch(ctx context.Context, items []*outboxport.Entry)
 	dead := make([]outboxport.DeadUpdate, 0)
 	failedAt := time.Now()
 	collectFailure := func(metadata producerMessageMetadata, lastError string) {
-		lease := outboxport.Lease{ID: metadata.ID, LockToken: metadata.LockToken}
+		lease := outboxport.Lease{EventID: metadata.EventID, LockToken: metadata.LockToken}
 		if metadata.RetryCount >= p.options.MaxRetries {
 			dead = append(dead, outboxport.DeadUpdate{Lease: lease, LastError: lastError})
 			return
@@ -223,14 +223,14 @@ func (p *Producer) dispatchBatch(ctx context.Context, items []*outboxport.Entry)
 			continue
 		}
 		metadata := producerMessageMetadata{
-			ID: item.ID, LockToken: item.LockToken, RetryCount: item.RetryCount,
+			EventID: item.EventID, LockToken: item.LockToken, RetryCount: item.RetryCount,
 			EventType: item.EventType, CreatedAt: item.CreatedAt,
 		}
 		message, err := p.newProducerMessage(eventbus.IntegrationEvent{
-			EventID: item.ID, Name: item.EventType, PartitionKey: item.MessageKey, Payload: item.Payload,
+			EventID: item.EventID, Name: item.EventType, PartitionKey: item.PartitionKey, Payload: item.Payload,
 		})
 		if err != nil {
-			log.Printf("构造 Kafka 消息失败：event_id=%s err=%v", metadata.ID, err)
+			log.Printf("构造 Kafka 消息失败：event_id=%s err=%v", metadata.EventID, err)
 			collectFailure(metadata, err.Error())
 			continue
 		}
@@ -269,12 +269,12 @@ func (p *Producer) dispatchBatch(ctx context.Context, items []*outboxport.Entry)
 			createdAge = publishStartedAt.Sub(metadata.CreatedAt)
 		}
 		if publishErr != nil {
-			diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=failed_pending_update error=%q", metadata.ID, metadata.EventType, createdAge.Milliseconds(), publishDuration.Microseconds(), publishErr.Error())
+			diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=failed_pending_update error=%q", metadata.EventID, metadata.EventType, createdAge.Milliseconds(), publishDuration.Microseconds(), publishErr.Error())
 			collectFailure(metadata, publishErr.Error())
 			continue
 		}
-		diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=published_pending_mark_sent", metadata.ID, metadata.EventType, createdAge.Milliseconds(), publishDuration.Microseconds())
-		sent = append(sent, outboxport.Lease{ID: metadata.ID, LockToken: metadata.LockToken})
+		diagnostics.Logf("stage=producer_publish event_id=%s event_type=%s created_age_ms=%d publish_us=%d outcome=published_pending_mark_sent", metadata.EventID, metadata.EventType, createdAge.Milliseconds(), publishDuration.Microseconds())
+		sent = append(sent, outboxport.Lease{EventID: metadata.EventID, LockToken: metadata.LockToken})
 	}
 	return p.markBatchResults(ctx, sent, retry, dead)
 }

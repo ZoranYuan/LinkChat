@@ -68,15 +68,14 @@ func NewMessageDelivery(
 func (delivery *MessageDelivery) Deliver(
 	ctx context.Context,
 	eventType string,
-	conversationID string,
-	envelope protocol.Envelope,
 	event protocol.MessageEvent,
+	payload []byte,
 ) error {
 	switch event.ConvType {
 	case protocol.PrivateChat:
-		return delivery.deliverPrivateMessage(eventType, envelope)
+		return delivery.deliverPrivateMessage(eventType, event, payload)
 	case protocol.RoomChat:
-		return delivery.deliverRoomMessage(ctx, eventType, conversationID, envelope, event)
+		return delivery.deliverRoomMessage(ctx, eventType, event, payload)
 	default:
 		return ErrUnknownConversationType
 	}
@@ -84,18 +83,19 @@ func (delivery *MessageDelivery) Deliver(
 
 func (delivery *MessageDelivery) deliverPrivateMessage(
 	eventType string,
-	envelope protocol.Envelope,
+	event protocol.MessageEvent,
+	payload []byte,
 ) error {
-	return delivery.realtime.DeliverToUser(eventType, envelope.To, envelope.Payload)
+	return delivery.realtime.DeliverToUser(eventType, event.RecvId, payload)
 }
 
 func (delivery *MessageDelivery) deliverRoomMessage(
 	ctx context.Context,
 	eventType string,
-	roomID string,
-	envelope protocol.Envelope,
 	event protocol.MessageEvent,
+	payload []byte,
 ) error {
+	roomID := event.RecvId
 	startedAt := time.Now()
 	roomLookupStartedAt := time.Now()
 	var room *roomentity.Room
@@ -138,8 +138,8 @@ func (delivery *MessageDelivery) deliverRoomMessage(
 	err = delivery.realtime.DeliverToOnlineRoomMembers(
 		eventType,
 		roomID,
-		envelope.Payload,
-		envelope.From,
+		payload,
+		event.SenderId,
 	)
 	diagnostics.Logf("stage=room_delivery message_id=%s seq=%d room_id=%s room_lookup_us=%d policy_us=%d fanout_us=%d total_us=%d member_count=%d active=%t mode=fanout outcome=%s",
 		event.MessageId, event.Seq, roomID, roomLookupDuration.Microseconds(), policyDuration.Microseconds(), time.Since(fanoutStartedAt).Microseconds(),
@@ -150,8 +150,8 @@ func (delivery *MessageDelivery) deliverRoomMessage(
 // 大群只合并最新消息游标，不保存完整消息或预热缓存。
 func (delivery *MessageDelivery) deliverLargeRoomNotice(roomID string, event protocol.MessageEvent) error {
 	startedAt := time.Now()
-	err := delivery.messageBatcher.enqueue(protocol.MessageNotifyEvent{
-		ConversationId: roomID, MessageId: event.MessageId, Seq: event.Seq,
+	err := delivery.messageBatcher.enqueue(roomID, protocol.MessageNotifyEvent{
+		ConversationId: event.ConversationId, MessageId: event.MessageId, Seq: event.Seq,
 	})
 	diagnostics.Logf("stage=large_room_notice_enqueue message_id=%s seq=%d room_id=%s enqueue_us=%d outcome=%s",
 		event.MessageId, event.Seq, roomID, time.Since(startedAt).Microseconds(), deliveryOutcome(err))
@@ -170,6 +170,7 @@ func (delivery *MessageDelivery) Close(ctx context.Context) {
 }
 
 type pendingRoomNotice struct {
+	roomID          string
 	notice          protocol.MessageNotifyEvent
 	firstEnqueuedAt time.Time
 }
@@ -214,8 +215,8 @@ func newLargeRoomMessageBatcher(delivery realtime.RoomMemberDelivery, options La
 	return batcher
 }
 
-func (batcher *largeRoomMessageBatcher) enqueue(notice protocol.MessageNotifyEvent) error {
-	return batcher.shardFor(notice.ConversationId).put(pendingRoomNotice{notice: notice, firstEnqueuedAt: time.Now()})
+func (batcher *largeRoomMessageBatcher) enqueue(roomID string, notice protocol.MessageNotifyEvent) error {
+	return batcher.shardFor(notice.ConversationId).put(pendingRoomNotice{roomID: roomID, notice: notice, firstEnqueuedAt: time.Now()})
 }
 
 func (batcher *largeRoomMessageBatcher) close(ctx context.Context) {
@@ -288,7 +289,7 @@ func (shard *largeRoomMessageBatchShard) flush(ctx context.Context) {
 		payload, err := json.Marshal(item.notice)
 		if err == nil {
 			// 合并批次可能包含多个发送者，所有在线成员都需要获知最新游标。
-			err = shard.parent.delivery.DeliverToOnlineRoomMembers(protocol.EventRoomMessageNotice, item.notice.ConversationId, payload, "")
+			err = shard.parent.delivery.DeliverToOnlineRoomMembers(protocol.EventRoomMessageNotice, item.roomID, payload, "")
 		}
 		if err != nil {
 			log.Printf("投递大群轻量提醒失败：room=%s seq=%d error=%v", item.notice.ConversationId, item.notice.Seq, err)

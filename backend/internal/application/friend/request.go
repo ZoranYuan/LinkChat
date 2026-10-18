@@ -1,6 +1,7 @@
 package friend
 
 import (
+	conversationapp "IM_backend/internal/application/conversation"
 	eventbus "IM_backend/internal/application/ports/eventbus"
 	idport "IM_backend/internal/application/ports/id"
 	outboxport "IM_backend/internal/application/ports/outbox"
@@ -32,6 +33,7 @@ type FriendRequestApplication struct {
 	messageRepository       messagerepo.MessageRepository
 	friendRepository        friendrepo.FriendRepository
 	conversationRepository  conversationrepo.ConversationRepository
+	conversationApplication *conversationapp.ConversationApplication
 	userConvRepository      conversationrepo.UserConversationRepository
 	friendCache             friendcache.FriendCache
 	txManager               txmanager.TxManager
@@ -72,6 +74,10 @@ func (fa *FriendRequestApplication) SetProducerNotifier(notifier eventbus.Produc
 		return
 	}
 	fa.producerNotifier = notifier
+}
+
+func (fa *FriendRequestApplication) SetConversationApplication(application *conversationapp.ConversationApplication) {
+	fa.conversationApplication = application
 }
 
 func (fa *FriendRequestApplication) notifyProducer() {
@@ -137,19 +143,10 @@ func (fa *FriendRequestApplication) createFriendRequestOutbox(
 		return err
 	}
 
-	envelope, err := json.Marshal(protocol.Envelope{
-		From:    record.ApplicantUserId,
-		To:      record.PeerUserId,
-		Payload: payload,
-	})
-	if err != nil {
-		return err
-	}
-
 	return repository.Create(ctx, &outboxport.Entry{
-		EventType:  protocol.EventFriendRequestCreated,
-		MessageKey: record.PeerUserId,
-		Payload:    envelope,
+		EventType:    protocol.EventFriendRequestCreated,
+		PartitionKey: record.PeerUserId,
+		Payload:      payload,
 	})
 }
 
@@ -345,7 +342,10 @@ func (fa *FriendRequestApplication) acceptFriendRequest(
 	defer cancel()
 
 	// 初始化元信息
-	convId := conversationentity.GetConversationID(record.ApplicantUserId, record.PeerUserId, int(conversationvo.PrivateChat))
+	convId, err := fa.idGenerator.Generate()
+	if err != nil {
+		return err
+	}
 
 	// 创建会话
 	conv := conversationentity.NewConversation(
@@ -427,6 +427,14 @@ func (fa *FriendRequestApplication) acceptFriendRequest(
 	fromUserConv.LastReadSeq = int64(len(messages))
 
 	if err := fa.txManager.WithinTransaction(ctx, func(tx any) error {
+		conversationRepo := fa.conversationRepository.WithTx(tx)
+		if err := conversationRepo.LockPrivateParticipants(ctx, record.ApplicantUserId, record.PeerUserId); err != nil {
+			return err
+		}
+		existing, err := conversationRepo.FindPrivateConversation(ctx, record.ApplicantUserId, record.PeerUserId)
+		if err != nil {
+			return err
+		}
 		if err := fa.friendRequestRepository.WithTx(tx).OperateRequest(record.RequestId, int(friendvo.Pending), int(record.Status)); err != nil {
 			fmt.Println("处理好友申请失败：", err)
 			return ErrOperationFailed
@@ -448,15 +456,31 @@ func (fa *FriendRequestApplication) acceptFriendRequest(
 			return ErrOperationFailed
 		}
 
-		if err := fa.conversationRepository.WithTx(tx).CreateConversation(ctx, conv); err != nil {
-			return ErrCreateConvFailed
+		if existing == nil {
+			if err := conversationRepo.CreateConversation(ctx, conv); err != nil {
+				return ErrCreateConvFailed
+			}
+		} else {
+			firstSeq, err := conversationRepo.ReserveSequenceRange(ctx, existing.ConversationId, len(messages), messages[len(messages)-1].MessageId)
+			if err != nil {
+				return err
+			}
+			conv = existing
+			conv.LatestSeq = firstSeq + int64(len(messages)) - 1
+			conv.LatestMessageId = messages[len(messages)-1].MessageId
+			for i, message := range messages {
+				message.ConversationId = conv.ConversationId
+				message.Seq = firstSeq + int64(i)
+			}
+			toUserConv.ConversationId, fromUserConv.ConversationId = conv.ConversationId, conv.ConversationId
+			toUserConv.LastReadSeq, fromUserConv.LastReadSeq = conv.LatestSeq, conv.LatestSeq
 		}
 
-		if err := fa.userConvRepository.WithTx(tx).CreateUserConversation(ctx, toUserConv); err != nil {
+		if err := fa.userConvRepository.WithTx(tx).CreateUserConversation(ctx, toUserConv); err != nil && !errors.Is(err, conversationentity.ErrDuplicateCreation) {
 			return ErrCreateUserConvFailed
 		}
 
-		if err := fa.userConvRepository.WithTx(tx).CreateUserConversation(ctx, fromUserConv); err != nil {
+		if err := fa.userConvRepository.WithTx(tx).CreateUserConversation(ctx, fromUserConv); err != nil && !errors.Is(err, conversationentity.ErrDuplicateCreation) {
 			return ErrCreateUserConvFailed
 		}
 
@@ -478,6 +502,7 @@ func (fa *FriendRequestApplication) acceptFriendRequest(
 	fa.notifyProducer()
 
 	state := &friendcache.RelationState{Status: friendvo.Friend}
+	fa.conversationApplication.CacheConversationInfo(ctx, conv)
 	if err := fa.friendCache.SetRelation(ctx, record.ApplicantUserId, record.PeerUserId, state); err != nil {
 		log.Println("预热好友关系缓存失败：", err)
 	}
@@ -520,18 +545,10 @@ func (fa *FriendRequestApplication) createInitialMessageOutboxes(
 		if err != nil {
 			return err
 		}
-		envelope, err := json.Marshal(protocol.Envelope{
-			From:    message.SenderId,
-			To:      receiverID,
-			Payload: eventPayload,
-		})
-		if err != nil {
-			return err
-		}
 		if err := repository.Create(ctx, &outboxport.Entry{
-			EventType:  protocol.EventTypeSendMessage,
-			MessageKey: conversation.ConversationId,
-			Payload:    envelope,
+			EventType:    protocol.EventTypeSendMessage,
+			PartitionKey: conversation.ConversationId,
+			Payload:      eventPayload,
 		}); err != nil {
 			return err
 		}

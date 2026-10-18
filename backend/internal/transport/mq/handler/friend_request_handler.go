@@ -5,6 +5,8 @@ import (
 	realtimeport "IM_backend/internal/application/ports/realtime"
 	"IM_backend/internal/shared/protocol"
 	"context"
+	"encoding/json"
+	"fmt"
 )
 
 type FriendRequestHandler struct {
@@ -16,14 +18,17 @@ func NewFriendRequestHandler(delivery realtimeport.UserDelivery) eventbus.Handle
 }
 
 func (handler *FriendRequestHandler) Handle(_ context.Context, message eventbus.IncomingEvent) error {
-	envelope, err := decodeEnvelope(message.Payload)
-	if err != nil {
+	var event protocol.FriendRequestCreatedEvent
+	if err := json.Unmarshal(message.Payload, &event); err != nil {
 		return eventbus.NonRetryable(err)
+	}
+	if event.RequestId == "" || event.ApplicantUserId == "" || event.PeerUserId == "" {
+		return eventbus.NonRetryable(fmt.Errorf("好友申请事件缺少必要字段"))
 	}
 
 	return handler.delivery.DeliverToUser(
 		protocol.EventFriendRequestCreated,
-		envelope.To,
-		envelope.Payload,
+		event.PeerUserId,
+		message.Payload,
 	)
 }

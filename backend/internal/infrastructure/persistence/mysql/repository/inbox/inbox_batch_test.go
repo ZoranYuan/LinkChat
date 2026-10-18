@@ -128,9 +128,9 @@ func newSQLTest(t *testing.T, steps ...sqlStep) *InboxRepository {
 
 func TestTryClaimRequiresEventID(t *testing.T) {
 	repo := newSQLTest(t)
-	claimed, token, retryCount, err := repo.TryClaim(context.Background(), "", "message", time.Now(), time.Now())
-	if !errors.Is(err, inboxport.ErrEventIDRequired) || claimed || token != "" || retryCount != 0 {
-		t.Fatalf("unexpected empty event_id claim result: claimed=%t token=%q retries=%d err=%v", claimed, token, retryCount, err)
+	claimed, token, attemptCount, err := repo.TryClaim(context.Background(), "", "message", time.Now(), time.Now())
+	if !errors.Is(err, inboxport.ErrEventIDRequired) || claimed || token != "" || attemptCount != 0 {
+		t.Fatalf("unexpected empty event_id claim result: claimed=%t token=%q attempts=%d err=%v", claimed, token, attemptCount, err)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestRenewBatchDetectsLeaseLoss(t *testing.T) {
 }
 
 func TestReleaseBatchUndoesOnlyUnexecutedAttempts(t *testing.T) {
-	repo := newSQLTest(t, sqlStep{kind: "exec", contains: []string{"retry_count - 1", "lock_token = ?"}, args: []any{"old-token"}}, sqlStep{kind: "exec", contains: []string{"UPDATE `inboxes`", "lock_token = ?"}, args: []any{"old-token"}})
+	repo := newSQLTest(t, sqlStep{kind: "exec", contains: []string{"attempt_count - 1", "lock_token = ?"}, args: []any{"old-token"}}, sqlStep{kind: "exec", contains: []string{"UPDATE `inboxes`", "lock_token = ?"}, args: []any{"old-token"}})
 	if err := repo.ReleaseBatch(context.Background(), []string{"a", "b"}, "old-token", true); err != nil {
 		t.Fatal(err)
 	}

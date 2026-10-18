@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"IM_backend/internal/infrastructure/persistence/mysql/model"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -63,6 +64,16 @@ func InitMySQL(dsn string) *gorm.DB {
 
 // Migrate 按当前模型创建或更新表结构。
 func Migrate(db *gorm.DB) error {
+	for _, column := range [][2]string{{"outboxes", "id"}, {"outboxes", "message_key"}, {"inboxes", "retry_count"}, {"inboxes", "processed_at"}} {
+		if db.Migrator().HasTable(column[0]) && db.Migrator().HasColumn(column[0], column[1]) {
+			return fmt.Errorf("事件表需要迁移：%s.%s；停止旧服务并执行 go run ./cmd/migrate -event-delivery", column[0], column[1])
+		}
+	}
+	if db.Migrator().HasTable("outboxes") {
+		if err := verifyPendingEventFormat(db, "outboxes"); err != nil {
+			return err
+		}
+	}
 	return db.AutoMigrate(
 		&model.User{},
 		&model.OutboxRecord{},

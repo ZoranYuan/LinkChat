@@ -1,11 +1,13 @@
 package roomuser
 
 import (
+	"context"
+	"errors"
+
 	roomrepo "IM_backend/internal/application/ports/persistence/repository/room"
 	roomentity "IM_backend/internal/domain/room/entity"
 	roomvo "IM_backend/internal/domain/room/value_object"
 	"IM_backend/internal/infrastructure/persistence/mysql/model"
-	"errors"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -39,6 +41,23 @@ func (rur *RoomUserRepository) GetRelationByIDs(userId, roomId string) (*rooment
 	}
 
 	return ToDomain(m), nil
+}
+
+func (rur *RoomUserRepository) ListRelationsByRoomAndUserIDs(ctx context.Context, roomID string, userIDs []string) ([]*roomentity.RoomUser, error) {
+	if len(userIDs) == 0 {
+		return []*roomentity.RoomUser{}, nil
+	}
+	var rows []model.RoomUser
+	if err := rur.db.WithContext(ctx).
+		Where("room_id = ? AND user_id IN ?", roomID, userIDs).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	members := make([]*roomentity.RoomUser, 0, len(rows))
+	for _, row := range rows {
+		members = append(members, ToDomain(row))
+	}
+	return members, nil
 }
 
 func (rur *RoomUserRepository) ListActiveUserIDs(roomId string) ([]string, error) {

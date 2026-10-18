@@ -117,18 +117,21 @@ func (rc *RoomCache) RecordActivity(ctx context.Context, roomId string) error {
 	return rc.recordActivityAt(ctx, roomId, time.Now())
 }
 
-// RecordActivityAndGetLevel 原子记录消息，并按窗口消息数乘在线会话数计算活跃等级。
-func (rc *RoomCache) RecordActivityAndGetLevel(ctx context.Context, roomId string, onlineSessions int) (int, error) {
-	if roomId == "" {
+// RecordActivityBatchAndGetLevel 按同一时间桶批量记录消息，并计算房间活跃等级。
+func (rc *RoomCache) RecordActivityBatchAndGetLevel(ctx context.Context, roomID string, messageCount, onlineSessions int, at time.Time) (int, error) {
+	if roomID == "" {
 		return roomcache.RoomActivityNormal, errors.New("roomID 不能为空")
 	}
 	if rc == nil || rc.store == nil || rc.store.Client() == nil {
 		return roomcache.RoomActivityNormal, errors.New("房间活跃度缓存未配置")
 	}
-	return rc.recordActivityAndGetLevelAt(ctx, roomId, time.Now(), onlineSessions)
+	return rc.recordActivityAndGetLevelAt(ctx, roomID, messageCount, at, onlineSessions)
 }
 
-func (rc *RoomCache) recordActivityAndGetLevelAt(ctx context.Context, roomId string, now time.Time, onlineSessions int) (int, error) {
+func (rc *RoomCache) recordActivityAndGetLevelAt(ctx context.Context, roomID string, messageCount int, at time.Time, onlineSessions int) (int, error) {
+	if messageCount <= 0 {
+		return roomcache.RoomActivityNormal, errors.New("消息数量必须大于 0")
+	}
 	settings, err := rc.activitySettings()
 	if err != nil {
 		return roomcache.RoomActivityNormal, err
@@ -136,9 +139,9 @@ func (rc *RoomCache) recordActivityAndGetLevelAt(ctx context.Context, roomId str
 	if onlineSessions < 0 {
 		onlineSessions = 0
 	}
-	currentBucket := now.Unix() / settings.bucketSeconds
+	currentBucket := at.Unix() / settings.bucketSeconds
 	const script = `
-		redis.call('HINCRBY', KEYS[1], ARGV[1], 1)
+		redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[5])
 		local current = tonumber(ARGV[1])
 		local windowBuckets = tonumber(ARGV[2])
 		local cleanupBuckets = tonumber(ARGV[3])
@@ -160,11 +163,12 @@ func (rc *RoomCache) recordActivityAndGetLevelAt(ctx context.Context, roomId str
 	totalMessages, err := rc.store.Client().Eval(
 		ctx,
 		script,
-		[]string{ActivateLevelKey(roomId)},
+		[]string{ActivateLevelKey(roomID)},
 		currentBucket,
 		settings.windowBuckets,
 		settings.cleanupBuckets,
 		settings.keyTTLSeconds,
+		messageCount,
 	).Int64()
 	if err != nil {
 		return roomcache.RoomActivityNormal, err

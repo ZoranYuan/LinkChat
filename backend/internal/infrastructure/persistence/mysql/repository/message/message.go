@@ -40,6 +40,29 @@ func (r *MessageRepository) CreateNewMessage(ctx context.Context, msg *messageen
 	return err
 }
 
+func (r *MessageRepository) CreateNewMessages(ctx context.Context, messages []*messageentity.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	rows := make([]*model.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg != nil {
+			rows = append(rows, toMessageModel(msg))
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	err := r.db.WithContext(ctx).Create(&rows).Error
+	if err != nil {
+		var mysqlErr *mysqlDriver.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return messageentity.ErrDuplicateClientMessage
+		}
+	}
+	return err
+}
+
 func (r *MessageRepository) FindByClientMsgID(
 	ctx context.Context,
 	senderID, clientMsgID string,

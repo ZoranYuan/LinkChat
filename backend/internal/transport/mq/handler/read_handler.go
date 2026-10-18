@@ -18,17 +18,12 @@ func NewReadHandler(delivery realtimeport.UserDelivery) eventbus.Handler {
 }
 
 func (handler *ReadHandler) Handle(ctx context.Context, message eventbus.IncomingEvent) error {
-	envelope, err := decodeEnvelope(message.Payload)
-	if err != nil {
-		return eventbus.NonRetryable(err)
-	}
-
 	var event protocol.MessageReadCommittedEvent
-	if err := json.Unmarshal(envelope.Payload, &event); err != nil {
+	if err := json.Unmarshal(message.Payload, &event); err != nil {
 		return eventbus.NonRetryable(err)
 	}
-	if envelope.To == "" {
-		return eventbus.NonRetryable(fmt.Errorf("已读事件缺少通知接收者"))
+	if event.RecipientUserId == "" || event.ReaderId == "" || event.ConversationId == "" || event.LastReadSeq <= 0 {
+		return eventbus.NonRetryable(fmt.Errorf("已读事件缺少必要字段"))
 	}
 
 	notify := protocol.MessageReadAckEvent{
@@ -45,7 +40,7 @@ func (handler *ReadHandler) Handle(ctx context.Context, message eventbus.Incomin
 
 	if err := handler.delivery.DeliverToUser(
 		protocol.EventReadMessageNotify,
-		envelope.To,
+		event.RecipientUserId,
 		payload,
 	); err != nil {
 		return err

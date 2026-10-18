@@ -30,18 +30,13 @@ func TestFriendRequestHandlerDeliversToPeerUser(t *testing.T) {
 		ApplyTime:       123,
 	}
 	payload, _ := json.Marshal(notification)
-	envelope, _ := json.Marshal(protocol.Envelope{
-		From:    "u1",
-		To:      "u2",
-		Payload: payload,
-	})
 
 	stub := &friendRequestDeliveryStub{}
 	handler := NewFriendRequestHandler(stub)
 	err := handler.Handle(context.Background(), eventbus.IncomingEvent{
 		Name:    protocol.EventFriendRequestCreated,
-		Key:     []byte("u2"),
-		Payload: envelope,
+		Key:     []byte("partition-only-key"),
+		Payload: payload,
 	})
 	if err != nil {
 		t.Fatalf("处理好友申请提醒失败：%v", err)

@@ -7,7 +7,7 @@ import (
 
 // Lease 保存每条已领取记录的租约凭据，批量更新时逐条校验，避免覆盖其他领取者的状态。
 type Lease struct {
-	ID        string
+	EventID   string
 	LockToken string
 }
 
@@ -24,6 +24,7 @@ type DeadUpdate struct {
 
 type OutboxRepository interface {
 	Create(ctx context.Context, outbox *Entry) error
+	CreateBatch(ctx context.Context, outboxes []*Entry) error
 	ClaimPending(
 		ctx context.Context,
 		now time.Time,

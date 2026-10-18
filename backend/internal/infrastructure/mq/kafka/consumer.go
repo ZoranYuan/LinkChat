@@ -33,7 +33,7 @@ type Consumer struct {
 	inbox               inboxport.InboxRepository
 	txManager           txmanager.TxManager
 	leaseStaleAfter     time.Duration
-	maxRetries          int
+	maxAttempts         int
 	deadLetterPublisher eventbus.Publisher
 	deadLetterSuffix    string
 }
@@ -59,9 +59,9 @@ func (c *Consumer) claimRetryInterval() time.Duration {
 }
 
 type inboxClaim struct {
-	claimed    bool
-	lockToken  string
-	retryCount int
+	claimed      bool
+	lockToken    string
+	attemptCount int
 }
 
 func (c *Consumer) claim(ctx context.Context, message eventbus.IncomingEvent) (inboxClaim, error) {
@@ -82,7 +82,7 @@ func (c *Consumer) claim(ctx context.Context, message eventbus.IncomingEvent) (i
 	now := time.Now()
 	err := c.txManager.WithinTransaction(ctx, func(tx any) error {
 		var err error
-		claim.claimed, claim.lockToken, claim.retryCount, err = c.inbox.WithTx(tx).TryClaim(
+		claim.claimed, claim.lockToken, claim.attemptCount, err = c.inbox.WithTx(tx).TryClaim(
 			ctx,
 			message.EventID,
 			string(message.Name),
@@ -177,7 +177,7 @@ func (c *Consumer) handle(ctx context.Context, message eventbus.IncomingEvent) e
 		diagnostics.Logf("stage=kafka_consumer event_id=%s event_type=%s claim_us=%d handler_us=%d total_us=%d outcome=handler_error error=%q",
 			message.EventID, message.Name, claimDuration.Microseconds(), handlerDuration.Microseconds(), time.Since(startedAt).Microseconds(), handlerErr.Error())
 		if eventbus.IsNonRetryable(handlerErr) ||
-			(c.maxRetries > 0 && inboxState.retryCount >= c.maxRetries) {
+			(c.maxAttempts > 0 && inboxState.attemptCount >= c.maxAttempts) {
 			if err := c.publishDeadLetter(ctx, message); err != nil {
 				return err
 			}
@@ -185,9 +185,9 @@ func (c *Consumer) handle(ctx context.Context, message eventbus.IncomingEvent) e
 				return fmt.Errorf("标记 Inbox 死信状态失败：%w", err)
 			}
 			log.Printf(
-				"消息进入死信队列：event_id=%s，retry_count=%d，error=%v",
+				"消息进入死信队列：event_id=%s，attempt_count=%d，error=%v",
 				message.EventID,
-				inboxState.retryCount,
+				inboxState.attemptCount,
 				handlerErr,
 			)
 			return nil
@@ -374,7 +374,7 @@ func NewConsumer(
 	if topicRouter == nil || inbox == nil || txManager == nil || deadLetterPublisher == nil {
 		return nil, errors.New("Kafka Consumer 依赖未配置")
 	}
-	if config.MaxRetries <= 0 ||
+	if config.MaxAttempts <= 0 ||
 		config.LeaseStaleAfterSecs <= 0 ||
 		config.ConsumeRetryIntervalSecs <= 0 {
 		return nil, errors.New("Kafka Consumer 重试配置无效")
@@ -401,7 +401,7 @@ func NewConsumer(
 		inbox:               inbox,
 		txManager:           txManager,
 		leaseStaleAfter:     time.Duration(config.LeaseStaleAfterSecs) * time.Second,
-		maxRetries:          config.MaxRetries,
+		maxAttempts:         config.MaxAttempts,
 		deadLetterPublisher: deadLetterPublisher,
 		deadLetterSuffix:    config.DeadLetterSuffix,
 	}

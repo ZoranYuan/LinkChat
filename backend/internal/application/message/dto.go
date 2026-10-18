@@ -30,6 +30,7 @@ type MessageAckDTO struct {
 	AttachmentID    string
 	SendTime        int64
 	Status          string
+	Error           string
 }
 
 type MessageDTO struct {

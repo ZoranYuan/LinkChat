@@ -112,7 +112,7 @@ func newConsumerTest(t *testing.T, handler consumerTestHandler) (*Consumer, *con
 	}
 	inbox := &consumerTestInbox{attempts: map[string]int{}, terminal: map[string]bool{}, completed: make(chan string, 20)}
 	c := &Consumer{handlers: map[string]eventbus.Handler{name: handler},
-		inbox: inbox, txManager: consumerTestTx{}, leaseStaleAfter: time.Minute, maxRetries: 3, deadLetterSuffix: ".dlq"}
+		inbox: inbox, txManager: consumerTestTx{}, leaseStaleAfter: time.Minute, maxAttempts: 3, deadLetterSuffix: ".dlq"}
 	return c, inbox, saramaAdapter{consumer: c, topicRouter: router}
 }
 
@@ -295,5 +295,36 @@ func TestConsumerDeadLetterMustPublishBeforeTerminalState(t *testing.T) {
 	}
 	if !inbox.terminal[event.EventID] {
 		t.Fatal("successful DLQ publication should mark Inbox dead")
+	}
+}
+
+func TestConsumerMaxAttemptsIncludesInitialAttempt(t *testing.T) {
+	handled := 0
+	c, inbox, adapter := newConsumerTest(t, func(context.Context, eventbus.IncomingEvent) error {
+		handled++
+		return errors.New("temporary failure")
+	})
+	published := 0
+	c.deadLetterPublisher = consumerTestPublisher(func(_ context.Context, event eventbus.IntegrationEvent) error {
+		published++
+		if event.EventID != "attempt-limit" || event.Name != protocol.EventTypeSendMessage+".dlq" {
+			t.Fatalf("死信事件错误：%+v", event)
+		}
+		return nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session := consumerTestSession{ctx: ctx, marked: make(chan int64, 1)}
+	claim := consumerTestClaim{messages: make(chan *sarama.ConsumerMessage, 1)}
+	claim.messages <- consumerTestMessage("attempt-limit", 12)
+	close(claim.messages)
+	if err := adapter.ConsumeClaim(session, claim); err != nil {
+		t.Fatal(err)
+	}
+	if handled != 3 || inbox.attempts["attempt-limit"] != 3 || published != 1 || !inbox.terminal["attempt-limit"] {
+		t.Fatalf("最多三次尝试应为首次加两次重试：handled=%d attempts=%d published=%d", handled, inbox.attempts["attempt-limit"], published)
+	}
+	if len(session.marked) != 1 || <-session.marked != 12 {
+		t.Fatal("写入死信终态后才允许标记 offset")
 	}
 }

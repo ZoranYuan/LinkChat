@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -15,9 +16,8 @@ type MessageDelivery interface {
 	Deliver(
 		ctx context.Context,
 		eventType string,
-		conversationID string,
-		envelope protocol.Envelope,
 		event protocol.MessageEvent,
+		payload []byte,
 	) error
 }
 
@@ -43,19 +43,17 @@ func (handler *MessageHandler) Close(ctx context.Context) {
 
 func (handler *MessageHandler) Handle(ctx context.Context, message eventbus.IncomingEvent) error {
 	startedAt := time.Now()
-	envelope, err := decodeEnvelope(message.Payload)
-	if err != nil {
+	var messageEvent protocol.MessageEvent
+	if err := json.Unmarshal(message.Payload, &messageEvent); err != nil {
 		return eventbus.NonRetryable(err)
 	}
-
-	var messageEvent protocol.MessageEvent
-	if err := json.Unmarshal(envelope.Payload, &messageEvent); err != nil {
-		return eventbus.NonRetryable(err)
+	if messageEvent.MessageId == "" || messageEvent.SenderId == "" || messageEvent.RecvId == "" || messageEvent.ConversationId == "" || messageEvent.Seq <= 0 {
+		return eventbus.NonRetryable(fmt.Errorf("消息事件缺少必要字段"))
 	}
 
 	decodeDuration := time.Since(startedAt)
 	deliveryStartedAt := time.Now()
-	err = handler.delivery.Deliver(ctx, string(message.Name), string(message.Key), envelope, messageEvent)
+	err := handler.delivery.Deliver(ctx, message.Name, messageEvent, message.Payload)
 	deliveryDuration := time.Since(deliveryStartedAt)
 	eventAge := time.Duration(0)
 	if messageEvent.SendTime > 0 {
@@ -75,10 +73,4 @@ func handlerOutcome(err error) string {
 		return "error"
 	}
 	return "delivered"
-}
-
-func decodeEnvelope(data []byte) (protocol.Envelope, error) {
-	var envelope protocol.Envelope
-	err := json.Unmarshal(data, &envelope)
-	return envelope, err
 }

@@ -7,6 +7,7 @@ import (
 
 type MessageRepository interface {
 	CreateNewMessage(ctx context.Context, msg *messageentity.Message) error
+	CreateNewMessages(ctx context.Context, messages []*messageentity.Message) error
 	FindByMessageID(ctx context.Context, messageID string) (*messageentity.Message, error)
 	FindByClientMsgID(ctx context.Context, senderID, clientMsgID string) (*messageentity.Message, error)
 

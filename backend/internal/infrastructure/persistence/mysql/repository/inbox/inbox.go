@@ -36,7 +36,7 @@ func (r *InboxRepository) TryClaimBatch(ctx context.Context, events []inboxport.
 		if event.EventID == "" {
 			return inboxport.ErrEventIDRequired
 		}
-		rows = append(rows, model.InboxRecord{EventID: event.EventID, EventType: event.EventType, Status: inboxport.StatusProcessing, LockedAt: &now, LockToken: lockToken, RetryCount: 1, ProcessedAt: now})
+		rows = append(rows, model.InboxRecord{EventID: event.EventID, EventType: event.EventType, Status: inboxport.StatusProcessing, LockedAt: &now, LockToken: lockToken, AttemptCount: 1, CreatedAt: now, UpdatedAt: now})
 	}
 	result := r.db.WithContext(ctx).Create(&rows)
 	if result.Error != nil {
@@ -73,7 +73,7 @@ func (r *InboxRepository) CompleteBatch(ctx context.Context, eventIDs []string, 
 	if len(eventIDs) == 0 {
 		return nil
 	}
-	result := r.db.WithContext(ctx).Model(&model.InboxRecord{}).Where("event_id IN ? AND status = ? AND lock_token = ?", eventIDs, inboxport.StatusProcessing, lockToken).Updates(map[string]any{"status": inboxport.StatusCompleted, "locked_at": nil, "lock_token": "", "processed_at": now})
+	result := r.db.WithContext(ctx).Model(&model.InboxRecord{}).Where("event_id IN ? AND status = ? AND lock_token = ?", eventIDs, inboxport.StatusProcessing, lockToken).Updates(map[string]any{"status": inboxport.StatusCompleted, "locked_at": nil, "lock_token": "", "finished_at": now})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -87,10 +87,10 @@ func (r *InboxRepository) ReleaseBatch(ctx context.Context, eventIDs []string, l
 	if len(eventIDs) == 0 {
 		return nil
 	}
-	// 尚未执行的事件不算一次业务尝试，释放时撤销预占的 retry_count。
+	// 尚未执行的事件不算一次业务尝试，释放时撤销预占的 attempt_count。
 	updates := map[string]any{"locked_at": nil, "lock_token": ""}
 	if undoAttempt {
-		updates["retry_count"] = gorm.Expr("retry_count - 1")
+		updates["attempt_count"] = gorm.Expr("attempt_count - 1")
 	}
 	return r.db.WithContext(ctx).Model(&model.InboxRecord{}).Where("event_id IN ? AND status = ? AND lock_token = ?", eventIDs, inboxport.StatusProcessing, lockToken).Updates(updates).Error
 }
@@ -103,13 +103,14 @@ func (r *InboxRepository) TryClaim(ctx context.Context, eventID, eventType strin
 	claimed := false
 	lockToken := uuid.NewString()
 	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&model.InboxRecord{
-		EventID:     eventID,
-		EventType:   eventType,
-		Status:      inboxport.StatusProcessing,
-		LockedAt:    &now,
-		LockToken:   lockToken,
-		RetryCount:  1,
-		ProcessedAt: now,
+		EventID:      eventID,
+		EventType:    eventType,
+		Status:       inboxport.StatusProcessing,
+		LockedAt:     &now,
+		LockToken:    lockToken,
+		AttemptCount: 1,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if result.Error != nil {
 		return false, "", 0, result.Error
@@ -125,31 +126,31 @@ func (r *InboxRepository) TryClaim(ctx context.Context, eventID, eventType strin
 	}
 	switch record.Status {
 	case inboxport.StatusCompleted, inboxport.StatusDead:
-		return false, "", record.RetryCount, nil
+		return false, "", record.AttemptCount, nil
 	case inboxport.StatusProcessing:
 		// 未到过期时间
 		if record.LockedAt != nil && record.LockedAt.After(staleBefore) {
-			return false, "", record.RetryCount, inboxport.ErrEventInProgress
+			return false, "", record.AttemptCount, inboxport.ErrEventInProgress
 		}
 	}
 
 	result = r.db.WithContext(ctx).Model(&model.InboxRecord{}).
 		Where("event_id = ?", eventID).
 		Updates(map[string]any{
-			"status":      inboxport.StatusProcessing,
-			"locked_at":   &now,
-			"lock_token":  lockToken,
-			"retry_count": gorm.Expr("retry_count + 1"),
-			"last_error":  "",
+			"status":        inboxport.StatusProcessing,
+			"locked_at":     &now,
+			"lock_token":    lockToken,
+			"attempt_count": gorm.Expr("attempt_count + 1"),
+			"last_error":    "",
 		})
 	if result.Error != nil {
 		return false, "", 0, result.Error
 	}
 	claimed = result.RowsAffected == 1
 	if !claimed {
-		return false, "", record.RetryCount, inboxport.ErrLeaseLost
+		return false, "", record.AttemptCount, inboxport.ErrLeaseLost
 	}
-	return claimed, lockToken, record.RetryCount + 1, nil
+	return claimed, lockToken, record.AttemptCount + 1, nil
 }
 
 // MarkRetry 释放当前消费者的 Inbox 租约，让当前消息可以在本分区内重试。
@@ -172,15 +173,15 @@ func (r *InboxRepository) MarkRetry(ctx context.Context, eventID, lockToken, las
 	return nil
 }
 
-func (r *InboxRepository) MarkCompleted(ctx context.Context, eventID, lockToken string, processedAt time.Time) error {
+func (r *InboxRepository) MarkCompleted(ctx context.Context, eventID, lockToken string, finishedAt time.Time) error {
 	result := r.db.WithContext(ctx).
 		Model(&model.InboxRecord{}).
 		Where("event_id = ? AND status = ? AND lock_token = ?", eventID, inboxport.StatusProcessing, lockToken).
 		Updates(map[string]any{
-			"status":       inboxport.StatusCompleted,
-			"locked_at":    nil,
-			"lock_token":   "",
-			"processed_at": processedAt,
+			"status":      inboxport.StatusCompleted,
+			"locked_at":   nil,
+			"lock_token":  "",
+			"finished_at": finishedAt,
 		})
 	if result.Error != nil {
 		return result.Error
@@ -202,16 +203,16 @@ func (r *InboxRepository) MarkCompleted(ctx context.Context, eventID, lockToken 
 	return nil
 }
 
-func (r *InboxRepository) MarkDead(ctx context.Context, eventID, lockToken, lastError string, processedAt time.Time) error {
+func (r *InboxRepository) MarkDead(ctx context.Context, eventID, lockToken, lastError string, finishedAt time.Time) error {
 	result := r.db.WithContext(ctx).
 		Model(&model.InboxRecord{}).
 		Where("event_id = ? AND status = ? AND lock_token = ?", eventID, inboxport.StatusProcessing, lockToken).
 		Updates(map[string]any{
-			"status":       inboxport.StatusDead,
-			"locked_at":    nil,
-			"lock_token":   "",
-			"last_error":   lastError,
-			"processed_at": processedAt,
+			"status":      inboxport.StatusDead,
+			"locked_at":   nil,
+			"lock_token":  "",
+			"last_error":  lastError,
+			"finished_at": finishedAt,
 		})
 	if result.Error != nil {
 		return result.Error

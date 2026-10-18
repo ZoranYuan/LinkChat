@@ -43,9 +43,8 @@ func TestDeliveryUsesLocalActiveHoldAndKeepsLargeRoomsPulling(t *testing.T) {
 			delivery := NewMessageDelivery(realtime, sendTestRoomRepository{members: test.members}, state,
 				configs.MessageConfig{RoomRealtimeFanoutLimit: 500, LargeRoomNoticeLingerMilliseconds: 3600000, LargeRoomNoticeShardCount: 1})
 			t.Cleanup(func() { delivery.Close(context.Background()) })
-			err := delivery.Deliver(context.Background(), protocol.EventTypeSendMessage, "room",
-				protocol.Envelope{From: "sender", Payload: []byte(`{}`)},
-				protocol.MessageEvent{ConvType: protocol.RoomChat, ConversationId: "room", Seq: 1})
+			err := delivery.Deliver(context.Background(), protocol.EventTypeSendMessage,
+				protocol.MessageEvent{SenderId: "sender", RecvId: "room", ConvType: protocol.RoomChat, ConversationId: "room", Seq: 1}, []byte(`{}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,15 +71,15 @@ func TestCommittedActiveMessageImmediatelyChangesConsumerPolicy(t *testing.T) {
 	delivery := NewMessageDelivery(realtime, app.roomRepository, app.roomActivityState,
 		configs.MessageConfig{RoomRealtimeFanoutLimit: 500, LargeRoomNoticeLingerMilliseconds: 3600000, LargeRoomNoticeShardCount: 1})
 	t.Cleanup(func() { delivery.Close(context.Background()) })
-	ack, err := app.HandleSendMessage(context.Background(), sendTestDTO())
-	if err != nil {
+	acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{sendTestDTO()})
+	if err != nil || len(acks) != 1 {
 		t.Fatal(err)
 	}
+	ack := acks[0]
 	if len(cache.warmed) != 1 || cache.warmed[0].Seq != ack.Seq {
 		t.Fatal("committed ACTIVE message was not warmed")
 	}
-	if err := delivery.Deliver(context.Background(), protocol.EventTypeSendMessage, "room",
-		protocol.Envelope{From: "sender", Payload: []byte(`{}`)}, cache.warmed[0]); err != nil {
+	if err := delivery.Deliver(context.Background(), protocol.EventTypeSendMessage, cache.warmed[0], []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	if realtime.calls != 0 {
@@ -127,7 +126,7 @@ func TestRoomNoticeTimerBroadcastsOnlyLatestMessage(t *testing.T) {
 		if seq == 102 {
 			notice.MessageId = "latest"
 		}
-		if err := batcher.enqueue(notice); err != nil {
+		if err := batcher.enqueue("room", notice); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -149,7 +148,7 @@ func TestRoomNoticeTimerBroadcastsOnlyLatestMessage(t *testing.T) {
 func TestRoomNoticeCoalescesMessagesAndAcceptsAdditionalRooms(t *testing.T) {
 	batcher := newNoticeTestBatcher(t, func(string, string, []byte, string) error { return nil }, time.Hour)
 	for seq := int64(1); seq <= 2000; seq++ {
-		if err := batcher.enqueue(noticeTestEvent(seq)); err != nil {
+		if err := batcher.enqueue("room", noticeTestEvent(seq)); err != nil {
 			t.Fatalf("existing room update rejected: %v", err)
 		}
 	}
@@ -162,7 +161,7 @@ func TestRoomNoticeCoalescesMessagesAndAcceptsAdditionalRooms(t *testing.T) {
 	}
 	other := noticeTestEvent(1)
 	other.ConversationId = "another-room"
-	if err := batcher.enqueue(other); err != nil {
+	if err := batcher.enqueue("another-room", other); err != nil {
 		t.Fatalf("additional room should be accepted: %v", err)
 	}
 }
@@ -174,14 +173,14 @@ func TestRoomNoticeFailureMergesWithNewerPendingNotice(t *testing.T) {
 	batcher = newNoticeTestBatcher(t, func(_, _ string, payload []byte, _ string) error {
 		calls++
 		if calls == 1 {
-			if err := batcher.enqueue(noticeTestEvent(200)); err != nil {
+			if err := batcher.enqueue("room", noticeTestEvent(200)); err != nil {
 				t.Fatal(err)
 			}
 			return errors.New("Redis unavailable")
 		}
 		return json.Unmarshal(payload, &delivered)
 	}, time.Hour)
-	if err := batcher.enqueue(noticeTestEvent(100)); err != nil {
+	if err := batcher.enqueue("room", noticeTestEvent(100)); err != nil {
 		t.Fatal(err)
 	}
 	batcher.shards[0].flush(context.Background())
@@ -194,18 +193,35 @@ func TestRoomNoticeFailureMergesWithNewerPendingNotice(t *testing.T) {
 func TestRoomNoticeCloseFlushesAndRejectsFurtherInput(t *testing.T) {
 	calls := 0
 	batcher := newNoticeTestBatcher(t, func(string, string, []byte, string) error { calls++; return nil }, time.Hour)
-	if err := batcher.enqueue(noticeTestEvent(100)); err != nil {
+	if err := batcher.enqueue("room", noticeTestEvent(100)); err != nil {
 		t.Fatal(err)
 	}
 	batcher.close(context.Background())
 	if calls != 1 {
 		t.Fatalf("shutdown broadcasts=%d", calls)
 	}
-	if err := batcher.enqueue(noticeTestEvent(101)); !errors.Is(err, ErrLargeRoomMessageBatchClosed) {
+	if err := batcher.enqueue("room", noticeTestEvent(101)); !errors.Is(err, ErrLargeRoomMessageBatchClosed) {
 		t.Fatalf("closed enqueue=%v", err)
 	}
 	batcher.close(context.Background())
 	if calls != 1 {
 		t.Fatal("shutdown flushed twice")
+	}
+}
+
+func TestLargeRoomNoticeRoutesToRoomWithIndependentConversationID(t *testing.T) {
+	var target string
+	var received protocol.MessageNotifyEvent
+	batcher := newNoticeTestBatcher(t, func(_ string, roomID string, payload []byte, _ string) error {
+		target = roomID
+		return json.Unmarshal(payload, &received)
+	}, time.Hour)
+	notice := protocol.MessageNotifyEvent{ConversationId: "conversation", MessageId: "m1", Seq: 10}
+	if err := batcher.enqueue("room", notice); err != nil {
+		t.Fatal(err)
+	}
+	batcher.shards[0].flush(context.Background())
+	if target != "room" || received.ConversationId != "conversation" {
+		t.Fatalf("target=%s notice=%+v", target, received)
 	}
 }

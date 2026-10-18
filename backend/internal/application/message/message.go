@@ -2,11 +2,12 @@ package message
 
 import (
 	"IM_backend/configs"
+	conversationapp "IM_backend/internal/application/conversation"
 	eventbus "IM_backend/internal/application/ports/eventbus"
 	idport "IM_backend/internal/application/ports/id"
 	outboxport "IM_backend/internal/application/ports/outbox"
+	conversationcache "IM_backend/internal/application/ports/persistence/cache/conversation"
 	filecache "IM_backend/internal/application/ports/persistence/cache/file"
-	friendcache "IM_backend/internal/application/ports/persistence/cache/friend"
 	messagecache "IM_backend/internal/application/ports/persistence/cache/message"
 	roomcache "IM_backend/internal/application/ports/persistence/cache/room"
 	roomunreadcache "IM_backend/internal/application/ports/persistence/cache/summary"
@@ -24,6 +25,7 @@ import (
 	conversationentity "IM_backend/internal/domain/conversation/entity"
 	conversationvo "IM_backend/internal/domain/conversation/value_object"
 	fileentity "IM_backend/internal/domain/file/entity"
+	friendentity "IM_backend/internal/domain/friend/entity"
 	friendvo "IM_backend/internal/domain/friend/value_object"
 	messageentity "IM_backend/internal/domain/message/entity"
 	messagevo "IM_backend/internal/domain/message/value_object"
@@ -49,7 +51,6 @@ import (
 )
 
 type MessageApplication struct {
-	friendCache                  friendcache.FriendCache
 	messageCache                 messagecache.MessageCache
 	roomMemberCache              roomcache.RoomMemberCache
 	roomCache                    roomcache.RoomCache
@@ -61,6 +62,7 @@ type MessageApplication struct {
 	userCache                    usercach.UserCache
 	userConversationRepository   conversationrepo.UserConversationRepository
 	conversationRepository       conversationrepo.ConversationRepository
+	conversationApplication      *conversationapp.ConversationApplication
 	friendRepository             friendrepo.FriendRepository
 	fileRepository               filerepo.FileRepository
 	fileCache                    filecache.FileCache
@@ -69,7 +71,7 @@ type MessageApplication struct {
 	messageAttachmentsRepository messagerepo.MessageAttachmentRepository
 	messageOutboxRepository      outboxport.OutboxRepository
 	producerNotifier             eventbus.ProducerNotifier
-	roomOnlineSessionCounter     realtime.RoomOnlineSessionCounter
+	roomOnlineConnectionCounter  realtime.RoomOnlineConnectionCounter
 	userRepository               userrepo.UserRepository
 	roomUserRepository           roomrepo.RoomUserRepository
 	roomRepository               roomrepo.RoomRepository
@@ -86,9 +88,9 @@ func (ma *MessageApplication) SetProducerNotifier(notifier eventbus.ProducerNoti
 	ma.producerNotifier = notifier
 }
 
-// SetRoomOnlineSessionCounter 提供当前节点在线连接数，用于群消息缓存策略。
-func (ma *MessageApplication) SetRoomOnlineSessionCounter(counter realtime.RoomOnlineSessionCounter) {
-	ma.roomOnlineSessionCounter = counter
+// SetRoomOnlineConnectionCounter 提供当前节点在线连接数，用于群消息缓存策略。
+func (ma *MessageApplication) SetRoomOnlineConnectionCounter(counter realtime.RoomOnlineConnectionCounter) {
+	ma.roomOnlineConnectionCounter = counter
 }
 
 func (ma *MessageApplication) SetRoomApplication(application *roomapp.RoomApplication) {
@@ -97,49 +99,73 @@ func (ma *MessageApplication) SetRoomApplication(application *roomapp.RoomApplic
 	}
 }
 
-// warmRoomMessageCache 只处理已经提交的新群消息；失败不改变发送结果。
-func (ma *MessageApplication) warmRoomMessageCache(ctx context.Context, event protocol.MessageEvent) {
-	if event.ConvType != protocol.RoomChat || ma.roomCache == nil || ma.roomRepository == nil {
+func (ma *MessageApplication) SetConversationApplication(application *conversationapp.ConversationApplication) {
+	ma.conversationApplication = application
+}
+
+func applyConversationTarget(dto *SendMessageDTO, info *conversationcache.ConversationInfo) error {
+	dto.ConversationType = info.ConversationType
+	switch conversationvo.ConvType(info.ConversationType) {
+	case conversationvo.PrivateChat:
+		switch dto.SenderID {
+		case info.UserID1:
+			dto.ReceiverID = info.UserID2
+		case info.UserID2:
+			dto.ReceiverID = info.UserID1
+		default:
+			return ErrForbidden
+		}
+	case conversationvo.RoomChat:
+		dto.ReceiverID = info.RoomID
+	default:
+		return ErrUnknownConversationType
+	}
+	return nil
+}
+
+// warmRoomMessagesCache 批量统计已提交的群消息并按需回填近期消息缓存。
+func (ma *MessageApplication) warmRoomMessagesCache(ctx context.Context, roomID string, events []protocol.MessageEvent) {
+	if len(events) == 0 || ma.roomCache == nil || ma.roomRepository == nil {
 		return
 	}
 	var room *roomentity.Room
 	var err error
 	if ma.roomApplication != nil {
-		room, err = ma.roomApplication.GetRoomInfo(ctx, event.ConversationId)
+		room, err = ma.roomApplication.GetRoomInfo(ctx, roomID)
 		if err == nil && room != nil && room.Status != roomvo.Normal {
 			err = roomentity.ErrRoomNotFound
 		}
 	} else {
-		room, err = ma.roomRepository.FindActiveRoom(event.ConversationId, int(roomvo.Normal))
+		room, err = ma.roomRepository.FindActiveRoom(roomID, int(roomvo.Normal))
 	}
 	if err != nil || room == nil {
-		log.Printf("读取群消息缓存策略失败：room=%s error=%v", event.ConversationId, err)
+		log.Printf("读取群消息缓存策略失败：room=%s error=%v", roomID, err)
 		return
 	}
-	onlineSessions := room.MemberCount
-	if ma.roomOnlineSessionCounter != nil {
-		if count, err := ma.roomOnlineSessionCounter.OnlineRoomSessionCount(ctx, event.ConversationId); err != nil {
-			log.Printf("读取房间在线连接数失败，使用成员数估算：room=%s error=%v", event.ConversationId, err)
+	onlineConnections := room.MemberCount
+	if ma.roomOnlineConnectionCounter != nil {
+		if count, err := ma.roomOnlineConnectionCounter.OnlineRoomConnectionCount(ctx, roomID); err != nil {
+			log.Printf("读取房间在线连接数失败，使用成员数估算：room=%s error=%v", roomID, err)
 		} else {
-			onlineSessions = count
+			onlineConnections = count
 		}
 	}
-	level, err := ma.roomCache.RecordActivityAndGetLevel(ctx, event.ConversationId, onlineSessions)
+	now := time.Now()
+	level, err := ma.roomCache.RecordActivityBatchAndGetLevel(ctx, roomID, len(events), onlineConnections, now)
 	if err != nil {
-		log.Printf("记录房间活跃度失败：room=%s error=%v", event.ConversationId, err)
+		log.Printf("记录房间活跃度失败：room=%s count=%d error=%v", roomID, len(events), err)
 		level = roomcache.RoomActivityNormal
 	}
-	now := time.Now()
 	if level == roomcache.RoomActivityActive {
-		ma.roomActivityState.MarkActive(event.ConversationId, now)
+		ma.roomActivityState.MarkActive(roomID, now)
 	}
 	// ACTIVE 保持期间即使窗口计数下降，也继续预热供 Consumer 拉模式使用的消息。
 	if room.MemberCount <= ma.config.Message.RoomRealtimeFanoutLimit && level < roomcache.RoomActivityWarn &&
-		!ma.roomActivityState.IsActive(event.ConversationId, now) {
+		!ma.roomActivityState.IsActive(roomID, now) {
 		return
 	}
-	if err := ma.roomCache.AppendRecentMessageSeq(ctx, event.ConversationId, event); err != nil {
-		log.Printf("写入已提交群消息缓存失败：room=%s seq=%d error=%v", event.ConversationId, event.Seq, err)
+	if err := ma.roomCache.WarmRecentMessageEvents(ctx, roomID, events); err != nil {
+		log.Printf("批量回填已提交群消息缓存失败：room=%s count=%d error=%v", roomID, len(events), err)
 	}
 }
 
@@ -150,7 +176,6 @@ func (ma *MessageApplication) notifyProducer() {
 }
 
 func NewMessageApplication(
-	friendCache friendcache.FriendCache,
 	messageCache messagecache.MessageCache,
 	roomMemberCache roomcache.RoomMemberCache,
 	roomCache roomcache.RoomCache,
@@ -179,7 +204,6 @@ func NewMessageApplication(
 		panic("房间 ACTIVE 状态未配置")
 	}
 	app := &MessageApplication{
-		friendCache:                  friendCache,
 		messageCache:                 messageCache,
 		roomMemberCache:              roomMemberCache,
 		roomCache:                    roomCache,
@@ -226,21 +250,22 @@ func (ma *MessageApplication) HandleReadMessage(
 
 	conversationId := message.ConversationId
 
-	conv, err := ma.conversationRepository.GetByID(ctx, conversationId)
+	info, err := ma.conversationApplication.GetConversationInfo(ctx, conversationId)
 	if err != nil {
 		return err
 	}
 
-	if conv == nil {
-		return ErrConversationNotFound
-	}
-
+	conv := info.Conversation()
 	canAccess, err := ma.canAccessConversation(ctx, conv, userId)
 	if err != nil {
 		return err
 	}
 	if !canAccess {
 		return ErrForbidden
+	}
+	conv.LatestSeq, err = ma.conversationRepository.GetConversationSeq(ctx, conversationId)
+	if err != nil {
+		return err
 	}
 
 	uconv, err := ma.userConversationRepository.GetUserConversation(ctx, userId, conversationId)
@@ -271,30 +296,22 @@ func (ma *MessageApplication) HandleReadMessage(
 
 		if message.SenderId != "" && message.SenderId != userId {
 			readEvent := protocol.MessageReadCommittedEvent{
-				ReaderId:       userId,
-				ConversationId: conversationId,
-				LastReadSeq:    lastReadSeq,
-				ConvType:       protocol.ConvType(conv.Convtype),
+				ReaderId:        userId,
+				RecipientUserId: message.SenderId,
+				ConversationId:  conversationId,
+				LastReadSeq:     lastReadSeq,
+				ConvType:        protocol.ConvType(conv.Convtype),
 			}
 
-			eventPayload, err := json.Marshal(readEvent)
-			if err != nil {
-				return err
-			}
-
-			payload, err := json.Marshal(protocol.Envelope{
-				To:      message.SenderId,
-				Payload: eventPayload,
-			})
-
+			payload, err := json.Marshal(readEvent)
 			if err != nil {
 				return err
 			}
 
 			outbox := &outboxport.Entry{
-				EventType:  string(protocol.EventReadMessageCommitted),
-				MessageKey: userId + ":" + conversationId,
-				Payload:    payload,
+				EventType:    string(protocol.EventReadMessageCommitted),
+				PartitionKey: userId + ":" + conversationId,
+				Payload:      payload,
 			}
 			outboxCreated = true
 			return ma.messageOutboxRepository.WithTx(tx).Create(ctx, outbox)
@@ -307,6 +324,9 @@ func (ma *MessageApplication) HandleReadMessage(
 		ma.notifyProducer()
 	}
 
+	if conv.Convtype != conversationvo.RoomChat {
+		return nil
+	}
 	fromSeq := oldLastReadSeq + 1
 	snapshot := roomunreadcache.RoomUnreadSnapshot{
 		RoomID:  conv.RoomId,
@@ -551,62 +571,81 @@ func (ma *MessageApplication) isRoomConvMember(ctx context.Context, userID, room
 	return nil
 }
 
-func (ma *MessageApplication) isPrivateConvMember(ctx context.Context, userID, recvID string) error {
-	key := "friend:" + userID + ":" + recvID
-	resultCh := ma.sf.DoChan(key, func() (any, error) {
-		ctx, cancel := context.WithTimeout(
-			context.WithoutCancel(ctx),
-			2*time.Second,
-		)
-		defer cancel()
-
-		state, hit, cacheErr := ma.friendCache.GetRelation(ctx, userID, recvID)
-		if cacheErr == nil && hit {
-			if state == nil || state.Status != friendvo.Friend {
-				return nil, ErrNotFriends
-			}
-			return state, nil
+func (ma *MessageApplication) authorizeSendBatch(ctx context.Context, info *conversationcache.ConversationInfo, dtos []SendMessageDTO) ([]error, error) {
+	results := make([]error, len(dtos))
+	if len(dtos) == 0 {
+		return results, nil
+	}
+	switch conversationvo.ConvType(info.ConversationType) {
+	case conversationvo.RoomChat:
+		if ma.roomUserRepository == nil {
+			return nil, errors.New("群成员仓储未配置")
 		}
-
-		relation, err := ma.friendRepository.FindRelation(userID, recvID)
+		userIDs := make([]string, 0, len(dtos))
+		seen := make(map[string]struct{}, len(dtos))
+		for _, dto := range dtos {
+			if _, exists := seen[dto.SenderID]; exists {
+				continue
+			}
+			seen[dto.SenderID] = struct{}{}
+			userIDs = append(userIDs, dto.SenderID)
+		}
+		members, err := ma.roomUserRepository.ListRelationsByRoomAndUserIDs(ctx, info.RoomID, userIDs)
 		if err != nil {
 			return nil, err
 		}
-		if relation == nil || relation.Status != friendvo.Friend {
-			_ = ma.friendCache.SetRelationNotFound(ctx, userID, recvID)
-			return nil, ErrNotFriends
+		byUserID := make(map[string]*roomentity.RoomUser, len(members))
+		for _, member := range members {
+			if member != nil {
+				byUserID[member.UserId] = member
+			}
 		}
-
-		state = &friendcache.RelationState{Status: relation.Status}
-		_ = ma.friendCache.SetRelation(ctx, userID, recvID, state)
-		return state, nil
-	})
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case result := <-resultCh:
-		state, ok := result.Val.(*friendcache.RelationState)
-		if !ok || state == nil {
-			return ErrNotFriends
+		now := time.Now().UnixMilli()
+		for i, dto := range dtos {
+			member := byUserID[dto.SenderID]
+			switch {
+			case member == nil:
+				results[i] = ErrNotRoomMember
+			case member.Status == roomvo.BeKicked:
+				results[i] = ErrForbidden
+			case member.Status == roomvo.Activate:
+			case member.Status == roomvo.BeMuted && member.MuteUtil != nil && *member.MuteUtil <= now:
+			default:
+				results[i] = ErrNotRoomMember
+				if member.Status == roomvo.BeMuted {
+					results[i] = ErrForbidden
+				}
+			}
 		}
-
-		if state.Status != friendvo.Friend {
-			return ErrForbidden
-		}
-	}
-	return nil
-}
-
-func (ma *MessageApplication) checkConvMember(ctx context.Context, dto SendMessageDTO) error {
-	switch conversationvo.ConvType(dto.ConversationType) {
 	case conversationvo.PrivateChat:
-		return ma.isPrivateConvMember(ctx, dto.SenderID, dto.ReceiverID)
-	case conversationvo.RoomChat:
-		return ma.isRoomConvMember(ctx, dto.SenderID, dto.ReceiverID)
+		if ma.friendRepository == nil {
+			return nil, errors.New("好友关系仓储未配置")
+		}
+		pairs := []friendrepo.RelationPair{
+			{UserID: info.UserID1, FriendUserID: info.UserID2},
+			{UserID: info.UserID2, FriendUserID: info.UserID1},
+		}
+		relations, err := ma.friendRepository.FindRelationsByPairs(ctx, pairs)
+		if err != nil {
+			return nil, err
+		}
+		byPair := make(map[friendrepo.RelationPair]*friendentity.Friend, len(relations))
+		for _, relation := range relations {
+			if relation != nil {
+				byPair[friendrepo.RelationPair{UserID: relation.UserId, FriendUserID: relation.FriendUserId}] = relation
+			}
+		}
+		first := byPair[pairs[0]]
+		second := byPair[pairs[1]]
+		if first == nil || second == nil || first.Status != friendvo.Friend || second.Status != friendvo.Friend {
+			for i := range results {
+				results[i] = ErrNotFriends
+			}
+		}
 	default:
-		return ErrConversationNotFound
+		return nil, ErrUnknownConversationType
 	}
+	return results, nil
 }
 
 func (ma *MessageApplication) validateFileReference(dto SendMessageDTO) error {
@@ -686,110 +725,180 @@ func (ma *MessageApplication) validateMessageCType(dto SendMessageDTO) error {
 	return nil
 }
 
-// HandleSendMessage 在请求内提交消息、会话序号和 Outbox，提交成功后返回 ACK。
-func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMessageDTO) (*MessageAckDTO, error) {
-	failedAck := &MessageAckDTO{ClientMessageID: dto.ClientMessageID, Status: string(protocol.AckStatusFailed)}
+func (ma *MessageApplication) HandleSendMessages(ctx context.Context, conversationID string, dtos []SendMessageDTO) ([]*MessageAckDTO, error) {
+	if len(dtos) == 0 {
+		return []*MessageAckDTO{}, nil
+	}
 	if err := ctx.Err(); err != nil {
-		return failedAck, err
+		return nil, err
 	}
 	if ma == nil || ma.txManager == nil || ma.messageOutboxRepository == nil {
-		return failedAck, errors.New("消息出箱组件未配置")
-	}
-	conversationId := conversationentity.GetConversationID(dto.SenderID, dto.ReceiverID, dto.ConversationType)
-	dto.ConversationID = conversationId
-
-	if err := ma.validateMessageCType(dto); err != nil {
-		return failedAck, err
+		return nil, errors.New("消息出箱组件未配置")
 	}
 
-	requestHash, err := buildMessageRequestHash(dto)
+	type preparedMessage struct {
+		index       int
+		dto         SendMessageDTO
+		message     *messageentity.Message
+		event       protocol.MessageEvent
+		mediaWriter func(context.Context, any) error
+		requestHash string
+		username    string
+	}
+
+	info, err := ma.conversationApplication.GetConversationInfo(ctx, conversationID)
 	if err != nil {
-		return failedAck, err
+		return nil, err
 	}
-
-	// Redis 加速重试检查；数据库唯一约束负责缓存失效和并发请求下的幂等。
-	if dto.ClientMessageID != "" && ma.messageCache != nil {
-		if entry, err := ma.messageCache.GetDedupEntry(ctx, dto.SenderID, dto.ClientMessageID); err == nil && entry.MessageID != "" {
-			if entry.RequestHash != requestHash {
-				return failedAck, messageentity.ErrClientMessageConflict
-			}
-
-			if entry.ConversationID != "" && entry.Seq > 0 {
-				return &MessageAckDTO{
-					ClientMessageID: dto.ClientMessageID,
-					ConversationID:  entry.ConversationID,
-					MessageID:       entry.MessageID,
-					Seq:             entry.Seq,
-					SendTime:        entry.SendTime,
-					Status:          string(protocol.AckStatusSent),
-					AttachmentID:    entry.AttachmentID,
-				}, nil
+	acks := make([]*MessageAckDTO, len(dtos))
+	prepared := make([]preparedMessage, 0, len(dtos))
+	fillUnresolvedAcks := func(cause error) {
+		for i := range acks {
+			if acks[i] == nil {
+				acks[i] = &MessageAckDTO{ClientMessageID: dtos[i].ClientMessageID, Status: string(protocol.AckStatusFailed), Error: cause.Error()}
 			}
 		}
 	}
 
-	if err := ma.checkConvMember(ctx, dto); err != nil {
-		return failedAck, err
+	type sendCandidate struct {
+		index       int
+		dto         SendMessageDTO
+		requestHash string
+	}
+	candidates := make([]sendCandidate, 0, len(dtos))
+	for i := range dtos {
+		dto := dtos[i]
+		if dto.ConversationID != conversationID {
+			return nil, errors.New("一个批次只能包含同一会话的消息")
+		}
+		if err := applyConversationTarget(&dto, info); err != nil {
+			acks[i] = &MessageAckDTO{ClientMessageID: dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: err.Error()}
+			continue
+		}
+		candidates = append(candidates, sendCandidate{index: i, dto: dto})
 	}
 
-	if err := ma.normalizeMediaDTO(ctx, &dto); err != nil {
-		return failedAck, err
+	authorizationDTOs := make([]SendMessageDTO, len(candidates))
+	for i := range candidates {
+		authorizationDTOs[i] = candidates[i].dto
 	}
-
-	messageId, err := ma.idGenerator.Generate()
+	authorizationErrors, err := ma.authorizeSendBatch(ctx, info, authorizationDTOs)
 	if err != nil {
-		return failedAck, err
+		fillUnresolvedAcks(err)
+		return acks, err
+	}
+	authorized := make([]sendCandidate, 0, len(candidates))
+	for candidateIndex, candidate := range candidates {
+		dto := candidate.dto
+		if authErr := authorizationErrors[candidateIndex]; authErr != nil {
+			acks[candidate.index] = &MessageAckDTO{
+				ClientMessageID: dto.ClientMessageID,
+				Status:          string(protocol.AckStatusFailed),
+				Error:           authErr.Error(),
+			}
+			continue
+		}
+		authorized = append(authorized, candidate)
+	}
+	if len(authorized) == 0 {
+		return acks, nil
 	}
 
-	messageType := messagevo.CType(dto.Type)
-	message := messageentity.NewMessage(
-		messageId,
-		conversationId,
-		dto.SenderID,
-		0,
-		messageType,
-		dto.Content,
-	)
-	if dto.ClientMessageID != "" {
-		clientMsgID := dto.ClientMessageID
-		message.ClientMsgId = &clientMsgID
+	valid := make([]sendCandidate, 0, len(authorized))
+	keys := make([]messagecache.DedupKey, 0, len(authorized))
+	seenKeys := make(map[messagecache.DedupKey]struct{}, len(authorized))
+	for _, candidate := range authorized {
+		if err := ma.validateMessageCType(candidate.dto); err != nil {
+			acks[candidate.index] = &MessageAckDTO{ClientMessageID: candidate.dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: err.Error()}
+			continue
+		}
+		requestHash, err := buildMessageRequestHash(candidate.dto)
+		if err != nil {
+			acks[candidate.index] = &MessageAckDTO{ClientMessageID: candidate.dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: err.Error()}
+			continue
+		}
+		candidate.requestHash = requestHash
+		valid = append(valid, candidate)
+		if candidate.dto.ClientMessageID != "" {
+			key := messagecache.DedupKey{SenderID: candidate.dto.SenderID, ClientMsgID: candidate.dto.ClientMessageID}
+			if _, exists := seenKeys[key]; !exists {
+				seenKeys[key] = struct{}{}
+				keys = append(keys, key)
+			}
+		}
 	}
-	message.RequestHash = requestHash
-
-	failedAck.MessageID = messageId
-	mediaWriter, err := ma.buildMediaWriter(&dto, messageId)
-	if err != nil {
-		return failedAck, err
-	}
-
-	userConv := conversationentity.BuildUserConversation(
-		dto.SenderID,
-		conversationId,
-		0,
-	)
-
-	senderUsername := ma.getUsername(dto.SenderID)
-	messageEvent := protocol.MessageEvent{
-		MessageId:      messageId,
-		ConversationId: conversationId,
-		SenderId:       dto.SenderID,
-		SenderUsername: senderUsername,
-		RecvId:         dto.ReceiverID,
-		ConvType:       protocol.ConvType(dto.ConversationType),
-		CType:          dto.Type,
-		Content:        dto.Content,
-		SendTime:       message.SendTime,
-		ClientMsgId:    dto.ClientMessageID,
-		Status:         int8(message.Status),
-		AttachmentId:   dto.AttachmentID,
-		Width:          dto.Width,
-		Height:         dto.Height,
-		DurationMs:     dto.DurationMs,
-		StickerId:      dto.StickerID,
-		PackId:         dto.PackID,
+	if len(valid) == 0 {
+		return acks, nil
 	}
 
-	var nextSeq int64 = 0
+	var dedupEntries map[messagecache.DedupKey]messagecache.DedupEntry
+	if ma.messageCache != nil && len(keys) > 0 {
+		entries, cacheErr := ma.messageCache.GetDedupEntries(ctx, keys)
+		if cacheErr != nil {
+			log.Printf("批量读取消息幂等缓存失败，继续由数据库唯一约束兜底：conversation=%s err=%v", conversationID, cacheErr)
+		} else {
+			dedupEntries = entries
+		}
+	}
+
+	for _, candidate := range valid {
+		dto := candidate.dto
+		entry := dedupEntries[messagecache.DedupKey{SenderID: dto.SenderID, ClientMsgID: dto.ClientMessageID}]
+		if entry.MessageID != "" {
+			if entry.RequestHash != candidate.requestHash {
+				acks[candidate.index] = &MessageAckDTO{
+					ClientMessageID: dto.ClientMessageID,
+					Status:          string(protocol.AckStatusFailed),
+					Error:           messageentity.ErrClientMessageConflict.Error(),
+				}
+				continue
+			}
+			if entry.ConversationID != "" && entry.Seq > 0 {
+				acks[candidate.index] = &MessageAckDTO{
+					ClientMessageID: dto.ClientMessageID,
+					ConversationID:  entry.ConversationID,
+					MessageID:       entry.MessageID,
+					Seq:             entry.Seq,
+					AttachmentID:    entry.AttachmentID,
+					SendTime:        entry.SendTime,
+					Status:          string(protocol.AckStatusSent),
+				}
+				continue
+			}
+		}
+		if err := ma.normalizeMediaDTO(ctx, &dto); err != nil {
+			acks[candidate.index] = &MessageAckDTO{ClientMessageID: dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: err.Error()}
+			continue
+		}
+		messageID, err := ma.idGenerator.Generate()
+		if err != nil {
+			acks[candidate.index] = &MessageAckDTO{ClientMessageID: dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: err.Error()}
+			continue
+		}
+		message := messageentity.NewMessage(messageID, conversationID, dto.SenderID, 0, messagevo.CType(dto.Type), dto.Content)
+		if dto.ClientMessageID != "" {
+			clientMessageID := dto.ClientMessageID
+			message.ClientMsgId = &clientMessageID
+		}
+		message.RequestHash = candidate.requestHash
+		mediaWriter, err := ma.buildMediaWriter(&dto, messageID)
+		if err != nil {
+			acks[candidate.index] = &MessageAckDTO{ClientMessageID: dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: err.Error()}
+			continue
+		}
+		prepared = append(prepared, preparedMessage{
+			index:       candidate.index,
+			dto:         dto,
+			message:     message,
+			mediaWriter: mediaWriter,
+			requestHash: candidate.requestHash,
+			username:    ma.getUsername(dto.SenderID),
+		})
+	}
+
+	if len(prepared) == 0 {
+		return acks, nil
+	}
 	transactionStartedAt := time.Now()
 	var sequenceDuration time.Duration
 	err = ma.txManager.WithinTransaction(ctx, func(tx any) error {
@@ -797,133 +906,169 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, dto SendMes
 		convRepo := ma.conversationRepository.WithTx(tx)
 		userConvRepo := ma.userConversationRepository.WithTx(tx)
 		outboxRepo := ma.messageOutboxRepository.WithTx(tx)
-		var warmupOutbox *outboxport.Entry
 
-		if messagevo.CType(dto.Type) == messagevo.Image || messagevo.CType(dto.Type) == messagevo.Video || messagevo.CType(dto.Type) == messagevo.File {
-			lockedFile, lockErr := ma.fileRepository.WithTx(tx).FindUploadedFileByIDAndUploaderForUpdate(ctx, dto.FileID, dto.SenderID)
+		for i := range prepared {
+			item := &prepared[i]
+			if messagevo.CType(item.dto.Type) != messagevo.Image &&
+				messagevo.CType(item.dto.Type) != messagevo.Video &&
+				messagevo.CType(item.dto.Type) != messagevo.File {
+				continue
+			}
+			file, lockErr := ma.fileRepository.WithTx(tx).
+				FindUploadedFileByIDAndUploaderForUpdate(ctx, item.dto.FileID, item.dto.SenderID)
 			if lockErr != nil {
 				return lockErr
 			}
-			if lockedFile == nil {
-				return fmt.Errorf("file is missing or being deleted: %s", dto.FileID)
+			if file == nil {
+				return fmt.Errorf("file is missing or being deleted: %s", item.dto.FileID)
 			}
-			dto.FileName = lockedFile.FileName
-			dto.FileSize = lockedFile.Size
-			dto.MimeType = lockedFile.ContentType
-			dto.Content = lockedFile.FileName
-			message.Content = dto.Content
-			messageEvent.Content = dto.Content
-			warmupOutbox, err = ma.fileCardWarmupOutbox(dto, messageId, lockedFile)
-			if err != nil {
-				return err
-			}
+			item.dto.FileName = file.FileName
+			item.dto.FileSize = file.Size
+			item.dto.MimeType = file.ContentType
+			item.dto.Content = file.FileName
+			item.message.Content = file.FileName
 		}
 
+		messages := make([]*messageentity.Message, len(prepared))
+		for i := range prepared {
+			messages[i] = prepared[i].message
+		}
 		sequenceStartedAt := time.Now()
-		nextSeq, err = convRepo.UpdateLatestSequence(ctx, conversationId, messageId)
+		firstSeq, reserveErr := convRepo.ReserveSequenceRange(
+			ctx,
+			conversationID,
+			len(messages),
+			messages[len(messages)-1].MessageId,
+		)
 		sequenceDuration = time.Since(sequenceStartedAt)
-		if err != nil {
-			if errors.Is(err, conversationentity.ErrConversationNotCreated) {
+		if reserveErr != nil {
+			if errors.Is(reserveErr, conversationentity.ErrConversationNotCreated) {
 				return ErrConversationNotFound
 			}
 			return ErrConversationSequenceUpdate
 		}
 
-		message.Seq = nextSeq
-		messageEvent.Seq = nextSeq
-		userConv.UpdateReadSeq(nextSeq)
-
-		if err := msgRepo.CreateNewMessage(ctx, message); err != nil {
-			if errors.Is(err, messageentity.ErrDuplicateClientMessage) {
-				return err
+		outboxes := make([]*outboxport.Entry, 0, len(prepared))
+		updates := make([]conversationrepo.ReadSeqUpdate, 0, len(prepared))
+		for i := range prepared {
+			item := &prepared[i]
+			item.message.Seq = firstSeq + int64(i)
+			event := protocol.MessageEvent{
+				MessageId:      item.message.MessageId,
+				ConversationId: conversationID,
+				SenderId:       item.dto.SenderID,
+				SenderUsername: item.username,
+				RecvId:         item.dto.ReceiverID,
+				ConvType:       protocol.ConvType(item.dto.ConversationType),
+				CType:          item.dto.Type,
+				Content:        item.message.Content,
+				SendTime:       item.message.SendTime,
+				ClientMsgId:    item.dto.ClientMessageID,
+				Status:         int8(item.message.Status),
+				Seq:            item.message.Seq,
+				AttachmentId:   item.dto.AttachmentID,
+				Width:          item.dto.Width,
+				Height:         item.dto.Height,
+				DurationMs:     item.dto.DurationMs,
+				StickerId:      item.dto.StickerID,
+				PackId:         item.dto.PackID,
 			}
-			return ErrMessageSave
+			item.event = event
+			outbox, outboxErr := messageOutboxEntry(
+				protocol.EventTypeSendMessage,
+				conversationID,
+				event,
+			)
+			if outboxErr != nil {
+				return outboxErr
+			}
+			outboxes = append(outboxes, outbox)
+
+			if item.mediaWriter != nil {
+				if writeErr := item.mediaWriter(ctx, tx); writeErr != nil {
+					return writeErr
+				}
+			}
+			updates = append(updates, conversationrepo.ReadSeqUpdate{
+				UserID:         item.dto.SenderID,
+				ConversationID: conversationID,
+				LastReadSeq:    item.message.Seq,
+			})
 		}
 
-		if err := userConvRepo.UpdateReadSeq(ctx, userConv); err != nil {
+		if err := msgRepo.CreateNewMessages(ctx, messages); err != nil {
 			return err
 		}
-
-		if mediaWriter != nil {
-			if err := mediaWriter(ctx, tx); err != nil {
-				return err
-			}
-		}
-
-		outbox, err := messageOutboxEntry(protocol.EventTypeSendMessage, conversationId, dto.SenderID, dto.ReceiverID, messageEvent)
-		if err != nil {
+		if err := userConvRepo.UpdateReadSeqBatch(ctx, updates); err != nil {
 			return err
 		}
-		if err := outboxRepo.Create(ctx, outbox); err != nil {
-			return err
-		}
-		if warmupOutbox != nil {
-			if err := outboxRepo.Create(ctx, warmupOutbox); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return outboxRepo.CreateBatch(ctx, outboxes)
 	})
-	diagnostics.Logf("stage=mysql_message_transaction conversation_id=%s messages=1 reserve_seq_us=%d transaction_us=%d error=%v",
-		conversationId, sequenceDuration.Microseconds(), time.Since(transactionStartedAt).Microseconds(), err)
-	if err == nil {
-		ma.warmRoomMessageCache(ctx, messageEvent)
-		ma.notifyProducer()
-	}
-
-	// 唯一键冲突会回滚整个事务，包括本次 seq 更新，再回查首次提交的消息。
-	if errors.Is(err, messageentity.ErrDuplicateClientMessage) && dto.ClientMessageID != "" {
-		// 消息重复写入，尝试从数据库中找到这条消息并直接返回
-		existing, findErr := ma.messageRepository.FindByClientMsgID(ctx, dto.SenderID, dto.ClientMessageID)
-		if findErr == nil && existing != nil {
-			if !sameClientMessage(dto, existing, requestHash) {
-				return failedAck, messageentity.ErrClientMessageConflict
-			}
-			result := ma.existingMessageResult(ctx, dto, existing)
-			if result != nil && ma.messageCache != nil {
-				_, _ = ma.messageCache.SetDedupEntry(ctx, dto.SenderID, dto.ClientMessageID, messagecache.DedupEntry{
-					MessageID:      result.MessageID,
-					RequestHash:    requestHash,
-					ConversationID: result.ConversationID,
-					Seq:            result.Seq,
-					AttachmentID:   result.AttachmentID,
-					SendTime:       result.SendTime,
-				}, 5*time.Minute)
-			}
-			return result, nil
-		}
-		if findErr != nil {
-			return nil, findErr
-		}
-	}
-
+	diagnostics.Logf("stage=mysql_message_transaction conversation_id=%s messages=%d reserve_seq_us=%d transaction_us=%d error=%v",
+		conversationID, len(prepared), sequenceDuration.Microseconds(), time.Since(transactionStartedAt).Microseconds(), err)
 	if err != nil {
-		return failedAck, err
+		for _, item := range prepared {
+			acks[item.index] = &MessageAckDTO{ClientMessageID: item.dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: err.Error()}
+		}
+		if errors.Is(err, messageentity.ErrDuplicateClientMessage) && len(prepared) == 1 {
+			item := prepared[0]
+			existing, findErr := ma.messageRepository.FindByClientMsgID(ctx, item.dto.SenderID, item.dto.ClientMessageID)
+			if findErr == nil && existing != nil && sameClientMessage(item.dto, existing, item.requestHash) {
+				acks[item.index] = ma.existingMessageResult(ctx, item.dto, existing)
+				return acks, nil
+			}
+			if findErr == nil && existing != nil {
+				acks[item.index] = &MessageAckDTO{ClientMessageID: item.dto.ClientMessageID, Status: string(protocol.AckStatusFailed), Error: messageentity.ErrClientMessageConflict.Error()}
+				return acks, nil
+			}
+			if findErr != nil {
+				return acks, findErr
+			}
+		}
+		return acks, err
 	}
 
-	// 标记已处理，5 分钟内同一 clientMsgId 幂等返回
-	if dto.ClientMessageID != "" && ma.messageCache != nil {
-		_, _ = ma.messageCache.SetDedupEntry(ctx, dto.SenderID, dto.ClientMessageID, messagecache.DedupEntry{
-			MessageID:      messageId,
-			RequestHash:    requestHash,
-			ConversationID: conversationId,
-			Seq:            nextSeq,
-			AttachmentID:   dto.AttachmentID,
-			SendTime:       message.SendTime,
-			SenderUsername: senderUsername,
-		}, 5*time.Minute)
+	dedupWrites := make([]messagecache.DedupEntryWrite, 0, len(prepared))
+	roomEvents := make([]protocol.MessageEvent, 0, len(prepared))
+	for i := range prepared {
+		item := prepared[i]
+		acks[item.index] = &MessageAckDTO{
+			ClientMessageID: item.dto.ClientMessageID,
+			ConversationID:  conversationID,
+			MessageID:       item.message.MessageId,
+			Seq:             item.message.Seq,
+			AttachmentID:    item.dto.AttachmentID,
+			SendTime:        item.message.SendTime,
+			Status:          string(protocol.AckStatusSent),
+		}
+		if item.event.ConvType == protocol.RoomChat {
+			roomEvents = append(roomEvents, item.event)
+		}
+		if item.dto.ClientMessageID != "" && ma.messageCache != nil {
+			dedupWrites = append(dedupWrites, messagecache.DedupEntryWrite{
+				Key: messagecache.DedupKey{SenderID: item.dto.SenderID, ClientMsgID: item.dto.ClientMessageID},
+				Entry: messagecache.DedupEntry{
+					MessageID:      item.message.MessageId,
+					RequestHash:    item.requestHash,
+					ConversationID: conversationID,
+					Seq:            item.message.Seq,
+					AttachmentID:   item.dto.AttachmentID,
+					SendTime:       item.message.SendTime,
+					SenderUsername: item.username,
+				},
+			})
+		}
 	}
-
-	return &MessageAckDTO{
-		ClientMessageID: dto.ClientMessageID,
-		ConversationID:  conversationId,
-		MessageID:       messageId,
-		AttachmentID:    dto.AttachmentID,
-		Seq:             nextSeq,
-		SendTime:        message.SendTime,
-		Status:          string(protocol.AckStatusSent),
-	}, nil
+	if len(roomEvents) > 0 {
+		ma.warmRoomMessagesCache(ctx, info.RoomID, roomEvents)
+	}
+	if len(dedupWrites) > 0 {
+		if err := ma.messageCache.SetDedupEntries(ctx, dedupWrites, 5*time.Minute); err != nil {
+			log.Printf("批量写入消息幂等缓存失败：conversation=%s count=%d err=%v", conversationID, len(dedupWrites), err)
+		}
+	}
+	ma.notifyProducer()
+	return acks, nil
 }
 
 // existingMessageResult 将数据库中的已有消息转换成幂等请求的返回值。
@@ -1005,35 +1150,17 @@ func sameClientMessage(dto SendMessageDTO, existing *messageentity.Message, requ
 	if existing.RequestHash != "" {
 		return existing.RequestHash == requestHash
 	}
-	return existing.ConversationId == conversationentity.GetConversationID(dto.SenderID, dto.ReceiverID, dto.ConversationType) &&
+	return existing.ConversationId == dto.ConversationID &&
 		existing.Type == messagevo.CType(dto.Type) &&
 		existing.Content == dto.Content
 }
 
-// fileCardWarmupOutbox 在取得会话行锁前，用事务内锁定的文件记录构建预热事件。
-func (ma *MessageApplication) fileCardWarmupOutbox(dto SendMessageDTO, messageID string, file *fileentity.File) (*outboxport.Entry, error) {
-	if dto.AttachmentID == "" {
-		return nil, nil
-	}
-	event := protocol.FileCardWarmupEvent{
-		AttachmentID: dto.AttachmentID, MessageID: messageID, ConversationID: dto.ConversationID,
-		FileID: file.FileId, ObjectKey: file.ObjectKey, FileName: file.FileName,
-		ContentType: file.ContentType, Size: file.Size, Status: file.Status, CType: dto.Type,
-		AttachmentExpireAt: time.Now().Add(time.Duration(ma.config.Message.AttachmentTTLSeconds) * time.Second).UnixMilli(),
-	}
-	return messageOutboxEntry(protocol.EventFileCardWarmup, file.FileId, dto.SenderID, file.FileId, event)
-}
-
-func messageOutboxEntry(eventType, key, from, to string, event any) (*outboxport.Entry, error) {
+func messageOutboxEntry(eventType, partitionKey string, event any) (*outboxport.Entry, error) {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return nil, err
 	}
-	envelope, err := json.Marshal(protocol.Envelope{From: from, To: to, Payload: payload})
-	if err != nil {
-		return nil, err
-	}
-	return &outboxport.Entry{EventType: eventType, MessageKey: key, Payload: envelope}, nil
+	return &outboxport.Entry{EventType: eventType, PartitionKey: partitionKey, Payload: payload}, nil
 }
 
 // 通过游标的方式来获取历史记录
@@ -1233,7 +1360,7 @@ func (ma *MessageApplication) SyncMessages(
 	if conversation.Convtype == conversationvo.RoomChat && ma.roomCache != nil {
 		page, cacheErr := ma.roomCache.ListMessageAfterSeq(
 			ctx,
-			resolvedConversationID,
+			conversation.RoomId,
 			afterSeq,
 			latestSeq,
 		)
@@ -1284,8 +1411,8 @@ func (ma *MessageApplication) SyncMessages(
 		})
 
 		if conversation.Convtype == conversationvo.RoomChat && ma.roomCache != nil {
-			events := messageAppDTOsToEvents(msgsApp, resolvedConversationID)
-			if err := ma.roomCache.WarmRecentMessageEvents(ctx, resolvedConversationID, events); err != nil {
+			events := messageAppDTOsToEvents(msgsApp, resolvedConversationID, conversation.RoomId)
+			if err := ma.roomCache.WarmRecentMessageEvents(ctx, conversation.RoomId, events); err != nil {
 				log.Printf(
 					"回填房间近期消息缓存失败: conversation=%s afterSeq=%d latestSeq=%d err=%v",
 					resolvedConversationID,
@@ -1359,7 +1486,7 @@ func messageEventsToAppDTO(events []protocol.MessageEvent, conversationID string
 
 // messageAppDTOsToEvents 将应用层消息 DTO 转换为内部事件，用于回填房间近期消息缓存。
 // 内部事件可以携带后端投递所需的路由信息，但这些字段会在 WebSocket 编码时被过滤。
-func messageAppDTOsToEvents(messages []MessageDTO, conversationID string) []protocol.MessageEvent {
+func messageAppDTOsToEvents(messages []MessageDTO, conversationID, roomID string) []protocol.MessageEvent {
 	if len(messages) == 0 {
 		return []protocol.MessageEvent{}
 	}
@@ -1384,7 +1511,7 @@ func messageAppDTOsToEvents(messages []MessageDTO, conversationID string) []prot
 			MessageId:      message.MessageID,
 			ConversationId: resolvedID,
 			SenderId:       message.SenderID,
-			RecvId:         resolvedID,
+			RecvId:         roomID,
 			Seq:            message.Seq,
 			CType:          message.Type,
 			Content:        message.Content,
@@ -1432,21 +1559,22 @@ func (ma *MessageApplication) resolveHistoryConversation(
 	userId string,
 ) (string, *conversationentity.Conversation, error) {
 	resolvedID := conversationId
-	conv, err := ma.conversationRepository.GetByID(ctx, resolvedID)
+	info, err := ma.conversationApplication.GetConversationInfo(ctx, resolvedID)
 	if err != nil {
 		return "", nil, err
 	}
 
-	if conv == nil {
-		return "", nil, ErrConversationNotFound
-	}
-
+	conv := info.Conversation()
 	allowed, err := ma.canAccessConversation(ctx, conv, userId)
 	if err != nil {
 		return "", nil, err
 	}
 	if !allowed {
 		return "", nil, ErrForbidden
+	}
+	conv.LatestSeq, err = ma.conversationRepository.GetConversationSeq(ctx, resolvedID)
+	if err != nil {
+		return "", nil, err
 	}
 
 	return resolvedID, conv, nil

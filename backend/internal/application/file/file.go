@@ -1294,7 +1294,7 @@ func (a *FileApplication) GetAttachmentAccessURLs(ctx context.Context, userId st
 		missedCards = append(missedCards, attachment)
 	}
 
-	// 预热事件通常已经填充卡片；只有卡片缺失时才回源 files 表。
+	// 文件卡片缺失时批量回源 files 表并回填缓存。
 	if len(missedCards) > 0 {
 		fileIDs := make([]string, 0, len(missedCards))
 		seenFileIDs := make(map[string]struct{}, len(missedCards))
@@ -1346,7 +1346,7 @@ func (a *FileApplication) GetAttachmentAccessURLs(ctx context.Context, userId st
 		}
 	}
 
-	// 卡片可以来自 Kafka 预热，也可以刚刚从数据库回源；统一补齐缺失的短期 URL。
+	// 为缓存命中或刚刚回源的卡片补齐缺失的短期 URL。
 	urlValues := make([]*filecache.AttachmentURL, 0)
 	for _, attachmentId := range ids {
 		attachment := attachments[attachmentId]

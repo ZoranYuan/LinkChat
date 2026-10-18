@@ -20,6 +20,6 @@ type RoomPresence interface {
 	UnbindUserFromRoom(userID, roomID string)
 }
 
-type RoomOnlineSessionCounter interface {
-	OnlineRoomSessionCount(ctx context.Context, roomID string) (int, error)
+type RoomOnlineConnectionCounter interface {
+	OnlineRoomConnectionCount(ctx context.Context, roomID string) (int, error)
 }

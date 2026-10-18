@@ -19,9 +19,9 @@ func TestMarkSentBatchRejectsInvalidLeases(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, leases := range [][]outboxport.Lease{
-		{{ID: "a"}},
+		{{EventID: "a"}},
 		{{LockToken: "token"}},
-		{{ID: "a", LockToken: "old"}, {ID: "a", LockToken: "new"}},
+		{{EventID: "a", LockToken: "old"}, {EventID: "a", LockToken: "new"}},
 	} {
 		if err := repository.MarkSentBatch(context.Background(), leases, time.Now()); !errors.Is(err, outboxport.ErrLeaseLost) {
 			t.Fatalf("invalid leases must be rejected before SQL: %v", err)
@@ -62,12 +62,12 @@ func TestMarkSentBatchUsesPairedLeaseConditions(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			leases := []outboxport.Lease{{ID: "a", LockToken: "t1"}, {ID: "b", LockToken: "t2"}, {ID: "a", LockToken: "t1"}}
+			leases := []outboxport.Lease{{EventID: "a", LockToken: "t1"}, {EventID: "b", LockToken: "t2"}, {EventID: "a", LockToken: "t1"}}
 			err = NewOutboxRepository(db, nil).MarkSentBatch(context.Background(), leases, time.Now())
 			if test.lost && !errors.Is(err, outboxport.ErrLeaseLost) || !test.lost && err != nil {
 				t.Fatalf("unexpected result: %v", err)
 			}
-			if calls != 1 || !strings.Contains(statement, "status = ? AND (id, lock_token) IN ((?,?),(?,?))") {
+			if calls != 1 || !strings.Contains(statement, "status = ? AND (event_id, lock_token) IN ((?,?),(?,?))") {
 				t.Fatalf("must update using paired leases in one statement: calls=%d SQL=%s", calls, statement)
 			}
 			want := []any{outboxport.StatusProcessing, "a", "t1", "b", "t2"}
@@ -87,7 +87,7 @@ func TestFailureBatchesRejectInvalidLeases(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, leases := range [][]outboxport.Lease{
-		{{ID: "a"}}, {{LockToken: "token"}}, {{ID: "a", LockToken: "old"}, {ID: "a", LockToken: "new"}},
+		{{EventID: "a"}}, {{LockToken: "token"}}, {{EventID: "a", LockToken: "old"}, {EventID: "a", LockToken: "new"}},
 	} {
 		var retries []outboxport.RetryUpdate
 		var dead []outboxport.DeadUpdate
@@ -135,8 +135,8 @@ func TestFailureBatchesPreserveMetadataInOneUpdate(t *testing.T) {
 				second := first.Add(30 * time.Second)
 				if kind == "retry" {
 					err = repository.MarkRetryBatch(context.Background(), []outboxport.RetryUpdate{
-						{Lease: outboxport.Lease{ID: "a", LockToken: "t1"}, LastError: "error 'A", NextRetryAt: first},
-						{Lease: outboxport.Lease{ID: "b", LockToken: "t2"}, LastError: "error B", NextRetryAt: second},
+						{Lease: outboxport.Lease{EventID: "a", LockToken: "t1"}, LastError: "error 'A", NextRetryAt: first},
+						{Lease: outboxport.Lease{EventID: "b", LockToken: "t2"}, LastError: "error B", NextRetryAt: second},
 					})
 					if !strings.Contains(statement, "retry_count + 1") || !strings.Contains(statement, "ELSE next_retry_at END") {
 						t.Fatalf("retry must advance each row's count and time: %s", statement)
@@ -154,8 +154,8 @@ func TestFailureBatchesPreserveMetadataInOneUpdate(t *testing.T) {
 					}
 				} else {
 					err = repository.MarkDeadBatch(context.Background(), []outboxport.DeadUpdate{
-						{Lease: outboxport.Lease{ID: "a", LockToken: "t1"}, LastError: "error 'A"},
-						{Lease: outboxport.Lease{ID: "b", LockToken: "t2"}, LastError: "error B"},
+						{Lease: outboxport.Lease{EventID: "a", LockToken: "t1"}, LastError: "error 'A"},
+						{Lease: outboxport.Lease{EventID: "b", LockToken: "t2"}, LastError: "error B"},
 					})
 					if strings.Contains(statement, "retry_count") || strings.Contains(statement, "next_retry_at") {
 						t.Fatalf("dead update must not schedule another retry: %s", statement)
@@ -164,8 +164,8 @@ func TestFailureBatchesPreserveMetadataInOneUpdate(t *testing.T) {
 				if rows < 2 && !errors.Is(err, outboxport.ErrLeaseLost) || rows == 2 && err != nil {
 					t.Fatalf("unexpected lease outcome: %v", err)
 				}
-				if calls != 1 || !strings.Contains(statement, "CASE id WHEN ? THEN ? WHEN ? THEN ? ELSE last_error END") ||
-					!strings.Contains(statement, "status = ? AND (id, lock_token) IN ((?,?),(?,?))") {
+				if calls != 1 || !strings.Contains(statement, "CASE event_id WHEN ? THEN ? WHEN ? THEN ? ELSE last_error END") ||
+					!strings.Contains(statement, "status = ? AND (event_id, lock_token) IN ((?,?),(?,?))") {
 					t.Fatalf("must use one UPDATE with per-row errors and paired leases: calls=%d SQL=%s", calls, statement)
 				}
 				if !reflect.DeepEqual(args[:4], []any{"a", "error 'A", "b", "error B"}) ||

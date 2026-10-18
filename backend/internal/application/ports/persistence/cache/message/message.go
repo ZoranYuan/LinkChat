@@ -7,7 +7,19 @@ import (
 
 type MessageCache interface {
 	SetDedupEntry(ctx context.Context, senderID, clientMsgID string, entry DedupEntry, ttl time.Duration) (bool, error)
+	SetDedupEntries(ctx context.Context, entries []DedupEntryWrite, ttl time.Duration) error
 	GetDedupEntry(ctx context.Context, senderID, clientMsgID string) (DedupEntry, error)
+	GetDedupEntries(ctx context.Context, keys []DedupKey) (map[DedupKey]DedupEntry, error)
+}
+
+type DedupKey struct {
+	SenderID    string
+	ClientMsgID string
+}
+
+type DedupEntryWrite struct {
+	Key   DedupKey
+	Entry DedupEntry
 }
 
 type DedupEntry struct {

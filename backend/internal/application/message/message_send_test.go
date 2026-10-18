@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"IM_backend/configs"
+	conversationapp "IM_backend/internal/application/conversation"
 	outboxport "IM_backend/internal/application/ports/outbox"
+	conversationcache "IM_backend/internal/application/ports/persistence/cache/conversation"
 	roomcache "IM_backend/internal/application/ports/persistence/cache/room"
 	conversationrepo "IM_backend/internal/application/ports/persistence/repository/conversation"
 	filerepo "IM_backend/internal/application/ports/persistence/repository/file"
@@ -44,19 +46,21 @@ func (r sendTestRoomRepository) FindActiveRoom(string, int) (*roomentity.Room, e
 
 type sendTestRoomCache struct {
 	roomcache.RoomCache
-	tx          *sendTestTransaction
-	level       int
-	activityErr error
-	warmErr     error
-	records     int
-	warmed      []protocol.MessageEvent
+	tx           *sendTestTransaction
+	level        int
+	activityErr  error
+	warmErr      error
+	records      int
+	messageCount int
+	warmed       []protocol.MessageEvent
 }
 
-func (c *sendTestRoomCache) RecordActivityAndGetLevel(context.Context, string, int) (int, error) {
+func (c *sendTestRoomCache) RecordActivityBatchAndGetLevel(_ context.Context, _ string, messageCount, _ int, _ time.Time) (int, error) {
 	if !c.tx.committed.Load() {
 		panic("activity recorded before transaction commit")
 	}
 	c.records++
+	c.messageCount += messageCount
 	return c.level, c.activityErr
 }
 
@@ -65,6 +69,14 @@ func (c *sendTestRoomCache) AppendRecentMessageSeq(_ context.Context, _ string, 
 		panic("cache warmed before transaction commit")
 	}
 	c.warmed = append(c.warmed, event)
+	return c.warmErr
+}
+
+func (c *sendTestRoomCache) WarmRecentMessageEvents(_ context.Context, _ string, events []protocol.MessageEvent) error {
+	if !c.tx.committed.Load() {
+		panic("cache warmed before transaction commit")
+	}
+	c.warmed = append(c.warmed, events...)
 	return c.warmErr
 }
 
@@ -88,17 +100,39 @@ func TestSendMessageWarmsCommittedRoomMessages(t *testing.T) {
 			app.roomCache = cache
 			app.roomRepository = sendTestRoomRepository{members: test.members}
 			app.config.Message.RoomRealtimeFanoutLimit = 500
-			ack, err := app.HandleSendMessage(context.Background(), sendTestDTO())
+			acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{sendTestDTO()})
+			var ack *MessageAckDTO
+			if len(acks) == 1 {
+				ack = acks[0]
+			}
 			if err != nil || ack.Status != string(protocol.AckStatusSent) {
 				t.Fatalf("cache must not change ACK: %+v %v", ack, err)
 			}
-			if cache.records != 1 || (len(cache.warmed) == 1) != test.wantWarm {
-				t.Fatalf("records=%d warmed=%d", cache.records, len(cache.warmed))
+			if cache.records != 1 || cache.messageCount != 1 || (len(cache.warmed) == 1) != test.wantWarm {
+				t.Fatalf("records=%d message_count=%d warmed=%d", cache.records, cache.messageCount, len(cache.warmed))
 			}
 			if test.wantWarm && (cache.warmed[0].Seq != ack.Seq || cache.warmed[0].MessageId != ack.MessageID) {
 				t.Fatal("cache must describe committed message")
 			}
 		})
+	}
+}
+
+func TestSendMessagesWarmRoomCacheOncePerConversationBatch(t *testing.T) {
+	app, tx, _, _, _ := newSendTestApplication()
+	cache := &sendTestRoomCache{tx: tx, level: roomcache.RoomActivityWarn}
+	app.roomCache = cache
+	app.roomRepository = sendTestRoomRepository{members: 10}
+	first, second := sendTestDTO(), sendTestDTO()
+	second.ClientMessageID = "client-2"
+	second.Content = "another message"
+
+	acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{first, second})
+	if err != nil || len(acks) != 2 {
+		t.Fatalf("acks=%d err=%v", len(acks), err)
+	}
+	if cache.records != 1 || cache.messageCount != 2 || len(cache.warmed) != 2 {
+		t.Fatalf("records=%d message_count=%d warmed=%d", cache.records, cache.messageCount, len(cache.warmed))
 	}
 }
 
@@ -110,17 +144,16 @@ func TestSendMessageRollbackAndDuplicateDoNotRecordActivity(t *testing.T) {
 		app.roomRepository = sendTestRoomRepository{members: 501}
 		dto := sendTestDTO()
 		if duplicate {
-			dto.ConversationID = dto.ReceiverID
 			hash, err := buildMessageRequestHash(dto)
 			if err != nil {
 				t.Fatal(err)
 			}
 			messages.err = messageentity.ErrDuplicateClientMessage
-			messages.existing = &messageentity.Message{MessageId: "original", ConversationId: "room", Seq: 3, RequestHash: hash}
+			messages.existing = &messageentity.Message{MessageId: "original", ConversationId: "conversation", Seq: 3, RequestHash: hash}
 		} else {
 			tx.commitErr = errors.New("commit failed")
 		}
-		_, err := app.HandleSendMessage(context.Background(), dto)
+		_, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{dto})
 		if duplicate && err != nil {
 			t.Fatal(err)
 		}
@@ -141,8 +174,8 @@ func TestRoomActiveHoldContinuesWarmupAndDoesNotRenewOnNormalOrError(t *testing.
 		app.config.Message.RoomRealtimeFanoutLimit = 500
 		cache := &sendTestRoomCache{tx: tx, level: roomcache.RoomActivityActive}
 		app.roomCache = cache
-		event := protocol.MessageEvent{ConvType: protocol.RoomChat, ConversationId: "room", Seq: 1}
-		app.warmRoomMessageCache(context.Background(), event)
+		event := protocol.MessageEvent{ConvType: protocol.RoomChat, ConversationId: "conversation", RecvId: "room", Seq: 1}
+		app.warmRoomMessagesCache(context.Background(), "room", []protocol.MessageEvent{event})
 		if !app.roomActivityState.IsActive("room", time.Now()) {
 			t.Fatal("ACTIVE must immediately mark shared state")
 		}
@@ -152,7 +185,7 @@ func TestRoomActiveHoldContinuesWarmupAndDoesNotRenewOnNormalOrError(t *testing.
 		app.roomActivityState.MarkActive("room", now.Add(-time.Minute))
 		cache.level, cache.activityErr = roomcache.RoomActivityNormal, activityErr
 		event.Seq = 2
-		app.warmRoomMessageCache(context.Background(), event)
+		app.warmRoomMessagesCache(context.Background(), "room", []protocol.MessageEvent{event})
 		if cache.records != 2 || len(cache.warmed) != 2 {
 			t.Fatal("hold must preserve per-message activity checks and warmup")
 		}
@@ -160,7 +193,7 @@ func TestRoomActiveHoldContinuesWarmupAndDoesNotRenewOnNormalOrError(t *testing.
 			t.Fatal("NORMAL or activity error must not renew ACTIVE")
 		}
 		event.Seq = 3
-		app.warmRoomMessageCache(context.Background(), event)
+		app.warmRoomMessagesCache(context.Background(), "room", []protocol.MessageEvent{event})
 		if cache.records != 3 || len(cache.warmed) != 2 {
 			t.Fatal("expired small room must stop warmup when not WARN/ACTIVE")
 		}
@@ -197,6 +230,16 @@ func (sendTestMembers) GetMember(context.Context, string, string) (*roomcache.Me
 	return &roomcache.MemberState{Status: roomvo.Activate}, true, nil
 }
 
+type sendTestRoomUsers struct{ roomrepo.RoomUserRepository }
+
+func (sendTestRoomUsers) ListRelationsByRoomAndUserIDs(_ context.Context, roomID string, userIDs []string) ([]*roomentity.RoomUser, error) {
+	members := make([]*roomentity.RoomUser, 0, len(userIDs))
+	for _, userID := range userIDs {
+		members = append(members, &roomentity.RoomUser{UserId: userID, RoomId: roomID, Status: roomvo.Activate})
+	}
+	return members, nil
+}
+
 type sendTestMessages struct {
 	messagerepo.MessageRepository
 	tx       *sendTestTransaction
@@ -217,14 +260,23 @@ func (r *sendTestMessages) CreateNewMessage(_ context.Context, message *messagee
 	return r.err
 }
 
+func (r *sendTestMessages) CreateNewMessages(_ context.Context, messages []*messageentity.Message) error {
+	if len(messages) > 0 {
+		r.message = messages[len(messages)-1]
+	}
+	return r.err
+}
+
 func (r *sendTestMessages) FindByClientMsgID(context.Context, string, string) (*messageentity.Message, error) {
 	return r.existing, nil
 }
 
 type sendTestConversations struct {
 	conversationrepo.ConversationRepository
-	tx    *sendTestTransaction
-	calls int
+	tx      *sendTestTransaction
+	calls   int
+	records map[string]*conversationentity.Conversation
+	lookups int
 }
 
 func (r *sendTestConversations) WithTx(tx any) conversationrepo.ConversationRepository {
@@ -234,14 +286,49 @@ func (r *sendTestConversations) WithTx(tx any) conversationrepo.ConversationRepo
 	return r
 }
 
+func (r *sendTestConversations) GetByID(_ context.Context, id string) (*conversationentity.Conversation, error) {
+	r.lookups++
+	if r.records != nil {
+		return r.records[id], nil
+	}
+	return &conversationentity.Conversation{ConversationId: id, Convtype: 2, RoomId: "room"}, nil
+}
+
+func (r *sendTestConversations) GetConversationSeq(_ context.Context, id string) (int64, error) {
+	if r.records != nil {
+		return r.records[id].LatestSeq, nil
+	}
+	return 7, nil
+}
+
+type sendTestConversationCache struct {
+	conversationcache.ConversationCache
+}
+
+func (sendTestConversationCache) GetConversationInfo(context.Context, string) (*conversationcache.ConversationInfo, bool, error) {
+	return nil, false, nil
+}
+func (sendTestConversationCache) SetConversationInfo(context.Context, *conversationcache.ConversationInfo, time.Duration) error {
+	return nil
+}
+func (sendTestConversationCache) SetConversationNotFound(context.Context, string) error { return nil }
+
 func (r *sendTestConversations) UpdateLatestSequence(context.Context, string, string) (int64, error) {
 	r.calls++
 	return 7, nil
 }
 
+func (r *sendTestConversations) ReserveSequenceRange(_ context.Context, _ string, count int, _ string) (int64, error) {
+	r.calls++
+	return 7 - int64(count) + 1, nil
+}
+
 type sendTestUserConversations struct {
 	conversationrepo.UserConversationRepository
-	tx *sendTestTransaction
+	tx         *sendTestTransaction
+	batchCalls int
+	updates    []conversationrepo.ReadSeqUpdate
+	err        error
 }
 
 func (r *sendTestUserConversations) WithTx(tx any) conversationrepo.UserConversationRepository {
@@ -253,6 +340,12 @@ func (r *sendTestUserConversations) WithTx(tx any) conversationrepo.UserConversa
 
 func (*sendTestUserConversations) UpdateReadSeq(context.Context, *conversationentity.UserConversation) error {
 	return nil
+}
+
+func (r *sendTestUserConversations) UpdateReadSeqBatch(_ context.Context, updates []conversationrepo.ReadSeqUpdate) error {
+	r.batchCalls++
+	r.updates = append([]conversationrepo.ReadSeqUpdate(nil), updates...)
+	return r.err
 }
 
 type sendTestOutbox struct {
@@ -274,6 +367,11 @@ func (r *sendTestOutbox) Create(_ context.Context, entry *outboxport.Entry) erro
 	return r.err
 }
 
+func (r *sendTestOutbox) CreateBatch(_ context.Context, entries []*outboxport.Entry) error {
+	r.entries = append(r.entries, entries...)
+	return r.err
+}
+
 type sendTestNotifier struct {
 	tx           *sendTestTransaction
 	calls        atomic.Int32
@@ -292,10 +390,12 @@ func newSendTestApplication() (*MessageApplication, *sendTestTransaction, *sendT
 	messages := &sendTestMessages{tx: tx}
 	outbox := &sendTestOutbox{tx: tx}
 	notifier := &sendTestNotifier{tx: tx}
+	conversations := &sendTestConversations{tx: tx}
 	return &MessageApplication{
 		roomActivityState: roomapp.NewRoomActivityState(2 * time.Minute),
-		txManager:         tx, idGenerator: &sendTestIDs{}, roomMemberCache: sendTestMembers{},
-		messageRepository: messages, conversationRepository: &sendTestConversations{tx: tx},
+		txManager:         tx, idGenerator: &sendTestIDs{}, roomMemberCache: sendTestMembers{}, roomUserRepository: sendTestRoomUsers{},
+		messageRepository: messages, conversationRepository: conversations,
+		conversationApplication:    conversationapp.NewConversationApplication(conversations, sendTestConversationCache{}, time.Minute),
 		userConversationRepository: &sendTestUserConversations{tx: tx},
 		messageOutboxRepository:    outbox, producerNotifier: notifier,
 		config: configs.Config{Message: configs.MessageConfig{MaxTextRunes: 4096, MaxIdentifierLength: 128, AttachmentTTLSeconds: 60}},
@@ -303,7 +403,7 @@ func newSendTestApplication() (*MessageApplication, *sendTestTransaction, *sendT
 }
 
 func sendTestDTO() SendMessageDTO {
-	return SendMessageDTO{SenderID: "sender", ReceiverID: "room", ConversationType: int(protocol.RoomChat),
+	return SendMessageDTO{SenderID: "sender", ConversationID: "conversation", ReceiverID: "room", ConversationType: int(protocol.RoomChat),
 		ClientMessageID: "client-1", Type: int(messagevo.Text), Content: "hello"}
 }
 
@@ -321,9 +421,13 @@ func TestSendMessageWaitsForCommitBeforeAckAndNotify(t *testing.T) {
 	result := make(chan *MessageAckDTO, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		ack, err := app.HandleSendMessage(context.Background(), sendTestDTO())
+		acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{sendTestDTO()})
 		errCh <- err
-		result <- ack
+		if len(acks) == 1 {
+			result <- acks[0]
+			return
+		}
+		result <- nil
 	}()
 	select {
 	case <-ready:
@@ -351,16 +455,54 @@ func TestSendMessageWaitsForCommitBeforeAckAndNotify(t *testing.T) {
 	if notifier.calls.Load() != 1 || notifier.beforeCommit.Load() || len(outbox.entries) != 1 {
 		t.Fatal("successful commit must notify once and contain a message outbox")
 	}
-	var envelope protocol.Envelope
 	var event protocol.MessageEvent
-	if err := json.Unmarshal(outbox.entries[0].Payload, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(envelope.Payload, &event); err != nil {
+	if err := json.Unmarshal(outbox.entries[0].Payload, &event); err != nil {
 		t.Fatal(err)
 	}
 	if event.Seq != ack.Seq || event.MessageId != messages.message.MessageId || event.ClientMsgId != ack.ClientMessageID {
 		t.Fatalf("outbox and ACK must describe the committed message: %+v %+v", event, ack)
+	}
+}
+
+func TestSendMessagesReservesContiguousSequenceRangeAndWritesBatch(t *testing.T) {
+	app, tx, _, outbox, notifier := newSendTestApplication()
+	first := sendTestDTO()
+	first.ClientMessageID = "client-1"
+	second := sendTestDTO()
+	second.ClientMessageID = "client-2"
+
+	acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{first, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acks) != 2 || acks[0].Seq != 6 || acks[1].Seq != 7 {
+		t.Fatalf("batch must receive contiguous sequence numbers in input order: %+v", acks)
+	}
+	if tx.calls != 1 || !tx.committed.Load() || len(outbox.entries) != 2 || notifier.calls.Load() != 1 {
+		t.Fatalf("batch must commit and notify once: tx=%d outbox=%d notify=%d", tx.calls, len(outbox.entries), notifier.calls.Load())
+	}
+	if lookups := app.conversationRepository.(*sendTestConversations).lookups; lookups != 1 {
+		t.Fatalf("batch conversation lookups=%d", lookups)
+	}
+	userConversations := app.userConversationRepository.(*sendTestUserConversations)
+	if userConversations.batchCalls != 1 || len(userConversations.updates) != 2 {
+		t.Fatalf("read watermarks must be submitted in one batch: calls=%d updates=%+v", userConversations.batchCalls, userConversations.updates)
+	}
+	for i, update := range userConversations.updates {
+		if update.UserID != first.SenderID || update.ConversationID != first.ConversationID || update.LastReadSeq != acks[i].Seq {
+			t.Fatalf("read watermark must match its committed message: %+v", update)
+		}
+	}
+}
+
+func TestSendMessagesReadSeqFailureDoesNotCommitOrNotify(t *testing.T) {
+	app, tx, _, outbox, notifier := newSendTestApplication()
+	failure := errors.New("read watermark update failed")
+	app.userConversationRepository.(*sendTestUserConversations).err = failure
+
+	acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{sendTestDTO()})
+	if !errors.Is(err, failure) || len(acks) != 1 || acks[0].Status != string(protocol.AckStatusFailed) || tx.committed.Load() || len(outbox.entries) != 0 || notifier.calls.Load() != 0 {
+		t.Fatalf("read watermark failure must abort the batch: acks=%+v err=%v", acks, err)
 	}
 }
 
@@ -381,8 +523,12 @@ func TestSendMessageFailureDoesNotAckSuccessOrNotify(t *testing.T) {
 			case "cancel":
 				tx.beforeCommit = cancel
 			}
-			ack, err := app.HandleSendMessage(ctx, sendTestDTO())
-			if err == nil || ack.Status != string(protocol.AckStatusFailed) || tx.committed.Load() || notifier.calls.Load() != 0 {
+			acks, err := app.HandleSendMessages(ctx, "conversation", []SendMessageDTO{sendTestDTO()})
+			if err == nil || len(acks) != 1 || acks[0].Status != string(protocol.AckStatusFailed) || tx.committed.Load() || notifier.calls.Load() != 0 {
+				var ack *MessageAckDTO
+				if len(acks) > 0 {
+					ack = acks[0]
+				}
 				t.Fatalf("failure must not return success or notify: ack=%+v err=%v", ack, err)
 			}
 		})
@@ -394,7 +540,6 @@ func TestSendMessageDuplicateReturnsOriginalAck(t *testing.T) {
 		t.Run(fmt.Sprintf("conflict=%t", conflict), func(t *testing.T) {
 			app, tx, messages, outbox, notifier := newSendTestApplication()
 			dto := sendTestDTO()
-			dto.ConversationID = dto.ReceiverID
 			hash, err := buildMessageRequestHash(dto)
 			if err != nil {
 				t.Fatal(err)
@@ -403,10 +548,14 @@ func TestSendMessageDuplicateReturnsOriginalAck(t *testing.T) {
 				hash = "different-request"
 			}
 			messages.err = messageentity.ErrDuplicateClientMessage
-			messages.existing = &messageentity.Message{MessageId: "original", ConversationId: "room", Seq: 3, RequestHash: hash}
-			ack, err := app.HandleSendMessage(context.Background(), dto)
+			messages.existing = &messageentity.Message{MessageId: "original", ConversationId: "conversation", Seq: 3, RequestHash: hash}
+			acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{dto})
+			var ack *MessageAckDTO
+			if len(acks) == 1 {
+				ack = acks[0]
+			}
 			if conflict {
-				if !errors.Is(err, messageentity.ErrClientMessageConflict) || ack.Status != string(protocol.AckStatusFailed) {
+				if err != nil || ack == nil || ack.Status != string(protocol.AckStatusFailed) || ack.Error != messageentity.ErrClientMessageConflict.Error() {
 					t.Fatalf("conflicting retry must fail: %+v %v", ack, err)
 				}
 			} else if err != nil || ack.MessageID != "original" || ack.Seq != 3 || ack.Status != string(protocol.AckStatusSent) {
@@ -470,9 +619,13 @@ func TestSendMediaUsesLockedFileAndRejectsDeletedFile(t *testing.T) {
 			app.fileRepository, app.messageAttachmentsRepository = files, attachments
 			dto := sendTestDTO()
 			dto.Type, dto.Content, dto.FileID = int(messagevo.File), "", "file"
-			ack, err := app.HandleSendMessage(context.Background(), dto)
+			acks, err := app.HandleSendMessages(context.Background(), "conversation", []SendMessageDTO{dto})
+			var ack *MessageAckDTO
+			if len(acks) == 1 {
+				ack = acks[0]
+			}
 			if deleted {
-				if err == nil || ack.Status != string(protocol.AckStatusFailed) || messages.message != nil || len(outbox.entries) != 0 || notifier.calls.Load() != 0 {
+				if err == nil || len(acks) != 1 || ack.Status != string(protocol.AckStatusFailed) || messages.message != nil || len(outbox.entries) != 0 || notifier.calls.Load() != 0 {
 					t.Fatalf("deleted file must not be sent: %+v %v", ack, err)
 				}
 				if app.conversationRepository.(*sendTestConversations).calls != 0 {
@@ -480,19 +633,15 @@ func TestSendMediaUsesLockedFileAndRejectsDeletedFile(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || ack.AttachmentID == "" || attachments.created == nil || len(outbox.entries) != 2 || messages.message.Content != "actual.txt" {
-				t.Fatalf("media send must atomically save attachment and both events: %+v %v", ack, err)
+			if err != nil || ack.AttachmentID == "" || attachments.created == nil || len(outbox.entries) != 1 || messages.message.Content != "actual.txt" {
+				t.Fatalf("media send must atomically save attachment and only the message event: %+v %v", ack, err)
 			}
-			var envelope protocol.Envelope
-			var event protocol.FileCardWarmupEvent
-			if err := json.Unmarshal(outbox.entries[1].Payload, &envelope); err != nil {
+			var event protocol.MessageEvent
+			if err := json.Unmarshal(outbox.entries[0].Payload, &event); err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal(envelope.Payload, &event); err != nil {
-				t.Fatal(err)
-			}
-			if event.FileName != "actual.txt" || event.Size != 99 || event.AttachmentID != ack.AttachmentID {
-				t.Fatalf("warmup must use locked metadata: %+v", event)
+			if event.Content != "actual.txt" || event.AttachmentId != ack.AttachmentID {
+				t.Fatalf("message event must use locked metadata and the committed attachment: %+v", event)
 			}
 		})
 	}

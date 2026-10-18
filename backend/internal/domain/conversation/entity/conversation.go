@@ -36,11 +36,3 @@ func NewConversation(
 
 	return conversation
 }
-
-func GetConversationID(senderId, receiverId string, convType int) string {
-	if conversationvo.ConvType(convType) == conversationvo.PrivateChat {
-		return max(receiverId, senderId) + "_" + min(receiverId, senderId)
-	}
-
-	return receiverId
-}

@@ -77,6 +77,31 @@ func (fr *FriendRepository) FindRelation(userId, friendId string) (*friendentity
 	return &d, nil
 }
 
+func (fr *FriendRepository) FindRelationsByPairs(ctx context.Context, pairs []friendrepo.RelationPair) ([]*friendentity.Friend, error) {
+	if len(pairs) == 0 {
+		return []*friendentity.Friend{}, nil
+	}
+	query := fr.db.WithContext(ctx).Model(&model.Friend{})
+	for i, pair := range pairs {
+		condition := "(user_id = ? AND friend_user_id = ?)"
+		if i == 0 {
+			query = query.Where(condition, pair.UserID, pair.FriendUserID)
+		} else {
+			query = query.Or(condition, pair.UserID, pair.FriendUserID)
+		}
+	}
+	var rows []model.Friend
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	relations := make([]*friendentity.Friend, 0, len(rows))
+	for _, row := range rows {
+		domain := toDomain(row)
+		relations = append(relations, &domain)
+	}
+	return relations, nil
+}
+
 func (fr *FriendRepository) FindRelations(
 	ctx context.Context,
 	userId string,

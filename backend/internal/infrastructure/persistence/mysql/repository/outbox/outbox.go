@@ -45,17 +45,17 @@ func toModel(e *outboxport.Entry) *model.OutboxRecord {
 	}
 
 	return &model.OutboxRecord{
-		ID:          e.ID,
-		EventType:   e.EventType,
-		MessageKey:  e.MessageKey,
-		Payload:     e.Payload,
-		Status:      e.Status,
-		RetryCount:  e.RetryCount,
-		NextRetryAt: e.NextRetryAt,
-		LockedAt:    lockedAt,
-		LockToken:   e.LockToken,
-		LastError:   e.LastError,
-		SentAt:      sentAt,
+		EventID:      e.EventID,
+		EventType:    e.EventType,
+		PartitionKey: e.PartitionKey,
+		Payload:      e.Payload,
+		Status:       e.Status,
+		RetryCount:   e.RetryCount,
+		NextRetryAt:  e.NextRetryAt,
+		LockedAt:     lockedAt,
+		LockToken:    e.LockToken,
+		LastError:    e.LastError,
+		SentAt:       sentAt,
 	}
 }
 
@@ -77,19 +77,19 @@ func toEntry(m *model.OutboxRecord) *outboxport.Entry {
 	}
 
 	return &outboxport.Entry{
-		ID:          m.ID,
-		EventType:   m.EventType,
-		MessageKey:  m.MessageKey,
-		Payload:     m.Payload,
-		Status:      m.Status,
-		RetryCount:  m.RetryCount,
-		NextRetryAt: m.NextRetryAt,
-		LockedAt:    lockedAt,
-		LockToken:   m.LockToken,
-		LastError:   m.LastError,
-		SentAt:      sentAt,
-		CreatedAt:   m.CreatedAt,
-		UpdatedAt:   m.UpdatedAt,
+		EventID:      m.EventID,
+		EventType:    m.EventType,
+		PartitionKey: m.PartitionKey,
+		Payload:      m.Payload,
+		Status:       m.Status,
+		RetryCount:   m.RetryCount,
+		NextRetryAt:  m.NextRetryAt,
+		LockedAt:     lockedAt,
+		LockToken:    m.LockToken,
+		LastError:    m.LastError,
+		SentAt:       sentAt,
+		CreatedAt:    m.CreatedAt,
+		UpdatedAt:    m.UpdatedAt,
 	}
 }
 
@@ -97,12 +97,12 @@ func (r *OutboxRepository) Create(ctx context.Context, outbox *outboxport.Entry)
 	if outbox == nil {
 		return nil
 	}
-	if outbox.ID == "" {
+	if outbox.EventID == "" {
 		id, err := r.idGenerator.Generate()
 		if err != nil {
 			return err
 		}
-		outbox.ID = id
+		outbox.EventID = id
 	}
 	if outbox.Status == "" {
 		outbox.Status = outboxport.StatusPending
@@ -112,6 +112,37 @@ func (r *OutboxRepository) Create(ctx context.Context, outbox *outboxport.Entry)
 	}
 	m := toModel(outbox)
 	return r.db.WithContext(ctx).Create(m).Error
+}
+
+func (r *OutboxRepository) CreateBatch(ctx context.Context, outboxes []*outboxport.Entry) error {
+	if len(outboxes) == 0 {
+		return nil
+	}
+	now := time.Now()
+	rows := make([]*model.OutboxRecord, 0, len(outboxes))
+	for _, entry := range outboxes {
+		if entry == nil {
+			continue
+		}
+		if entry.EventID == "" {
+			id, err := r.idGenerator.Generate()
+			if err != nil {
+				return err
+			}
+			entry.EventID = id
+		}
+		if entry.Status == "" {
+			entry.Status = outboxport.StatusPending
+		}
+		if entry.NextRetryAt.IsZero() {
+			entry.NextRetryAt = now
+		}
+		rows = append(rows, toModel(entry))
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Create(&rows).Error
 }
 
 func (r *OutboxRepository) ClaimPending(
@@ -144,13 +175,13 @@ func (r *OutboxRepository) ClaimPending(
 	}
 	ids := make([]string, 0, len(models))
 	for _, m := range models {
-		ids = append(ids, m.ID)
+		ids = append(ids, m.EventID)
 	}
 	lockAt := now
 	lockToken := uuid.NewString()
 	if err := r.db.WithContext(ctx).
 		Model(&model.OutboxRecord{}).
-		Where("id IN ?", ids).
+		Where("event_id IN ?", ids).
 		Updates(map[string]interface{}{
 			"status":     outboxport.StatusProcessing,
 			"locked_at":  &lockAt,
@@ -170,7 +201,7 @@ func (r *OutboxRepository) ClaimPending(
 	return result, nil
 }
 
-// MarkSentBatch 使用每条记录的 id + lockToken，一条 SQL 确认成功事件。
+// MarkSentBatch 使用每条记录的 eventID + lockToken，一条 SQL 确认成功事件。
 func (r *OutboxRepository) MarkSentBatch(ctx context.Context, leases []outboxport.Lease, sentAt time.Time) error {
 	return r.updateLeasedBatch(ctx, leases, map[string]interface{}{
 		"status": outboxport.StatusSent, "sent_at": sentAt, "locked_at": nil, "lock_token": "",
@@ -184,14 +215,14 @@ func (r *OutboxRepository) MarkRetryBatch(ctx context.Context, updates []outboxp
 	retryArgs := make([]interface{}, 0, len(updates)*2)
 	for _, update := range updates {
 		leases = append(leases, update.Lease)
-		errorArgs = append(errorArgs, update.ID, update.LastError)
-		retryArgs = append(retryArgs, update.ID, update.NextRetryAt)
+		errorArgs = append(errorArgs, update.EventID, update.LastError)
+		retryArgs = append(retryArgs, update.EventID, update.NextRetryAt)
 	}
 	return r.updateLeasedBatch(ctx, leases, map[string]interface{}{
 		"status": outboxport.StatusPending, "locked_at": nil, "lock_token": "",
 		"retry_count":   gorm.Expr("retry_count + 1"),
-		"last_error":    gorm.Expr("CASE id "+strings.Repeat("WHEN ? THEN ? ", len(updates))+"ELSE last_error END", errorArgs...),
-		"next_retry_at": gorm.Expr("CASE id "+strings.Repeat("WHEN ? THEN ? ", len(updates))+"ELSE next_retry_at END", retryArgs...),
+		"last_error":    gorm.Expr("CASE event_id "+strings.Repeat("WHEN ? THEN ? ", len(updates))+"ELSE last_error END", errorArgs...),
+		"next_retry_at": gorm.Expr("CASE event_id "+strings.Repeat("WHEN ? THEN ? ", len(updates))+"ELSE next_retry_at END", retryArgs...),
 	})
 }
 
@@ -201,11 +232,11 @@ func (r *OutboxRepository) MarkDeadBatch(ctx context.Context, updates []outboxpo
 	errorArgs := make([]interface{}, 0, len(updates)*2)
 	for _, update := range updates {
 		leases = append(leases, update.Lease)
-		errorArgs = append(errorArgs, update.ID, update.LastError)
+		errorArgs = append(errorArgs, update.EventID, update.LastError)
 	}
 	return r.updateLeasedBatch(ctx, leases, map[string]interface{}{
 		"status": outboxport.StatusDead, "locked_at": nil, "lock_token": "",
-		"last_error": gorm.Expr("CASE id "+strings.Repeat("WHEN ? THEN ? ", len(updates))+"ELSE last_error END", errorArgs...),
+		"last_error": gorm.Expr("CASE event_id "+strings.Repeat("WHEN ? THEN ? ", len(updates))+"ELSE last_error END", errorArgs...),
 	})
 }
 
@@ -216,20 +247,20 @@ func (r *OutboxRepository) updateLeasedBatch(ctx context.Context, leases []outbo
 	pairs := make([][]interface{}, 0, len(leases))
 	seen := make(map[string]string, len(leases))
 	for _, lease := range leases {
-		if lease.ID == "" || lease.LockToken == "" {
+		if lease.EventID == "" || lease.LockToken == "" {
 			return outboxport.ErrLeaseLost
 		}
-		if token, exists := seen[lease.ID]; exists {
+		if token, exists := seen[lease.EventID]; exists {
 			if token != lease.LockToken {
 				return outboxport.ErrLeaseLost
 			}
 			continue
 		}
-		seen[lease.ID] = lease.LockToken
-		pairs = append(pairs, []interface{}{lease.ID, lease.LockToken})
+		seen[lease.EventID] = lease.LockToken
+		pairs = append(pairs, []interface{}{lease.EventID, lease.LockToken})
 	}
 	result := r.db.WithContext(ctx).Model(&model.OutboxRecord{}).
-		Where("status = ? AND (id, lock_token) IN ?", outboxport.StatusProcessing, pairs).
+		Where("status = ? AND (event_id, lock_token) IN ?", outboxport.StatusProcessing, pairs).
 		Updates(assignments)
 	if result.Error != nil {
 		return result.Error
