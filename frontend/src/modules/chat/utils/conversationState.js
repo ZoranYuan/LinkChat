@@ -1,5 +1,3 @@
-import { ConversationType } from "../../../constants/conversation.js";
-
 export const findConversation = (conversations, conversationId) => (
   (conversations || []).find((item) => item.conversationId === conversationId) || null
 );
@@ -40,28 +38,4 @@ export const applyRealtimeMessageToConversation = (
   }
 
   return true;
-};
-
-export const createDirectConversation = (currentUserId, contact) => {
-  const conversationId = [currentUserId, contact.id].sort().reverse().join("_");
-  return {
-    conversationId,
-    latestSeq: 0,
-    targetId: contact.id,
-    convType: ConversationType.PRIVATE_CHAT,
-    displayName: contact.name,
-    unread: 0,
-    lastMessage: null,
-    avatar: contact.avatar || "",
-    peerUser: {
-      userId: contact.id,
-      userName: contact.username || "",
-      nickName: contact.name,
-      remark: "",
-      avatar: contact.avatar || "",
-    },
-    room: null,
-    isMuted: false,
-    readWatermark: 0,
-  };
 };

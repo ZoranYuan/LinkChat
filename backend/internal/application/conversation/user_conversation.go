@@ -6,7 +6,6 @@ import (
 	messagerepo "IM_backend/internal/application/ports/persistence/repository/message"
 	roomrepo "IM_backend/internal/application/ports/persistence/repository/room"
 	userrepo "IM_backend/internal/application/ports/persistence/repository/user"
-	roomapp "IM_backend/internal/application/room"
 	conversationentity "IM_backend/internal/domain/conversation/entity"
 	conversationvo "IM_backend/internal/domain/conversation/value_object"
 	friendentity "IM_backend/internal/domain/friend/entity"
@@ -16,17 +15,21 @@ import (
 	"sort"
 )
 
+type roomInfoService interface {
+	GetRoomInfo(ctx context.Context, roomID string) (*roomentity.Room, error)
+}
+
 type UserConversationApplication struct {
 	friendRepository           friendrepo.FriendRepository
 	userRepository             userrepo.UserRepository
 	roomRepository             roomrepo.RoomRepository
-	roomApplication            *roomapp.RoomApplication
+	roomApplication            roomInfoService
 	userConversationRepository conversationrepo.UserConversationRepository
 	conversationRepository     conversationrepo.ConversationRepository
 	messageRepository          messagerepo.MessageRepository
 }
 
-func (uc *UserConversationApplication) SetRoomApplication(application *roomapp.RoomApplication) {
+func (uc *UserConversationApplication) SetRoomApplication(application roomInfoService) {
 	if uc != nil {
 		uc.roomApplication = application
 	}

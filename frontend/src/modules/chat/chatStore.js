@@ -43,7 +43,6 @@ import {
 import { createMessageSyncService } from "./services/messageSyncService.js";
 import {
   applyRealtimeMessageToConversation,
-  createDirectConversation,
   findConversation,
   sortConversations,
 } from "./utils/conversationState.js";
@@ -1231,17 +1230,17 @@ export const useChatStore = defineStore("chat", () => {
 
   const startConversation = async (contact) => {
     let conversation = state.conversations.find((item) => (
-      item.targetId === contact.id || item.conversationId === contact.conversationId
+      item.convType === ConversationType.PRIVATE_CHAT
+      && (item.targetId === contact.id || (contact.conversationId && item.conversationId === contact.conversationId))
     ));
     if (!conversation) {
-      const userId = currentUserId();
-      if (!userId) throw new Error("当前用户信息不完整，请重新登录。");
-      conversation = createDirectConversation(userId, contact);
-      state.conversations = sortConversations([conversation, ...state.conversations]);
-      state.messages[conversation.conversationId] = [];
-      state.activeConversationId = conversation.conversationId;
-      await persistConversation(conversation);
-      return conversation;
+      const session = captureSession();
+      await refreshConversationSnapshot(session);
+      if (!isSessionActive(session)) return null;
+      conversation = state.conversations.find((item) => (
+        item.convType === ConversationType.PRIVATE_CHAT && item.targetId === contact.id
+      ));
+      if (!conversation) throw new Error("会话不存在，请刷新好友列表后重试。");
     }
 
     await selectConversation(conversation.conversationId);

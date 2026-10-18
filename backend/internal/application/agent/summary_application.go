@@ -9,6 +9,7 @@ import (
 	roomrepo "IM_backend/internal/application/ports/persistence/repository/room"
 	summaryrepo "IM_backend/internal/application/ports/persistence/repository/summary"
 	txmanager "IM_backend/internal/application/ports/persistence/tx_manager"
+	conversationentity "IM_backend/internal/domain/conversation/entity"
 	conversationvo "IM_backend/internal/domain/conversation/value_object"
 	messagevo "IM_backend/internal/domain/message/value_object"
 	roomvo "IM_backend/internal/domain/room/value_object"
@@ -112,11 +113,18 @@ func (sa *SummaryApplication) InitSummaryRun(ctx context.Context, roomID, userID
 		return toSummaryRunInfo(run), nil
 	}
 
-	fromSeq, toSeq, err := sa.resolveRange(ctx, roomID, userID)
+	conversation, err := sa.conversations.FindRoomConversation(ctx, roomID)
 	if err != nil {
 		return nil, err
 	}
-	messages, err := sa.messages.ListBySeqRange(ctx, roomID, fromSeq, toSeq)
+	if conversation == nil || conversation.Convtype != conversationvo.RoomChat {
+		return nil, ErrUnknownConversation
+	}
+	fromSeq, toSeq, err := sa.resolveRange(ctx, roomID, userID, conversation)
+	if err != nil {
+		return nil, err
+	}
+	messages, err := sa.messages.ListBySeqRange(ctx, conversation.ConversationId, fromSeq, toSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -480,18 +488,11 @@ func (sa *SummaryApplication) checkMember(roomID, userID string) error {
 	return nil
 }
 
-func (sa *SummaryApplication) resolveRange(ctx context.Context, roomID, userID string) (int64, int64, error) {
+func (sa *SummaryApplication) resolveRange(ctx context.Context, roomID, userID string, conversation *conversationentity.Conversation) (int64, int64, error) {
 	if snapshot, found, err := sa.snapshots.GetActive(ctx, userID, roomID); err != nil {
 		return 0, 0, err
 	} else if found && snapshot.RoomID == roomID {
 		return snapshot.FromSeq, snapshot.ToSeq, nil
-	}
-	conversation, err := sa.conversations.GetByID(ctx, roomID)
-	if err != nil {
-		return 0, 0, err
-	}
-	if conversation == nil || conversation.Convtype != conversationvo.RoomChat {
-		return 0, 0, ErrUnknownConversation
 	}
 	userConversation, err := sa.userConversations.GetUserConversation(ctx, userID, conversation.ConversationId)
 	if err != nil {

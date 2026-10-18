@@ -50,6 +50,37 @@ func (r *UserConversationRepository) UpdateReadSeq(
 	})
 }
 
+// UpdateReadSeqBatch 一次推进本批发送者的已读水位，重复记录通过 GREATEST 保留最大值。
+func (r *UserConversationRepository) UpdateReadSeqBatch(
+	ctx context.Context,
+	updates []conversationrepo.ReadSeqUpdate,
+) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	rows := make([]model.UserConversation, len(updates))
+	for i, update := range updates {
+		rows[i] = model.UserConversation{
+			UserId:         update.UserID,
+			ConversationId: update.ConversationID,
+			LastReadSeq:    update.LastReadSeq,
+		}
+	}
+
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "user_id"},
+				{Name: "conversation_id"},
+			},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"last_read_seq": gorm.Expr("GREATEST(last_read_seq, VALUES(last_read_seq))"),
+			}),
+		}).
+		Create(&rows).Error
+}
+
 // AdvanceReadSeq atomically advances the read cursor and reports whether the
 // stored value actually moved forward. The result controls read notifications.
 func (r *UserConversationRepository) AdvanceReadSeq(

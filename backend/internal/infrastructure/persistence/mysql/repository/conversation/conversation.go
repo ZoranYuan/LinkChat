@@ -6,6 +6,7 @@ import (
 
 	conversationrepo "IM_backend/internal/application/ports/persistence/repository/conversation"
 	conversationentity "IM_backend/internal/domain/conversation/entity"
+	conversationvo "IM_backend/internal/domain/conversation/value_object"
 	"IM_backend/internal/infrastructure/persistence/mysql/model"
 
 	"gorm.io/gorm"
@@ -51,16 +52,58 @@ func (r *ConversationRepository) GetByID(ctx context.Context, id string) (*conve
 	return toConversationDomain(&m), nil
 }
 
-func (r *ConversationRepository) UpdateLatestSequence(
+func (r *ConversationRepository) FindPrivateConversation(ctx context.Context, userID1, userID2 string) (*conversationentity.Conversation, error) {
+	var row model.Conversation
+	err := r.db.WithContext(ctx).Where("convtype = ? AND ((user_id1 = ? AND user_id2 = ?) OR (user_id1 = ? AND user_id2 = ?))", conversationvo.PrivateChat, userID1, userID2, userID2, userID1).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toConversationDomain(&row), nil
+}
+
+func (r *ConversationRepository) FindRoomConversation(ctx context.Context, roomID string) (*conversationentity.Conversation, error) {
+	var row model.Conversation
+	err := r.db.WithContext(ctx).Where("convtype = ? AND room_id = ?", conversationvo.RoomChat, roomID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toConversationDomain(&row), nil
+}
+
+// LockPrivateParticipants 在创建事务开始时按固定顺序锁用户行，避免同一用户对并发创建不同会话。
+func (r *ConversationRepository) LockPrivateParticipants(ctx context.Context, userID1, userID2 string) error {
+	if userID1 == "" || userID2 == "" || userID1 == userID2 {
+		return errors.New("私聊参与者无效")
+	}
+	for _, id := range []string{min(userID1, userID2), max(userID1, userID2)} {
+		var row model.User
+		if err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Select("user_id").Where("user_id = ?", id).Take(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *ConversationRepository) ReserveSequenceRange(
 	ctx context.Context,
-	conversationId string,
-	messageId string,
+	conversationID string,
+	count int,
+	lastMessageID string,
 ) (int64, error) {
+	if count <= 0 {
+		return 0, errors.New("消息批次不能为空")
+	}
 	var row model.Conversation
 	err := r.db.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Model(&model.Conversation{}).
-		Where("conversation_id = ?", conversationId).
+		Where("conversation_id = ?", conversationID).
 		First(&row).Error
 
 	if err != nil {
@@ -70,21 +113,30 @@ func (r *ConversationRepository) UpdateLatestSequence(
 		return 0, err
 	}
 
-	nextSeq := row.LatestSeq + 1
+	firstSeq := row.LatestSeq + 1
+	lastSeq := row.LatestSeq + int64(count)
 
 	err = r.db.WithContext(ctx).
 		Model(&model.Conversation{}).
-		Where("conversation_id = ?", conversationId).
+		Where("conversation_id = ?", conversationID).
 		Updates(map[string]any{
-			"latest_seq":        nextSeq,
-			"latest_message_id": messageId,
+			"latest_seq":        lastSeq,
+			"latest_message_id": lastMessageID,
 		}).Error
 
 	if err != nil {
 		return 0, err
 	}
 
-	return nextSeq, nil
+	return firstSeq, nil
+}
+
+func (r *ConversationRepository) UpdateLatestSequence(
+	ctx context.Context,
+	conversationID string,
+	messageID string,
+) (int64, error) {
+	return r.ReserveSequenceRange(ctx, conversationID, 1, messageID)
 }
 
 func (r *ConversationRepository) GetConversationSeq(
