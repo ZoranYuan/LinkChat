@@ -52,9 +52,14 @@ type CacheConfig struct {
 	AttachmentFileCard AttachmentFileCardConfig `yaml:"attachment_file_card"`
 	RoomUnreadSnapshot RoomUnreadSnapshotConfig `yaml:"room_unread_snapshot"`
 	RoomInfo           RoomInfoConfig           `yaml:"room_info"`
+	ConversationInfo   ConversationInfoConfig   `yaml:"conversation_info"`
 }
 
 type RoomInfoConfig struct {
+	TTLSeconds int `yaml:"ttl_seconds"`
+}
+
+type ConversationInfoConfig struct {
 	TTLSeconds int `yaml:"ttl_seconds"`
 }
 
@@ -87,14 +92,13 @@ type KafkaTopics struct {
 	ReadMessageCommitted string `yaml:"read_message_committed"`
 	FriendRequestCreated string `yaml:"friend_request_created"`
 	RoomMemberChanged    string `yaml:"room_member_changed"`
-	FileCardWarmup       string `yaml:"file_card_warmup"`
 }
 
 type KafkaConsumerConfig struct {
 	GroupID                  string `yaml:"group_id"`
 	Version                  string `yaml:"version"`
 	Assignor                 string `yaml:"assignor"` // range / roundrobin / sticky
-	MaxRetries               int    `yaml:"max_retries"`
+	MaxAttempts              int    `yaml:"max_attempts"`
 	LeaseStaleAfterSecs      int    `yaml:"lease_stale_after_seconds"`
 	ConsumeRetryIntervalSecs int    `yaml:"consume_retry_interval_seconds"`
 	DeadLetterSuffix         string `yaml:"dead_letter_suffix"`
@@ -161,19 +165,22 @@ type App struct {
 }
 
 type WebSocketConfig struct {
-	WriteWaitSeconds         int `yaml:"write_wait_seconds"`
-	PongWaitSeconds          int `yaml:"pong_wait_seconds"`
-	PingPeriodSeconds        int `yaml:"ping_period_seconds"`
-	TimerInterval            int `yaml:"timer_interval_seconds"`
-	MaxMessageSize           int `yaml:"max_message_size"`
-	MaxMessageSendBufferSize int `yaml:"max_message_send_buffer_size"`
-	InboundWorkerCount       int `yaml:"inbound_worker_count"`
-	SendMessageRate          int `yaml:"send_message_rate"`
-	SendMessageBurst         int `yaml:"send_message_burst"`
-	BatchMaxMessages         int `yaml:"batch_max_messages"`
-	BatchMaxBytes            int `yaml:"batch_max_bytes"`
-	BatchLingerMilliseconds  int `yaml:"batch_linger_milliseconds"`
-	BatchReadyQueueSize      int `yaml:"batch_ready_queue_size"`
+	WriteWaitSeconds           int `yaml:"write_wait_seconds"`
+	PongWaitSeconds            int `yaml:"pong_wait_seconds"`
+	PingPeriodSeconds          int `yaml:"ping_period_seconds"`
+	TimerInterval              int `yaml:"timer_interval_seconds"`
+	PageHiddenTimeoutSeconds   int `yaml:"page_hidden_timeout_seconds"`
+	MaxMessageSize             int `yaml:"max_message_size"`
+	MaxMessageSendBufferSize   int `yaml:"max_message_send_buffer_size"`
+	MessageSequencerShardCount int `yaml:"message_sequencer_shard_count"`
+	MessageBatchSize           int `yaml:"message_batch_size"`
+	MessageFlushIntervalMs     int `yaml:"message_flush_interval_milliseconds"`
+	SendMessageRate            int `yaml:"send_message_rate"`
+	SendMessageBurst           int `yaml:"send_message_burst"`
+	BatchMaxMessages           int `yaml:"batch_max_messages"`
+	BatchMaxBytes              int `yaml:"batch_max_bytes"`
+	BatchLingerMilliseconds    int `yaml:"batch_linger_milliseconds"`
+	BatchReadyQueueSize        int `yaml:"batch_ready_queue_size"`
 }
 
 type MessageConfig struct {
@@ -336,8 +343,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("文件上传限制必须大于 0")
 	}
 	if c.WebSocket.MaxMessageSize <= 0 || c.WebSocket.MaxMessageSendBufferSize <= 0 ||
-		c.WebSocket.InboundWorkerCount <= 0 ||
+		c.WebSocket.MessageSequencerShardCount <= 0 || c.WebSocket.MessageBatchSize <= 0 ||
+		c.WebSocket.MessageFlushIntervalMs <= 0 ||
 		c.WebSocket.WriteWaitSeconds <= 0 || c.WebSocket.PongWaitSeconds <= 0 ||
+		c.WebSocket.TimerInterval <= 0 || c.WebSocket.PageHiddenTimeoutSeconds <= 0 ||
 		c.WebSocket.PingPeriodSeconds <= 0 || c.WebSocket.PingPeriodSeconds >= c.WebSocket.PongWaitSeconds {
 		return fmt.Errorf("WebSocket 配置无效")
 	}
@@ -350,6 +359,9 @@ func (c Config) Validate() error {
 	}
 	if c.Cache.RoomInfo.TTLSeconds <= 0 {
 		return fmt.Errorf("房间基础信息缓存 TTL 配置无效")
+	}
+	if c.Cache.ConversationInfo.TTLSeconds <= 0 {
+		return fmt.Errorf("会话基本信息缓存 TTL 配置无效")
 	}
 	if strings.EqualFold(c.App.Env, "production") {
 		if len(c.JWT.Secret) < 32 || c.JWT.Secret == "U2FsdGVkX19anQGSRtiUwgRLpWV333jI4xjlCF32dek=" {

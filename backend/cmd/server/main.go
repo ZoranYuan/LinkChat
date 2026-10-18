@@ -28,6 +28,7 @@ import (
 	usermysql "IM_backend/internal/infrastructure/persistence/mysql/repository/user"
 	"IM_backend/internal/infrastructure/persistence/redis"
 	authcache "IM_backend/internal/infrastructure/persistence/redis/cache/auth"
+	conversationcache "IM_backend/internal/infrastructure/persistence/redis/cache/conversation"
 	filecache "IM_backend/internal/infrastructure/persistence/redis/cache/file"
 	friendcache "IM_backend/internal/infrastructure/persistence/redis/cache/friend"
 	messagecache "IM_backend/internal/infrastructure/persistence/redis/cache/message"
@@ -106,8 +107,12 @@ func main() {
 	}
 	passwordHasher := passwordsecurity.NewHasher()
 
-	realtimeGateway := realtimews.NewGateway()
-	realtimeGateway.KeepAlive(ctx, cfg.WebSocket.TimerInterval, cfg.WebSocket.PongWaitSeconds)
+	realtimeGateway := realtimews.NewGateway(ctx)
+	realtimeGateway.SweepHiddenConnections(
+		realtimeGateway.NetworkContext(),
+		time.Duration(cfg.WebSocket.TimerInterval)*time.Second,
+		time.Duration(cfg.WebSocket.PageHiddenTimeoutSeconds)*time.Second,
+	)
 
 	authCache := authcache.NewAuthCache(redisClient)
 	roomCache := roomcache.NewRoomCache(redisClient, cfg.Message)
@@ -208,6 +213,8 @@ func main() {
 	outboxRepository := outboxmysql.NewOutboxRepository(db, idGenerator)
 	inboxRepository := inboxmysql.NewInboxRepository(db)
 	conversationRepository := conversationmysql.NewConversationRepository(db)
+	conversationInfoCache := conversationcache.NewConversationCache(redisClient)
+	conversationApplication := conversationapp.NewConversationApplication(conversationRepository, conversationInfoCache, time.Duration(cfg.Cache.ConversationInfo.TTLSeconds)*time.Second)
 	userConversationRepository := conversationmysql.NewUserConversationRepository(db)
 
 	userRepository := usermysql.NewUserRepository(db)
@@ -219,6 +226,7 @@ func main() {
 		userApp,
 		time.Duration(cfg.JWT.AccessExpireMinutes)*time.Minute,
 		time.Duration(cfg.JWT.RefreshExpireHours)*time.Hour,
+		realtimeGateway,
 	)
 
 	friendRepository := friendmysql.NewFriendRepository(db)
@@ -236,6 +244,7 @@ func main() {
 		outboxRepository,
 	)
 	friendRequestHandle := friendrequesthttp.NewFriendRequestHandle(friendRequestApp)
+	friendRequestApp.SetConversationApplication(conversationApplication)
 
 	friendApp := friendapp.NewFriendApplication(friendRepository, userRepository)
 	friendHandle := friendhttp.NewFriendHandle(friendApp)
@@ -267,6 +276,7 @@ func main() {
 		outboxRepository,
 	)
 	roomApp.SetRoomInfoCache(roomInfoCache, time.Duration(cfg.Cache.RoomInfo.TTLSeconds)*time.Second)
+	roomApp.SetConversationApplication(conversationApplication)
 	roomHandle := roomhttp.NewRoomHandle(roomApp)
 
 	roomActivityState := roomapp.NewRoomActivityState(time.Duration(cfg.Message.RoomActivityHoldSeconds) * time.Second)
@@ -287,18 +297,11 @@ func main() {
 	readNotifyHandler := mqhandler.NewReadHandler(realtimeGateway)
 	friendRequestHandler := mqhandler.NewFriendRequestHandler(realtimeGateway)
 	roomMemberChangedHandler := mqhandler.NewRoomMemberChangedHandler(roomApp)
-	fileCardWarmupHandler := mqhandler.NewFileCardWarmupHandler(
-		fileCache,
-		objectStorage,
-		time.Duration(cfg.Cache.AttachmentFileCard.TTLSeconds)*time.Second,
-		time.Duration(cfg.Storage.MinIO.URLTTLSeconds)*time.Second,
-	)
 	topicRouter, routerErr := kafka.NewTopicRouter(map[string]string{
 		string(protocol.EventTypeSendMessage):      cfg.Kafka.Topics.Message,
 		string(protocol.EventReadMessageCommitted): cfg.Kafka.Topics.ReadMessageCommitted,
 		string(protocol.EventFriendRequestCreated): cfg.Kafka.Topics.FriendRequestCreated,
 		string(protocol.EventRoomMemberChanged):    cfg.Kafka.Topics.RoomMemberChanged,
-		string(protocol.EventFileCardWarmup):       cfg.Kafka.Topics.FileCardWarmup,
 	})
 	if routerErr != nil {
 		log.Fatal("创建 Kafka Topic 路由失败：", routerErr)
@@ -310,7 +313,6 @@ func main() {
 			protocol.EventReadMessageCommitted: readNotifyHandler,
 			protocol.EventFriendRequestCreated: friendRequestHandler,
 			protocol.EventRoomMemberChanged:    roomMemberChangedHandler,
-			protocol.EventFileCardWarmup:       fileCardWarmupHandler,
 		},
 		inboxRepository,
 		txManager,
@@ -336,7 +338,6 @@ func main() {
 	roomApp.SetProducerNotifier(messageProducer)
 
 	messageApplication := messageapp.NewMessageApplication(
-		friendCache,
 		messageCache,
 		roomMemberCache,
 		roomCache,
@@ -361,8 +362,9 @@ func main() {
 		messageAttachmentsRepository,
 	)
 	messageApplication.SetRoomApplication(roomApp)
+	messageApplication.SetConversationApplication(conversationApplication)
 	messageApplication.SetProducerNotifier(messageProducer)
-	messageApplication.SetRoomOnlineSessionCounter(realtimeGateway)
+	messageApplication.SetRoomOnlineConnectionCounter(realtimeGateway)
 
 	// Producer 使用事务提交后的唤醒信号降低正常投递延迟，
 	// 同时保留定时扫描作为最终兜底。
@@ -374,6 +376,7 @@ func main() {
 	messageHandle := messagehttp.NewMessageHandle(messageApplication)
 
 	wsHandle := ws.NewWSHandler(
+		ctx,
 		messageApplication,
 		cfg,
 		dispatcher,
@@ -453,10 +456,12 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("关闭 HTTP 服务失败：%v", err)
 	}
-	messageDelivery.Close(shutdownCtx)
 	if err := realtimeGateway.Shutdown(shutdownCtx); err != nil {
-		log.Printf("关闭 WebSocket 会话失败：%v", err)
+		log.Printf("等待 WebSocket 入站分发结束失败：%v", err)
+		cancel()
 	}
+	wsHandle.FlushPendingMessages(shutdownCtx)
+	messageDelivery.Close(shutdownCtx)
 	cancel()
 	for _, done := range []<-chan struct{}{cleanupDone, consumerDone, producerDone, activityStateDone} {
 		select {

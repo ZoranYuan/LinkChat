@@ -31,9 +31,12 @@ ws:
   pong_wait_seconds: 60
   ping_period_seconds: 50
   timer_interval_seconds: 30
+  page_hidden_timeout_seconds: 600
   max_message_size: 5120
   max_message_send_buffer_size: 256
-  inbound_worker_count: 4 # 每个连接最多并行处理 4 个请求，ACK 按 clientMsgId 关联。
+  message_sequencer_shard_count: 16 # 消息 Sequencer 分片数；同一会话固定路由到同一分片。
+  message_batch_size: 64 # 每个 Sequencer 分片 channel 的容量，也是满批 flush 的阈值。
+  message_flush_interval_milliseconds: 5 # 周期性 flush 间隔，单位毫秒。
   send_message_rate: 10
   send_message_burst: 20
   batch_max_messages: 64
@@ -69,13 +72,12 @@ kafka:
     read_message_committed: "im.read"
     friend_request_created: "im.friend"
     room_member_changed: "im.room"
-    file_card_warmup: "im.file-card-warmup"
 
   consumer:
     group_id: "im-chat-consumer-group"
     version: "2.6.0"
     assignor: "range"   # range / roundrobin / sticky
-    max_retries: 3
+    max_attempts: 3 # 首次处理一次，最多再重试两次。
     lease_stale_after_seconds: 10
     consume_retry_interval_seconds: 1
     dead_letter_suffix: ".dlq"
@@ -126,6 +128,8 @@ file_cleanup:
   orphan_after_seconds: 86400
 
 cache:
+  conversation_info:
+    ttl_seconds: 600
   user_profile:
         ttl: 3600
         negative_ttl: 30
