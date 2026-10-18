@@ -15,8 +15,13 @@ import (
 
 type UserHandle struct {
 	app                 *userapp.UserApplication
+	sessionCloser       AuthSessionCloser
 	accessCookieMaxAge  int
 	refreshCookieMaxAge int
+}
+
+type AuthSessionCloser interface {
+	CloseAuthSession(userID, sessionID string) int
 }
 
 const (
@@ -26,9 +31,10 @@ const (
 	refreshTokenCookiePath = "/api/v1/users"
 )
 
-func NewUserHandle(app *userapp.UserApplication, accessTTL, refreshTTL time.Duration) *UserHandle {
+func NewUserHandle(app *userapp.UserApplication, accessTTL, refreshTTL time.Duration, sessionCloser AuthSessionCloser) *UserHandle {
 	return &UserHandle{
 		app:                 app,
+		sessionCloser:       sessionCloser,
 		accessCookieMaxAge:  int(accessTTL.Seconds()),
 		refreshCookieMaxAge: int(refreshTTL.Seconds()),
 	}
@@ -86,11 +92,14 @@ func (uh *UserHandle) Logout(c *gin.Context) {
 		return
 	}
 
-	refreshToken, _ := c.Cookie(refreshTokenCookieName)
-	if err := uh.app.Logout(userId, refreshToken, c.GetString("sessionId")); err != nil {
+	sessionID := c.GetString("authSessionID")
+	if err := uh.app.Logout(userId, sessionID); err != nil {
 		log.Println("退出登录失败：", err)
 		c.JSON(http.StatusInternalServerError, response.Error(http.StatusInternalServerError, "退出登录失败"))
 		return
+	}
+	if uh.sessionCloser != nil {
+		uh.sessionCloser.CloseAuthSession(userId, sessionID)
 	}
 
 	c.SetSameSite(http.SameSiteLaxMode)

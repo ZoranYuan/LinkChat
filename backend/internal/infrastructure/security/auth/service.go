@@ -4,6 +4,7 @@ import (
 	"IM_backend/internal/infrastructure/security/jwt"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,17 @@ func NewTokenIssuer(options Options) *TokenIssuer {
 
 func (a *TokenIssuer) IssueToken(userId string) (string, string, string, error) {
 	sessionID := uuid.NewString()
+	accessToken, refreshToken, err := a.IssueTokensForSession(userId, sessionID)
+	if err != nil {
+		return "", "", "", err
+	}
+	return accessToken, refreshToken, sessionID, nil
+}
+
+func (a *TokenIssuer) IssueTokensForSession(userId, sessionID string) (string, string, error) {
+	if userId == "" || sessionID == "" {
+		return "", "", errors.New("用户或认证会话 ID 为空")
+	}
 	accessToken, err := jwt.GenerateAccessToken(
 		userId,
 		sessionID,
@@ -32,14 +44,14 @@ func (a *TokenIssuer) IssueToken(userId string) (string, string, string, error) 
 		a.options.AccessTokenTTL,
 	)
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 
 	refreshBytes := make([]byte, 32)
 	if _, err := rand.Read(refreshBytes); err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 
 	refreshToken := base64.RawURLEncoding.EncodeToString(refreshBytes)
-	return accessToken, refreshToken, sessionID, nil
+	return accessToken, refreshToken, nil
 }

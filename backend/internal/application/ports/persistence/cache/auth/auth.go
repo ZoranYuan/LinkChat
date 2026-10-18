@@ -6,7 +6,7 @@ import (
 )
 
 type AuthCache interface {
-	SetRefreshSession(ctx context.Context, token string, session RefreshSession, expire time.Duration) error
+	CreateSession(ctx context.Context, refreshToken string, session RefreshSession, expire time.Duration) error
 	GetRefreshSession(ctx context.Context, token string) (RefreshSession, bool, error)
 	RotateRefreshSession(
 		ctx context.Context,
@@ -15,9 +15,8 @@ type AuthCache interface {
 		session RefreshSession,
 		expire time.Duration,
 	) (bool, error)
-	DeleteRefreshSession(ctx context.Context, token string) error
-	RevokeSession(ctx context.Context, sessionID string, expire time.Duration) error
-	IsSessionRevoked(ctx context.Context, sessionID string) (bool, error)
+	DeleteSession(ctx context.Context, userID, sessionID string) error
+	IsSessionActive(ctx context.Context, userID, sessionID string) (bool, error)
 }
 
 type RefreshSession struct {

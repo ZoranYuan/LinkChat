@@ -7,6 +7,14 @@ import (
 )
 
 func RefreshTokenKey(token string) string {
+	return RefreshTokenKeyFromHash(RefreshTokenHash(token))
+}
+
+func RefreshTokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
-	return cachekey.AuthRefreshToken(hex.EncodeToString(sum[:]))
+	return hex.EncodeToString(sum[:])
+}
+
+func RefreshTokenKeyFromHash(hash string) string {
+	return cachekey.AuthRefreshToken(hash)
 }

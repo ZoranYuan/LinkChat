@@ -55,7 +55,7 @@ func (ua *UserApplication) issueTokensAndCache(userId string) (string, string, e
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	if err := ua.authCache.SetRefreshSession(ctx, refreshToken, authport.RefreshSession{
+	if err := ua.authCache.CreateSession(ctx, refreshToken, authport.RefreshSession{
 		UserID:    userId,
 		SessionID: sessionID,
 	}, ua.options.RefreshTokenTTL); err != nil {
@@ -223,7 +223,7 @@ func (ua *UserApplication) FindUserByPhoneAndUserName(keyword string) (*UserAppD
 	}, nil
 }
 
-func (ua *UserApplication) Logout(userId, refreshToken, sessionID string) error {
+func (ua *UserApplication) Logout(userId, sessionID string) error {
 	user, err := ua.userRepository.FindByUserID(userId)
 	if err != nil {
 		return err
@@ -235,24 +235,8 @@ func (ua *UserApplication) Logout(userId, refreshToken, sessionID string) error 
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if refreshToken != "" {
-		refreshSession, found, err := ua.authCache.GetRefreshSession(ctx, refreshToken)
-		if err != nil {
-			return err
-		}
-		if found && refreshSession.SessionID != "" && refreshSession.SessionID != sessionID {
-			if err := ua.authCache.RevokeSession(ctx, refreshSession.SessionID, ua.options.RefreshTokenTTL); err != nil {
-				return err
-			}
-		}
-	}
-	if err := ua.authCache.RevokeSession(ctx, sessionID, ua.options.RefreshTokenTTL); err != nil {
+	if err := ua.authCache.DeleteSession(ctx, userId, sessionID); err != nil {
 		return err
-	}
-	if refreshToken != "" {
-		if err := ua.authCache.DeleteRefreshSession(ctx, refreshToken); err != nil {
-			return err
-		}
 	}
 	return ua.userRepository.UpdateOfflineTime(user.UserId, string(user.Phone), time.Now())
 }
@@ -271,13 +255,6 @@ func (ua *UserApplication) Refresh(refreshToken string) (*UserAppDTO, error) {
 	if !found || session.UserID == "" {
 		return nil, ErrUserNotFound
 	}
-	revoked, err := ua.authCache.IsSessionRevoked(ctx, session.SessionID)
-	if err != nil {
-		return nil, err
-	}
-	if revoked {
-		return nil, ErrUserNotFound
-	}
 	user, err := ua.userRepository.FindByUserID(session.UserID)
 	if err != nil {
 		return nil, err
@@ -285,13 +262,13 @@ func (ua *UserApplication) Refresh(refreshToken string) (*UserAppDTO, error) {
 	if user == nil {
 		return nil, ErrUserNotFound
 	}
-	access, refresh, sessionID, err := ua.tokenIssuer.IssueToken(session.UserID)
+	access, refresh, err := ua.tokenIssuer.IssueTokensForSession(session.UserID, session.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	rotated, err := ua.authCache.RotateRefreshSession(ctx, refreshToken, refresh, authport.RefreshSession{
 		UserID:    session.UserID,
-		SessionID: sessionID,
+		SessionID: session.SessionID,
 	}, ua.options.RefreshTokenTTL)
 	if err != nil {
 		return nil, err

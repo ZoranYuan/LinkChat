@@ -49,20 +49,22 @@ func (a *AuthMiddleware) JWTAuthMiddleware() gin.HandlerFunc {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录过期"))
 			return
 		}
-		if a.authCache != nil {
-			revoked, err := a.authCache.IsSessionRevoked(ctx, claim.SessionID)
-			if err != nil {
-				ctx.AbortWithStatusJSON(http.StatusServiceUnavailable, response.Error(http.StatusServiceUnavailable, "认证服务暂时不可用"))
-				return
-			}
-			if revoked {
-				ctx.AbortWithStatusJSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录已失效"))
-				return
-			}
+		if a.authCache == nil {
+			ctx.AbortWithStatusJSON(http.StatusServiceUnavailable, response.Error(http.StatusServiceUnavailable, "认证服务暂时不可用"))
+			return
+		}
+		active, err := a.authCache.IsSessionActive(ctx, claim.UserID, claim.SessionID)
+		if err != nil {
+			ctx.AbortWithStatusJSON(http.StatusServiceUnavailable, response.Error(http.StatusServiceUnavailable, "认证服务暂时不可用"))
+			return
+		}
+		if !active {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录已失效"))
+			return
 		}
 
 		ctx.Set("userId", claim.UserID)
-		ctx.Set("sessionId", claim.SessionID)
+		ctx.Set("authSessionID", claim.SessionID)
 		ctx.Next()
 	}
 }

@@ -25,8 +25,8 @@ func AuthRefreshToken(token string) string {
 	return Build("auth", "token", "refresh", token)
 }
 
-func AuthRevokedSession(sessionID string) string {
-	return Build("auth", "session", "revoked", sessionID)
+func AuthSession(sessionID string) string {
+	return Build("auth", "session", sessionID)
 }
 
 func ConversationSeq(conversationId string) string {
