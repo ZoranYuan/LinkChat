@@ -13,25 +13,25 @@ WebSocket MessageReq
   → 鉴权、关系校验和客户端重试检查
   → MySQL 事务：分配会话 seq、持久化消息与附件、写入 Outbox
   → 返回 msg_ack（sent 表示事务提交，不代表对方已接收）
-  → Kafka Producer 批量领取 Outbox，以 MessageKey 为 Kafka Key 直接批量投递
-  → Kafka Consumer 逐条提交 worker，使用 Inbox 管理幂等与处理租约
+  → Kafka Producer 批量领取 Outbox，以 PartitionKey 为 Kafka Key 直接批量投递
+  → Kafka Consumer 分区内串行处理，使用 Inbox 管理幂等与处理租约
   → MessageDelivery / 本地 Gateway
-  → Session 出站聚合队列 → WebSocket 批量帧
+  → Connection 出站聚合队列 → WebSocket 批量帧
 ```
 
-发送请求直接执行单条 MySQL 事务，不经过应用层写入队列或凑批窗口。会话序号由事务内锁定会话行逐条分配，不由 Redis INCR 生成。Kafka 分区键使相同会话进入同一分区，但不能单独保证多实例 Outbox 投递时的 seq 顺序；客户端仍需按 seq 去重、排序和补齐缺口。
+发送请求进入按会话哈希的 Sequencer 分片，定时或容量触发批量处理；按会话分组后，在一个事务中预留连续 seq、批量写入消息、发送者已读水位和 Outbox。成功 ACK 在事务提交后返回。Kafka 分区键使相同会话进入同一分区，但不能单独保证多实例 Outbox 投递时的 seq 顺序；客户端仍需按 seq 去重、排序和补齐缺口。
 
 普通房间推送完整消息；大群或活跃房间使用 `room_msg_notice` 合并通知，客户端通过 `/messages/sync` 补拉。新群消息事务提交后逐条记录 Redis 活跃度，达到 ACTIVE 时立即更新发送端与 Consumer 共享的本地标识；最后一次 ACTIVE 后保持 120 秒，Consumer 读取不续期，也不再查询 Redis 活跃度。大群、WARN/ACTIVE 房间及本地 ACTIVE 保持期间的新增消息继续预热，Redis 近期消息 TTL 仍为 10 分钟；缓存失败不改变成功 ACK。该标识仅在当前节点有效，重启后丢失，不是多实例共享状态。通知合并器每房间只保留最大 seq 对应的轻量通知，定时向所有在线成员推送，不保存完整消息或预热缓存。待通知房间数不设固定上限。房间判断和通知聚合参数位于 [config.yaml](backend/configs/config.yaml)。
 
-Kafka Key 仍使用会话 ID；Consumer 的本地 worker 调度与 Kafka 分区独立。普通新消息按 eventId 分片，允许同会话不同消息并发处理、乱序到达；其他事件仍按原 Key 串行处理。客户端从本地连续水位补齐缺口后有序展示，worker 独立执行、更新 Inbox 和重试；消费循环持续接收，只有 worker 队列满时施加背压。worker 完成业务和 Inbox 状态更新后直接标记 offset，不维护连续完成水位；较大的 offset 可能先提交，重启后较小的未完成事件可能不再被 Kafka 重放。聊天推送依赖客户端同步补偿，其他事件也需要对应的业务恢复机制。
+聊天事件的 PartitionKey 使用会话 ID；已读事件使用用户 ID 与会话 ID，好友申请使用接收用户 ID，成员变更使用房间 ID 与用户 ID。Consumer 在每个 ConsumeClaim 中串行处理该分区；当前事件完成或转入死信并写入 Inbox 终态后，才标记对应 offset，再处理下一条。不同分区仍并行消费。投递目标取自业务事件字段，不从 Kafka Key 推断。WebSocket 推送与 Inbox 完成标记不是同一个事务，客户端仍需去重和同步补偿。
 
 ## WebSocket 协议
 
 当前使用单节点 Gateway，用户推送、房间广播和在线连接统计直接使用本地连接索引。
 
-入口：`GET /api/v1/ws`，需要有效 JWT。Session 绑定用户、设备及登录会话，用户可以有多个连接。服务端维护 Ping/Pong、读写截止时间和慢客户端隔离。
+入口：`GET /api/v1/ws`，需要有效 JWT。Connection 绑定用户及登录会话，用户可以有多个连接。服务端维护 Ping/Pong、读写截止时间和慢客户端隔离。
 
-每个 Session 按接收顺序向有界入站 worker pool 提交请求，`ws.inbound_worker_count` 当前配置为 4；执行完成、seq 分配及 ACK 返回顺序可能不同，客户端按 `clientMsgId` 关联 ACK、按 seq 排列消息。成功 ACK 仍在数据库事务提交后返回。连接关闭时取消 worker 上下文及尚未提交的发送事务；已提交但未收到 ACK 的消息使用原 clientMsgId 重试。入站队列满时仍关闭连接；增加并行度不等于提高单房间数据库写入容量。
+每条 Connection 的入站分发按接收顺序执行；消息发送处理器将任务提交至实例级 Sequencer，由分片统一凑批与持久化。批次使用服务生命周期上下文，单条连接断开不会取消其他连接的消息。客户端按 `clientMsgId` 关联 ACK、按 seq 排列消息；已提交但未收到 ACK 的消息使用原 clientMsgId 重试。入站队列满时关闭连接。
 
 | Op | 方向 | Payload |
 |---|---|---|
@@ -56,6 +56,10 @@ message WsBatch {
 
 批量下发的外层 `WsFrame.op = "msg_batch"`，`data` 为 `WsBatch`，客户端按内部帧顺序分发。媒体消息发送请求携带 `file_id`，服务端读取已验证文件信息；消息事件携带 `attachment_id`，客户端另外查询媒体卡片和访问 URL。
 
+会话创建时生成独立 Snowflake ID，房间 ID 与会话 ID 不再等同。客户端使用 `/conversations` 返回的 ID，并在 `MessageReq.conversation_id` 中传递；请求不再携带 `recv_id`、`conv_type`，接收者和类型由后端会话信息确定，发送权限仍单独校验。前后端需一起更新，不支持旧发送请求。
+
+会话基本信息使用 Redis Key `im:conversation:info:{conversationId}`，只保存类型、私聊双方或房间 ID，正常 TTL 由 `cache.conversation_info.ttl_seconds` 配置。未命中或缓存异常时按主键查 MySQL，确认不存在才缓存 `null` 两分钟；创建提交后写入正常信息覆盖空缓存。`latestSeq` 和用户已读水位不放入该缓存，已有会话 ID 继续按数据库记录使用，无需修改表结构或历史关联数据。
+
 ### 已读水位
 
 客户端发送 `MessageReadAckReq.message_id`。后端查询消息并校验会话权限，单调推进用户的 `lastReadSeq`；推进成功时在同一事务中写入已读 Outbox 事件，消费后通知对应消息发送方。重复或倒退的已读确认不重复推进水位。
@@ -78,11 +82,14 @@ message WsBatch {
 | 已读提交 | `im.read` |
 | 好友申请 | `im.friend` |
 | 房间成员变更 | `im.room` |
-| 文件卡片预热 | `im.file-card-warmup` |
 
-Producer 每次在短事务内领取一批 Outbox，提交领取事务后直接调用 SendMessages；Sarama 根据 Kafka Key 选择分区并组织发送。整批结果返回后，分类为 successMessages、retryMessages 和 deadMessages，分别执行批量更新：成功标记 sent，重试回到 pending 并保存各自的错误与重试时间，达到上限标记 dead；所有更新均校验每条记录的租约。不使用本地 Producer worker pool 或二次凑批。Consumer 内部负责 Inbox 抢占、处理、重试和死信。
+Producer 每次在短事务内领取一批 Outbox，提交领取事务后直接调用 SendMessages；Sarama 根据 PartitionKey 选择分区并组织发送。整批结果返回后，分类为 sent、retry 和 dead，分别执行批量更新：成功标记 sent，重试回到 pending 并保存各自的错误与重试时间，达到上限标记 dead；所有更新均校验每条记录的 event_id 与 lock_token。不使用本地 Producer worker pool 或二次凑批。Consumer 内部负责 Inbox 抢占、处理、重试和死信。
 
 Outbox/Inbox 表保留，它们不是独立的应用层调度入口。具体批量粒度和失败处理以 [producer.go](backend/internal/infrastructure/mq/kafka/producer.go) 与 [consumer.go](backend/internal/infrastructure/mq/kafka/consumer.go) 为准。
+
+Outbox 保存 `event_id`、`event_type`、`partition_key` 和完整业务 JSON `payload`，不再嵌套 Envelope。Inbox 保存处理状态，`attempt_count` 在首次抢占时为 1；Consumer 的 `max_attempts: 3` 表示首次尝试加最多两次重试。Inbox 的 `finished_at` 仅在 completed/dead 时填写，created_at/updated_at 分别记录创建和更新。Outbox 的 sent 表示 Kafka 确认，Inbox 的 completed 表示 Handler 成功返回，都不是客户端已收到的证明。
+
+已有数据库升级前，停止旧服务的新业务流量，使用旧服务处理完待投递事件及旧格式 Kafka 积压，再停止旧服务，在 backend 目录执行 `go run ./cmd/migrate -event-delivery`。迁移会重命名字段、转换数据库中已有载荷，并把尚未投递的旧文件预热任务标记 dead，注明改由按需回源。旧死信载荷在重新投递前也需转换；不保留运行期双格式解码。历史 Inbox 的创建时间只能近似回填。普通启动发现旧字段会要求先执行显式迁移。
 
 ## 统一媒体上传
 
@@ -99,7 +106,7 @@ Outbox/Inbox 表保留，它们不是独立的应用层调度入口。具体批�
   → 返回 completed + fileId → 发送媒体消息
 ```
 
-未完成时返回 `uploading`、`uploadId`、`missingParts` 和 `invalidParts`，客户端修复后再次完成。初始化和完成具有对应锁及状态校验；后台 GC 清理过期上传与孤儿文件。发送媒体消息的事务另外写入文件卡片预热事件。对象存储内部地址与浏览器可访问的公开地址分别配置，预签名 URL 不能在签名后直接替换主机名。
+未完成时返回 `uploading`、`uploadId`、`missingParts` 和 `invalidParts`，客户端修复后再次完成。初始化和完成具有对应锁及状态校验；后台 GC 清理过期上传与孤儿文件。发送媒体消息时保存附件与文件引用，文件卡片和访问 URL 由附件读取接口按需缓存：先批量校验权限，再读缓存，未命中时批量回源文件元信息、生成 URL 并回填；不再发布 Kafka 文件预热事件。对象存储内部地址与浏览器可访问的公开地址分别配置，预签名 URL 不能在签名后直接替换主机名。
 
 ## 摘要 Agent
 
