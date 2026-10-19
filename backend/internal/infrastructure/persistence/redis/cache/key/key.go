@@ -57,8 +57,8 @@ func RoomInfo(roomID string) string {
 	return Build("room", roomID, "info")
 }
 
-func RoomMember(roomID, userID string) string {
-	return Build("room", roomID, "member", "v2", userID)
+func RoomMembers(roomID string) string {
+	return Build("room", roomID, "members")
 }
 
 func MessageDedup(senderID, clientMsgId string) string {

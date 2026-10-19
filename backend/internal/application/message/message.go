@@ -554,6 +554,9 @@ func (ma *MessageApplication) isRoomConvMember(ctx context.Context, userID, room
 		member, err := ma.roomUserRepository.GetRelationByIDs(userID, roomID)
 		if err != nil {
 			if errors.Is(err, roomentity.ErrMemberNotFound) {
+				if ma.roomMemberCache != nil {
+					_ = ma.roomMemberCache.SetMemberNotFound(ctx, roomID, userID)
+				}
 				return nil, ErrNotRoomMember
 			}
 			return nil, err

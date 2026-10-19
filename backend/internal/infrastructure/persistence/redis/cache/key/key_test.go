@@ -19,7 +19,7 @@ func TestRedisKeyNaming(t *testing.T) {
 		UserInfo("u1"):                "im:user:u1:info",
 		RoomInviteCode("123456789"):   "im:room:invite:123456789",
 		RoomInvite("room-1"):          "im:room:room-1:invite",
-		RoomMember("room-1", "u1"):    "im:room:room-1:member:v2:u1",
+		RoomMembers("room-1"):         "im:room:room-1:members",
 	}
 
 	for got, want := range tests {

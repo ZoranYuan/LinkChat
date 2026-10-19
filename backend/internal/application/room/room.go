@@ -180,7 +180,7 @@ func (ra *RoomApplication) Create(ctx context.Context, userId, roomName, avatar,
 	ra.cacheRoomInfo(ctx, room)
 	ra.conversationApplication.CacheConversationInfo(ctx, conversation)
 
-	ra.invalidateRoomMemberCache(ctx, roomId, userId)
+	ra.cacheRoomMemberState(ctx, roomUser)
 	if ra.roomPresence != nil {
 		ra.roomPresence.BindUserToRoom(userId, roomId)
 	}
@@ -338,7 +338,7 @@ func (ra *RoomApplication) Join(ctx context.Context, userId, inviteCode string) 
 	ra.notifyProducer()
 	ra.invalidateRoomInfo(ctx, roomId)
 
-	ra.invalidateRoomMemberCache(ctx, roomId, userId)
+	ra.cacheRoomMemberState(ctx, persistedMember)
 	if ra.roomPresence != nil {
 		ra.roomPresence.BindUserToRoom(userId, roomId)
 	}
@@ -391,18 +391,22 @@ func (ra *RoomApplication) ApplyMemberChanged(ctx context.Context, event protoco
 	return nil
 }
 
-func (ra *RoomApplication) invalidateRoomMemberCache(ctx context.Context, roomID, userID string) {
-	if ra.roomMemberCache == nil {
+func (ra *RoomApplication) cacheRoomMemberState(ctx context.Context, member *roomentity.RoomUser) {
+	if ra.roomMemberCache == nil || member == nil {
 		return
 	}
-	if err := ra.roomMemberCache.DeleteMember(ctx, roomID, userID); err != nil {
-		log.Printf("删除房间成员缓存失败：房间=%s 用户=%s 错误=%v", roomID, userID, err)
+	_, err := ra.roomMemberCache.SetMemberIfVersionGreater(ctx, member.RoomId, member.UserId, &roomcache.MemberState{
+		Status: member.Status, Role: member.Role, MuteUntil: member.MuteUtil, Version: member.Version,
+	})
+	if err != nil {
+		log.Printf("回填房间成员缓存失败：房间=%s 用户=%s 版本=%d 错误=%v", member.RoomId, member.UserId, member.Version, err)
 	}
 }
 
 func (ra *RoomApplication) Leave(ctx context.Context, userId, roomId string) error {
 	var memberState *roomcache.MemberState
 	var exist bool
+	var persistedMember *roomentity.RoomUser
 	if ra.roomMemberCache != nil {
 		memberState, exist, _ = ra.roomMemberCache.GetMember(ctx, roomId, userId)
 	}
@@ -433,6 +437,7 @@ func (ra *RoomApplication) Leave(ctx context.Context, userId, roomId string) err
 			}
 			return ErrUnknown
 		}
+		persistedMember = roomUser
 		updated, err := ra.roomRepository.WithTx(tx).DecrementMemberCount(ctx, roomId, int(roomvo.Normal))
 		if err != nil {
 			return err
@@ -458,7 +463,7 @@ func (ra *RoomApplication) Leave(ctx context.Context, userId, roomId string) err
 	ra.notifyProducer()
 	ra.invalidateRoomInfo(ctx, roomId)
 
-	ra.invalidateRoomMemberCache(ctx, roomId, userId)
+	ra.cacheRoomMemberState(ctx, persistedMember)
 	if ra.roomPresence != nil {
 		ra.roomPresence.UnbindUserFromRoom(userId, roomId)
 	}

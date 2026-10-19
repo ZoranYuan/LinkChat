@@ -21,7 +21,7 @@ services:
       - common-bridge
 
   redis:
-    image: redis:7.0
+    image: redis:7.4
     container_name: redis
     restart: unless-stopped
     ports:

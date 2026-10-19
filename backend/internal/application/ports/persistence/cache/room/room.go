@@ -43,7 +43,6 @@ type RoomMemberCache interface {
 	GetMember(ctx context.Context, roomID, userID string) (*MemberState, bool, error)
 	SetMemberIfVersionGreater(ctx context.Context, roomID, userID string, state *MemberState) (bool, error)
 	SetMemberNotFound(ctx context.Context, roomID, userID string) error
-	DeleteMember(ctx context.Context, roomID, userID string) error
 }
 
 // RoomInfoCache 缓存房间相对稳定的基础信息；成员总数变化后由应用层主动失效。

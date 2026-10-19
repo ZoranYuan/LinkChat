@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,10 +21,7 @@ type RoomMemberCache struct {
 }
 
 func NewRoomMemberCache(client *redis.Client, config configs.MessageConfig) *RoomMemberCache {
-	return &RoomMemberCache{
-		store:  shared.NewStore(client),
-		config: config,
-	}
+	return &RoomMemberCache{store: shared.NewStore(client), config: config}
 }
 
 type roomMemberTTLSettings struct {
@@ -58,58 +54,36 @@ func (c *RoomMemberCache) GetMember(
 	ctx context.Context,
 	roomID, userID string,
 ) (*roomcache.MemberState, bool, error) {
-	key := RoomMemberKey(roomID, userID)
-	values, err := c.store.Client().HMGet(ctx, key, "data", "version").Result()
+	key := RoomMembersKey(roomID)
+	data, err := c.store.Client().HGet(ctx, key, userID).Bytes()
+	if err == redis.Nil {
+		return nil, false, nil
+	}
 	if err != nil {
 		return nil, false, err
 	}
-	if len(values) != 2 || values[0] == nil {
-		return nil, false, nil
-	}
-
-	data, ok := values[0].(string)
-	if !ok {
-		if raw, isBytes := values[0].([]byte); isBytes {
-			data = string(raw)
-		} else {
-			return nil, false, fmt.Errorf("房间成员缓存数据类型无效：%T", values[0])
-		}
-	}
 
 	var entry roomMemberEntry
-	if err := json.Unmarshal([]byte(data), &entry); err != nil {
-		_ = c.store.Del(ctx, key)
+	if err := json.Unmarshal(data, &entry); err != nil {
+		_, _ = c.store.Eval(ctx, deleteMemberFieldIfUnchangedScript, []string{key}, userID, string(data))
 		return nil, false, fmt.Errorf("解析房间成员缓存失败：%w", err)
 	}
 	if !entry.Found {
 		return nil, true, nil
 	}
-	version := entry.Version
-	if values[1] != nil {
-		versionText, ok := values[1].(string)
-		if !ok {
-			if raw, isBytes := values[1].([]byte); isBytes {
-				versionText = string(raw)
-			} else {
-				return nil, false, fmt.Errorf("房间成员缓存版本类型无效：%T", values[1])
-			}
-		}
-		version, err = strconv.ParseInt(versionText, 10, 64)
-		if err != nil {
-			_ = c.store.Del(ctx, key)
-			return nil, false, fmt.Errorf("解析房间成员缓存版本失败：%w", err)
-		}
-	}
 	return &roomcache.MemberState{
 		Status:    roomvo.RoomUserStatus(entry.Status),
 		Role:      roomvo.Role(entry.Role),
 		MuteUntil: entry.MuteUntil,
-		Version:   version,
+		Version:   entry.Version,
 	}, true, nil
 }
 
-// 幂等性更新缓存
-func (c *RoomMemberCache) SetMemberIfVersionGreater(ctx context.Context, roomID, userID string, state *roomcache.MemberState) (bool, error) {
+func (c *RoomMemberCache) SetMemberIfVersionGreater(
+	ctx context.Context,
+	roomID, userID string,
+	state *roomcache.MemberState,
+) (bool, error) {
 	if state == nil {
 		return false, fmt.Errorf("房间成员状态不能为空")
 	}
@@ -117,24 +91,16 @@ func (c *RoomMemberCache) SetMemberIfVersionGreater(ctx context.Context, roomID,
 	if err != nil {
 		return false, err
 	}
-	data, err := json.Marshal(roomMemberEntry{
+	entry := roomMemberEntry{
 		Found: true, Status: int(state.Status), Role: int(state.Role),
 		MuteUntil: state.MuteUntil, Version: state.Version,
-	})
+	}
+	data, err := json.Marshal(entry)
 	if err != nil {
 		return false, err
 	}
-	const script = `
-		local current = redis.call('HGET', KEYS[1], 'version')
-		if current and tonumber(current) >= tonumber(ARGV[1]) then
-		return 0
-		end
-		redis.call('HSET', KEYS[1], 'data', ARGV[2], 'version', ARGV[1])
-		redis.call('EXPIRE', KEYS[1], ARGV[3])
-		return 1
-	`
-	result, err := c.store.Eval(ctx, script, []string{RoomMemberKey(roomID, userID)},
-		state.Version, string(data), int64(ttls.state/time.Second))
+	result, err := c.store.Eval(ctx, setMemberIfVersionGreaterScript, []string{RoomMembersKey(roomID)},
+		userID, string(data), state.Version, int64(ttls.state/time.Second))
 	if err != nil {
 		return false, err
 	}
@@ -147,27 +113,45 @@ func (c *RoomMemberCache) SetMemberNotFound(ctx context.Context, roomID, userID 
 	if err != nil {
 		return err
 	}
-	return c.setMemberEntry(ctx, roomID, userID, roomMemberEntry{}, ttls.negative)
-}
-
-func (c *RoomMemberCache) DeleteMember(ctx context.Context, roomID, userID string) error {
-	// 保留版本水位，防止旧的 Outbox 事件在失效后重新覆盖新状态。
-	return c.store.Client().HDel(ctx, RoomMemberKey(roomID, userID), "data").Err()
-}
-
-func (c *RoomMemberCache) setMemberEntry(
-	ctx context.Context,
-	roomID, userID string,
-	entry roomMemberEntry,
-	ttl time.Duration,
-) error {
+	entry := roomMemberEntry{Found: false}
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
-	pipe := c.store.Client().TxPipeline()
-	pipe.HSet(ctx, RoomMemberKey(roomID, userID), "data", data)
-	pipe.Expire(ctx, RoomMemberKey(roomID, userID), ttl)
-	_, err = pipe.Exec(ctx)
+	_, err = c.store.Eval(ctx, setMemberNotFoundScript, []string{RoomMembersKey(roomID)},
+		userID, string(data), int64(ttls.negative/time.Second))
 	return err
 }
+
+const deleteMemberFieldIfUnchangedScript = `
+	if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+		return redis.call('HDEL', KEYS[1], ARGV[1])
+	end
+	return 0
+`
+
+const setMemberIfVersionGreaterScript = `
+	local currentData = redis.call('HGET', KEYS[1], ARGV[1])
+	if currentData then
+		local ok, current = pcall(cjson.decode, currentData)
+		if ok and current and current.found == true and tonumber(current.version or 0) >= tonumber(ARGV[3]) then
+			return 0
+		end
+	end
+	redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+	redis.call('HEXPIRE', KEYS[1], ARGV[4], 'FIELDS', 1, ARGV[1])
+	return 1
+`
+
+const setMemberNotFoundScript = `
+	local currentData = redis.call('HGET', KEYS[1], ARGV[1])
+	if currentData then
+		local ok, current = pcall(cjson.decode, currentData)
+		if ok and current and current.found == true then
+			return 0
+		end
+	end
+	redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+	redis.call('HEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])
+	return 1
+`

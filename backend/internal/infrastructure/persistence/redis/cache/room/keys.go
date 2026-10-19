@@ -25,6 +25,6 @@ func RoomInviteKey(roomId string) string {
 	return cachekey.RoomInvite(roomId)
 }
 
-func RoomMemberKey(roomID, userID string) string {
-	return cachekey.RoomMember(roomID, userID)
+func RoomMembersKey(roomID string) string {
+	return cachekey.RoomMembers(roomID)
 }
