@@ -161,6 +161,50 @@ func (x *MessageReadAckReq) GetMessageId() string {
 	return ""
 }
 
+type RoomEntryReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RoomId        string                 `protobuf:"bytes,1,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RoomEntryReq) Reset() {
+	*x = RoomEntryReq{}
+	mi := &file_ws_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RoomEntryReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RoomEntryReq) ProtoMessage() {}
+
+func (x *RoomEntryReq) ProtoReflect() protoreflect.Message {
+	mi := &file_ws_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RoomEntryReq.ProtoReflect.Descriptor instead.
+func (*RoomEntryReq) Descriptor() ([]byte, []int) {
+	return file_ws_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RoomEntryReq) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
 type ConnectionVisibilityReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Hidden        *bool                  `protobuf:"varint,1,opt,name=hidden,proto3,oneof" json:"hidden,omitempty"`
@@ -170,7 +214,7 @@ type ConnectionVisibilityReq struct {
 
 func (x *ConnectionVisibilityReq) Reset() {
 	*x = ConnectionVisibilityReq{}
-	mi := &file_ws_proto_msgTypes[3]
+	mi := &file_ws_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -182,7 +226,7 @@ func (x *ConnectionVisibilityReq) String() string {
 func (*ConnectionVisibilityReq) ProtoMessage() {}
 
 func (x *ConnectionVisibilityReq) ProtoReflect() protoreflect.Message {
-	mi := &file_ws_proto_msgTypes[3]
+	mi := &file_ws_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -195,7 +239,7 @@ func (x *ConnectionVisibilityReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionVisibilityReq.ProtoReflect.Descriptor instead.
 func (*ConnectionVisibilityReq) Descriptor() ([]byte, []int) {
-	return file_ws_proto_rawDescGZIP(), []int{3}
+	return file_ws_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ConnectionVisibilityReq) GetHidden() bool {
@@ -220,7 +264,7 @@ type MessageReq struct {
 
 func (x *MessageReq) Reset() {
 	*x = MessageReq{}
-	mi := &file_ws_proto_msgTypes[4]
+	mi := &file_ws_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -232,7 +276,7 @@ func (x *MessageReq) String() string {
 func (*MessageReq) ProtoMessage() {}
 
 func (x *MessageReq) ProtoReflect() protoreflect.Message {
-	mi := &file_ws_proto_msgTypes[4]
+	mi := &file_ws_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -245,7 +289,7 @@ func (x *MessageReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageReq.ProtoReflect.Descriptor instead.
 func (*MessageReq) Descriptor() ([]byte, []int) {
-	return file_ws_proto_rawDescGZIP(), []int{4}
+	return file_ws_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MessageReq) GetClientMsgId() string {
@@ -313,7 +357,7 @@ type MessageAck struct {
 
 func (x *MessageAck) Reset() {
 	*x = MessageAck{}
-	mi := &file_ws_proto_msgTypes[5]
+	mi := &file_ws_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -325,7 +369,7 @@ func (x *MessageAck) String() string {
 func (*MessageAck) ProtoMessage() {}
 
 func (x *MessageAck) ProtoReflect() protoreflect.Message {
-	mi := &file_ws_proto_msgTypes[5]
+	mi := &file_ws_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -338,7 +382,7 @@ func (x *MessageAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageAck.ProtoReflect.Descriptor instead.
 func (*MessageAck) Descriptor() ([]byte, []int) {
-	return file_ws_proto_rawDescGZIP(), []int{5}
+	return file_ws_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *MessageAck) GetClientMsgId() string {
@@ -408,7 +452,7 @@ type RoomMessageNotice struct {
 
 func (x *RoomMessageNotice) Reset() {
 	*x = RoomMessageNotice{}
-	mi := &file_ws_proto_msgTypes[6]
+	mi := &file_ws_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -420,7 +464,7 @@ func (x *RoomMessageNotice) String() string {
 func (*RoomMessageNotice) ProtoMessage() {}
 
 func (x *RoomMessageNotice) ProtoReflect() protoreflect.Message {
-	mi := &file_ws_proto_msgTypes[6]
+	mi := &file_ws_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -433,7 +477,7 @@ func (x *RoomMessageNotice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomMessageNotice.ProtoReflect.Descriptor instead.
 func (*RoomMessageNotice) Descriptor() ([]byte, []int) {
-	return file_ws_proto_rawDescGZIP(), []int{6}
+	return file_ws_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RoomMessageNotice) GetConversationId() string {
@@ -470,7 +514,7 @@ type MessageReadAckEvent struct {
 
 func (x *MessageReadAckEvent) Reset() {
 	*x = MessageReadAckEvent{}
-	mi := &file_ws_proto_msgTypes[7]
+	mi := &file_ws_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +526,7 @@ func (x *MessageReadAckEvent) String() string {
 func (*MessageReadAckEvent) ProtoMessage() {}
 
 func (x *MessageReadAckEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_ws_proto_msgTypes[7]
+	mi := &file_ws_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +539,7 @@ func (x *MessageReadAckEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageReadAckEvent.ProtoReflect.Descriptor instead.
 func (*MessageReadAckEvent) Descriptor() ([]byte, []int) {
-	return file_ws_proto_rawDescGZIP(), []int{7}
+	return file_ws_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *MessageReadAckEvent) GetUserId() string {
@@ -551,7 +595,7 @@ type MessageEvent struct {
 
 func (x *MessageEvent) Reset() {
 	*x = MessageEvent{}
-	mi := &file_ws_proto_msgTypes[8]
+	mi := &file_ws_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -563,7 +607,7 @@ func (x *MessageEvent) String() string {
 func (*MessageEvent) ProtoMessage() {}
 
 func (x *MessageEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_ws_proto_msgTypes[8]
+	mi := &file_ws_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -576,7 +620,7 @@ func (x *MessageEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageEvent.ProtoReflect.Descriptor instead.
 func (*MessageEvent) Descriptor() ([]byte, []int) {
-	return file_ws_proto_rawDescGZIP(), []int{8}
+	return file_ws_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *MessageEvent) GetMessageId() string {
@@ -661,7 +705,9 @@ const file_ws_proto_rawDesc = "" +
 	"\x06frames\x18\x01 \x03(\v2\x0e.im.ws.WsFrameR\x06frames\"8\n" +
 	"\x11MessageReadAckReq\x12\x1d\n" +
 	"\n" +
-	"message_id\x18\x01 \x01(\tR\tmessageIdJ\x04\b\x02\x10\x03\"A\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageIdJ\x04\b\x02\x10\x03\"'\n" +
+	"\fRoomEntryReq\x12\x17\n" +
+	"\aroom_id\x18\x01 \x01(\tR\x06roomId\"A\n" +
 	"\x17ConnectionVisibilityReq\x12\x1b\n" +
 	"\x06hidden\x18\x01 \x01(\bH\x00R\x06hidden\x88\x01\x01B\t\n" +
 	"\a_hidden\"\xe7\x01\n" +
@@ -724,17 +770,18 @@ func file_ws_proto_rawDescGZIP() []byte {
 	return file_ws_proto_rawDescData
 }
 
-var file_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_ws_proto_goTypes = []any{
 	(*WsFrame)(nil),                 // 0: im.ws.WsFrame
 	(*WsBatch)(nil),                 // 1: im.ws.WsBatch
 	(*MessageReadAckReq)(nil),       // 2: im.ws.MessageReadAckReq
-	(*ConnectionVisibilityReq)(nil), // 3: im.ws.ConnectionVisibilityReq
-	(*MessageReq)(nil),              // 4: im.ws.MessageReq
-	(*MessageAck)(nil),              // 5: im.ws.MessageAck
-	(*RoomMessageNotice)(nil),       // 6: im.ws.RoomMessageNotice
-	(*MessageReadAckEvent)(nil),     // 7: im.ws.MessageReadAckEvent
-	(*MessageEvent)(nil),            // 8: im.ws.MessageEvent
+	(*RoomEntryReq)(nil),            // 3: im.ws.RoomEntryReq
+	(*ConnectionVisibilityReq)(nil), // 4: im.ws.ConnectionVisibilityReq
+	(*MessageReq)(nil),              // 5: im.ws.MessageReq
+	(*MessageAck)(nil),              // 6: im.ws.MessageAck
+	(*RoomMessageNotice)(nil),       // 7: im.ws.RoomMessageNotice
+	(*MessageReadAckEvent)(nil),     // 8: im.ws.MessageReadAckEvent
+	(*MessageEvent)(nil),            // 9: im.ws.MessageEvent
 }
 var file_ws_proto_depIdxs = []int32{
 	0, // 0: im.ws.WsBatch.frames:type_name -> im.ws.WsFrame
@@ -750,14 +797,14 @@ func file_ws_proto_init() {
 	if File_ws_proto != nil {
 		return
 	}
-	file_ws_proto_msgTypes[3].OneofWrappers = []any{}
+	file_ws_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ws_proto_rawDesc), len(file_ws_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -6,6 +6,7 @@ package im.ws;
 message WsFrame { string op = 1; bytes data = 2; }
 message WsBatch { repeated WsFrame frames = 1; }
 message MessageReadAckReq { string message_id = 1; }
+message RoomEntryReq { string room_id = 1; }
 message ConnectionVisibilityReq { optional bool hidden = 1; }
 message MessageReq {
   string client_msg_id = 1; string conversation_id = 19; int32 c_type = 4;
@@ -34,6 +35,7 @@ const types = {
   roomMessageNotice: root.lookupType("im.ws.RoomMessageNotice"),
   messageEvent: root.lookupType("im.ws.MessageEvent"),
   readAck: root.lookupType("im.ws.MessageReadAckReq"),
+  roomEntry: root.lookupType("im.ws.RoomEntryReq"),
   readAckEvent: root.lookupType("im.ws.MessageReadAckEvent"),
 };
 

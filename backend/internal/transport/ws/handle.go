@@ -153,6 +153,7 @@ func NewWSHandler(
 
 	dispatcher.RegisterHandler(protocol.EventTypeSendMessage, wh.handleSendMessage)
 	dispatcher.RegisterHandler(protocol.EventReadMessageAck, wh.handleReadMessageAck)
+	dispatcher.RegisterHandler(protocol.EventRoomEntry, wh.handleRoomEntry)
 	dispatcher.RegisterHandler(protocol.EventConnectionVisibility, wh.handleConnectionVisibility)
 
 	return wh
@@ -209,6 +210,14 @@ func (wh *WSHandler) handleReadMessageAck(ctx context.Context, connection *realt
 		return err
 	}
 	return nil
+}
+
+func (wh *WSHandler) handleRoomEntry(ctx context.Context, connection *realtimews.Connection, data []byte) error {
+	var pb wspb.RoomEntryReq
+	if err := proto.Unmarshal(data, &pb); err != nil {
+		return err
+	}
+	return wh.app.HandleRoomEntry(ctx, connection.UserID(), pb.GetRoomId())
 }
 
 func (wh *WSHandler) handleConnectionVisibility(_ context.Context, connection *realtimews.Connection, data []byte) error {

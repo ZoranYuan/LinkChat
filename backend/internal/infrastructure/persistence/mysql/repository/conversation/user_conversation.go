@@ -197,9 +197,50 @@ func (r *UserConversationRepository) GetUserConversation(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, conversationentity.ErrConversationNotCreated
 		}
+		return nil, err
 	}
 
 	return toUserConversationDomain(&m), nil
+}
+
+func (r *UserConversationRepository) CaptureRoomUnreadSnapshot(
+	ctx context.Context,
+	userID, conversationID string,
+	latestSeq int64,
+) (*conversationentity.UserConversation, error) {
+	if userID == "" || conversationID == "" || latestSeq < 0 {
+		return nil, errors.New("房间未读快照参数无效")
+	}
+	var row model.UserConversation
+	err := r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ? AND conversation_id = ?", userID, conversationID).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, conversationentity.ErrConversationNotCreated
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	beginSeq, endSeq := int64(0), int64(0)
+	if latestSeq > row.LastReadSeq {
+		beginSeq, endSeq = row.LastReadSeq+1, latestSeq
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&model.UserConversation{}).
+		Where("user_id = ? AND conversation_id = ?", userID, conversationID).
+		Updates(map[string]any{
+			"last_read_seq":            max(row.LastReadSeq, latestSeq),
+			"summary_unread_begin_seq": beginSeq,
+			"summary_unread_end_seq":   endSeq,
+		}).Error; err != nil {
+		return nil, err
+	}
+	row.LastReadSeq = max(row.LastReadSeq, latestSeq)
+	row.SummaryUnreadBeginSeq = beginSeq
+	row.SummaryUnreadEndSeq = endSeq
+	return toUserConversationDomain(&row), nil
 }
 
 func (r *UserConversationRepository) ListByUser(

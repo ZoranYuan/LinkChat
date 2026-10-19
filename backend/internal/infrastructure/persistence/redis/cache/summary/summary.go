@@ -36,7 +36,7 @@ func (c *RoomUnreadSnapshotCache) SetActive(
 	if snapshot.RoomID != roomID {
 		return errors.New("摘要未读快照房间不匹配")
 	}
-	if snapshot.FromSeq <= 0 || snapshot.ToSeq < snapshot.FromSeq {
+	if !validUnreadRange(snapshot.UnreadBegin, snapshot.UnreadEnd) {
 		return errors.New("摘要未读快照序号范围无效")
 	}
 	if ttl <= 0 {
@@ -61,7 +61,17 @@ func (c *RoomUnreadSnapshotCache) GetActive(
 	if !found {
 		return nil, false, nil
 	}
+	if snapshot.RoomID != roomID || !validUnreadRange(snapshot.UnreadBegin, snapshot.UnreadEnd) {
+		if err := c.store.Del(ctx, ActiveRoomUnreadSnapshotKey(userID, roomID)); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
 	return &snapshot, true, nil
+}
+
+func validUnreadRange(begin, end int64) bool {
+	return (begin == 0 && end == 0) || (begin > 0 && end >= begin)
 }
 
 func (c *RoomUnreadSnapshotCache) DeleteActive(ctx context.Context, userID, roomID string) error {

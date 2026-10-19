@@ -228,5 +228,6 @@ export function createWsClient(callbacks = {}) {
     isConnecting: () => socket?.readyState === WebSocket.CONNECTING,
     sendMessage: (payload) => send("msg", "messageReq", payload),
     sendReadAck: (payload) => send("msg_read_ack", "readAck", payload),
+    sendRoomEntry: (payload) => send("room_entry", "roomEntry", payload),
   };
 }

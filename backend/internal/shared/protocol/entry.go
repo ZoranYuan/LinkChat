@@ -21,6 +21,7 @@ const (
 const (
 	EventFriendRequestCreated = "friend_request_created" // 好友申请提醒
 	EventReadMessageAck       = "msg_read_ack"           // 前端 -> 后端
+	EventRoomEntry            = "room_entry"              // 前端进入房间时请求固定个人未读快照
 	EventConnectionVisibility = "connection_visibility"  // 前端上报当前页面可见状态
 	EventReadMessageCommitted = "msg_read_committed"     // 后端内部 outbox/MQ
 	EventReadMessageNotify    = "msg_read_notify"        // 发送给前端，表示已经有用户读取消息

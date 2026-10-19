@@ -18,6 +18,10 @@ message MessageReadAckReq {
   reserved 2;
 }
 
+message RoomEntryReq {
+  string room_id = 1;
+}
+
 message ConnectionVisibilityReq {
   optional bool hidden = 1;
 }

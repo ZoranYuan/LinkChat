@@ -16,6 +16,7 @@ type UserConversationRepository interface {
 	CreateUserConversation(ctx context.Context, conversation *conversationentity.UserConversation) error
 	GetUsersByConversationID(ctx context.Context, conversationID string) ([]string, error)
 	GetUserConversation(ctx context.Context, userId, conversationId string) (*conversationentity.UserConversation, error)
+	CaptureRoomUnreadSnapshot(ctx context.Context, userID, conversationID string, latestSeq int64) (*conversationentity.UserConversation, error)
 	UpdateReadSeq(ctx context.Context, conversation *conversationentity.UserConversation) error
 	UpdateReadSeqBatch(ctx context.Context, updates []ReadSeqUpdate) error
 	AdvanceReadSeq(ctx context.Context, conversation *conversationentity.UserConversation) (bool, error)

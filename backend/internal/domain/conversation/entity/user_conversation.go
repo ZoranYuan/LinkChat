@@ -1,10 +1,12 @@
 package entity
 
 type UserConversation struct {
-	UserId         string
-	ConversationId string
-	LastReadSeq    int64
-	IsMuted        bool
+	UserId                string
+	ConversationId        string
+	LastReadSeq           int64
+	SummaryUnreadBeginSeq int64
+	SummaryUnreadEndSeq   int64
+	IsMuted               bool
 }
 
 func BuildUserConversation(

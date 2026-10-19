@@ -84,6 +84,7 @@ const pendingSendRequests = new Map();
 const pendingUploadTasks = new Map();
 const historyRequests = new Map();
 const messageProcessingByConversation = new Map();
+let pendingRoomEntryConversationID = "";
 
 let sessionGeneration = 0;
 let startupCatchupGeneration = -1;
@@ -733,6 +734,9 @@ const wsClient = createWsClient({
     state.connection = connection;
   },
   onOpen: () => {
+    if (pendingRoomEntryConversationID === state.activeConversationId) {
+      sendRoomEntry(pendingRoomEntryConversationID);
+    }
     const session = captureSession();
     syncAllConversationGaps(session).catch((error) => {
       console.error("WebSocket 建立后补齐消息失败", error);
@@ -754,6 +758,22 @@ const wsClient = createWsClient({
     syncRoomMessageNotice(notice).catch(() => { });
   },
 });
+
+const sendRoomEntry = (conversationId) => {
+  const conversation = findConversation(state.conversations, conversationId);
+  if (
+    !conversation
+    || conversation.convType !== ConversationType.ROOM_CHAT
+    || state.activeConversationId !== conversationId
+    || !wsClient.isConnected()
+  ) return false;
+
+  const sent = wsClient.sendRoomEntry({ roomId: conversation.targetId });
+  if (sent && pendingRoomEntryConversationID === conversationId) {
+    pendingRoomEntryConversationID = "";
+  }
+  return sent;
+};
 
 /** 发送当前会话的已读回执；实时消息和点击会话共用此方法。 */
 const sendReadAck = (conversationId = state.activeConversationId) => {
@@ -790,6 +810,7 @@ const connectSocket = ({ initialCatchupComplete = false } = {}) => {
 const clearAuthState = () => {
   sessionGeneration += 1;
   startupCatchupGeneration = -1;
+  pendingRoomEntryConversationID = "";
   pendingMessages.clear();
   pendingSendRequests.clear();
   for (const task of pendingUploadTasks.values()) {
@@ -1007,6 +1028,12 @@ export const useChatStore = defineStore("chat", () => {
     state.activeConversationId = conversationId;
     const conversation = findConversation(state.conversations, conversationId);
     if (conversation) conversation.unread = 0;
+    if (conversation?.convType === ConversationType.ROOM_CHAT) {
+      pendingRoomEntryConversationID = conversationId;
+      sendRoomEntry(conversationId);
+    } else {
+      pendingRoomEntryConversationID = "";
+    }
     await syncInitialConversation(conversationId);
     if (state.authenticated) await loadHistory(conversationId, 0);
   };

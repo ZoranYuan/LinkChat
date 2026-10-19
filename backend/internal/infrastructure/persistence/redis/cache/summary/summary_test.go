@@ -16,9 +16,9 @@ func TestRoomUnreadSnapshotCacheSetAndGetActive(t *testing.T) {
 	cache := NewRoomUnreadSnapshotCache(client)
 
 	want := summarycache.RoomUnreadSnapshot{
-		RoomID:  "room-1",
-		FromSeq: 101,
-		ToSeq:   120,
+		RoomID:      "room-1",
+		UnreadBegin: 101,
+		UnreadEnd:   120,
 	}
 	if err := cache.SetActive(context.Background(), "user-1", "room-1", want, time.Minute); err != nil {
 		t.Fatalf("SetActive() error = %v", err)
@@ -33,13 +33,28 @@ func TestRoomUnreadSnapshotCacheSetAndGetActive(t *testing.T) {
 	}
 }
 
+func TestRoomUnreadSnapshotCacheAllowsEmptyRange(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	cache := NewRoomUnreadSnapshotCache(client)
+	want := summarycache.RoomUnreadSnapshot{RoomID: "room-1"}
+
+	if err := cache.SetActive(context.Background(), "user-1", "room-1", want, time.Minute); err != nil {
+		t.Fatalf("SetActive() empty range error = %v", err)
+	}
+	got, found, err := cache.GetActive(context.Background(), "user-1", "room-1")
+	if err != nil || !found || *got != want {
+		t.Fatalf("GetActive() empty range = %#v, found=%v, err=%v", got, found, err)
+	}
+}
+
 func TestRoomUnreadSnapshotCacheKeepsRoomsIsolated(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	cache := NewRoomUnreadSnapshotCache(client)
 
-	first := summarycache.RoomUnreadSnapshot{RoomID: "room-a", FromSeq: 1, ToSeq: 2}
-	second := summarycache.RoomUnreadSnapshot{RoomID: "room-b", FromSeq: 3, ToSeq: 4}
+	first := summarycache.RoomUnreadSnapshot{RoomID: "room-a", UnreadBegin: 1, UnreadEnd: 2}
+	second := summarycache.RoomUnreadSnapshot{RoomID: "room-b", UnreadBegin: 3, UnreadEnd: 4}
 	ctx := context.Background()
 	if err := cache.SetActive(ctx, "user-1", "room-a", first, time.Minute); err != nil {
 		t.Fatal(err)
@@ -65,7 +80,7 @@ func TestRoomUnreadSnapshotCacheDeleteActive(t *testing.T) {
 	ctx := context.Background()
 
 	if err := cache.SetActive(ctx, "user-1", "room-1", summarycache.RoomUnreadSnapshot{
-		RoomID: "room-1", FromSeq: 1, ToSeq: 2,
+		RoomID: "room-1", UnreadBegin: 1, UnreadEnd: 2,
 	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}

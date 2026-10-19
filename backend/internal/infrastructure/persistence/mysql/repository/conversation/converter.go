@@ -12,10 +12,12 @@ func toUserConversationDomain(model *model.UserConversation) *conversationentity
 	}
 
 	return &conversationentity.UserConversation{
-		UserId:         model.UserId,
-		ConversationId: model.ConversationId,
-		LastReadSeq:    model.LastReadSeq,
-		IsMuted:        model.IsMuted,
+		UserId:                model.UserId,
+		ConversationId:        model.ConversationId,
+		LastReadSeq:           model.LastReadSeq,
+		SummaryUnreadBeginSeq: model.SummaryUnreadBeginSeq,
+		SummaryUnreadEndSeq:   model.SummaryUnreadEndSeq,
+		IsMuted:               model.IsMuted,
 	}
 }
 
@@ -25,10 +27,12 @@ func toUserConversationModel(entity *conversationentity.UserConversation) *model
 	}
 
 	return &model.UserConversation{
-		UserId:         entity.UserId,
-		ConversationId: entity.ConversationId,
-		LastReadSeq:    entity.LastReadSeq,
-		IsMuted:        entity.IsMuted,
+		UserId:                entity.UserId,
+		ConversationId:        entity.ConversationId,
+		LastReadSeq:           entity.LastReadSeq,
+		SummaryUnreadBeginSeq: entity.SummaryUnreadBeginSeq,
+		SummaryUnreadEndSeq:   entity.SummaryUnreadEndSeq,
+		IsMuted:               entity.IsMuted,
 	}
 }
 

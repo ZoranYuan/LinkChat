@@ -277,7 +277,6 @@ func (ma *MessageApplication) HandleReadMessage(
 		return ErrUserConversationNotFound
 	}
 
-	oldLastReadSeq := uconv.LastReadSeq
 	uconv.UpdateReadSeq(lastReadSeq)
 	outboxCreated := false
 
@@ -324,25 +323,59 @@ func (ma *MessageApplication) HandleReadMessage(
 		ma.notifyProducer()
 	}
 
-	if conv.Convtype != conversationvo.RoomChat {
+	return nil
+}
+
+// HandleRoomEntry 在用户进入房间时固定个人未读范围，并在同一事务中推进已读水位；快照按用户和房间共享，不区分设备。
+func (ma *MessageApplication) HandleRoomEntry(ctx context.Context, userID, roomID string) error {
+	if userID == "" || roomID == "" {
+		return ErrForbidden
+	}
+	conv, err := ma.conversationRepository.FindRoomConversation(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	if conv == nil || conv.Convtype != conversationvo.RoomChat {
+		return ErrConversationNotFound
+	}
+	allowed, err := ma.canAccessConversation(ctx, conv, userID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrForbidden
+	}
+
+	var snapshot *conversationentity.UserConversation
+	if err := ma.txManager.WithinTransaction(ctx, func(tx any) error {
+		conversationTx := ma.conversationRepository.WithTx(tx)
+		userConversationTx := ma.userConversationRepository.WithTx(tx)
+		latestSeq, err := conversationTx.GetConversationSeq(ctx, conv.ConversationId)
+		if err != nil {
+			return err
+		}
+		snapshot, err = userConversationTx.CaptureRoomUnreadSnapshot(ctx, userID, conv.ConversationId, latestSeq)
+		return err
+	}); err != nil {
+		return err
+	}
+	if snapshot == nil || ma.roomUnreadSnapshotCache == nil {
 		return nil
 	}
-	fromSeq := oldLastReadSeq + 1
-	snapshot := roomunreadcache.RoomUnreadSnapshot{
-		RoomID:  conv.RoomId,
-		FromSeq: fromSeq,
-		ToSeq:   lastReadSeq,
+	cacheSnapshot := roomunreadcache.RoomUnreadSnapshot{
+		RoomID:      roomID,
+		UnreadBegin: snapshot.SummaryUnreadBeginSeq,
+		UnreadEnd:   snapshot.SummaryUnreadEndSeq,
 	}
 	if err := ma.roomUnreadSnapshotCache.SetActive(
 		ctx,
-		userId,
-		conv.RoomId,
-		snapshot,
+		userID,
+		roomID,
+		cacheSnapshot,
 		time.Duration(ma.config.Cache.RoomUnreadSnapshot.TTLSeconds)*time.Second,
 	); err != nil {
-		log.Printf("设置房间未读摘要范围缓存失败：user=%s room=%s err=%v", userId, conv.RoomId, err)
+		log.Printf("设置房间未读摘要范围缓存失败：user=%s room=%s err=%v", userID, roomID, err)
 	}
-
 	return nil
 }
 
