@@ -2,7 +2,7 @@ package main
 
 import (
 	"IM_backend/configs"
-	summaryapp "IM_backend/internal/application/agent"
+	roomagentapp "IM_backend/internal/application/agent"
 	conversationapp "IM_backend/internal/application/conversation"
 	fileapp "IM_backend/internal/application/file"
 	friendapp "IM_backend/internal/application/friend"
@@ -10,7 +10,6 @@ import (
 	eventbus "IM_backend/internal/application/ports/eventbus"
 	roomapp "IM_backend/internal/application/room"
 	userapp "IM_backend/internal/application/user"
-	agentgrpc "IM_backend/internal/infrastructure/agent/grpc"
 	filecleanup "IM_backend/internal/infrastructure/filecleanup"
 	"IM_backend/internal/infrastructure/id/snow"
 	"IM_backend/internal/infrastructure/mq/kafka"
@@ -24,7 +23,6 @@ import (
 	outboxmysql "IM_backend/internal/infrastructure/persistence/mysql/repository/outbox"
 	roommysql "IM_backend/internal/infrastructure/persistence/mysql/repository/room"
 	roomusermysql "IM_backend/internal/infrastructure/persistence/mysql/repository/room_user"
-	summarymysql "IM_backend/internal/infrastructure/persistence/mysql/repository/summary"
 	usermysql "IM_backend/internal/infrastructure/persistence/mysql/repository/user"
 	"IM_backend/internal/infrastructure/persistence/redis"
 	authcache "IM_backend/internal/infrastructure/persistence/redis/cache/auth"
@@ -43,8 +41,9 @@ import (
 	"IM_backend/internal/shared/diagnostics"
 	"IM_backend/internal/shared/protocol"
 	shared_ratelimit "IM_backend/internal/shared/ratelimit"
+	grpcserver "IM_backend/internal/transport/grpc"
+	roomagentgrpc "IM_backend/internal/transport/grpc/agent"
 	httpapi "IM_backend/internal/transport/http"
-	agenthttp "IM_backend/internal/transport/http/agent"
 	userconversationhttp "IM_backend/internal/transport/http/conversation"
 	filehttp "IM_backend/internal/transport/http/file"
 	friendhttp "IM_backend/internal/transport/http/friend"
@@ -251,18 +250,26 @@ func main() {
 
 	roomUserRepository := roomusermysql.NewRoomUserRepository(db)
 	roomRepository := roommysql.NewRoomRepository(db)
-	summaryRunRepository := summarymysql.NewSummaryRunRepository(db)
-	summaryClient, err := agentgrpc.NewClient(cfg.Agent.RoomSummaryEndpoint)
-	if err != nil {
-		log.Fatal("初始化摘要 Agent gRPC 客户端失败：", err)
-	}
-	defer summaryClient.Close()
-	summaryApplication := summaryapp.NewSummaryApplication(
-		ctx, summaryClient, idGenerator, messageRepository, conversationRepository,
-		userConversationRepository, roomUserRepository, summaryRunRepository, txManager, roomUnreadSnapshotCache,
+	roomAgentApplication := roomagentapp.NewRoomAgentApplication(
+		roomUserRepository,
+		roomMemberCache,
+		conversationRepository,
+		userConversationRepository,
+		messageRepository,
 		roomUnreadSnapshotCache,
+		time.Duration(cfg.Cache.RoomUnreadSnapshot.TTLSeconds)*time.Second,
 	)
-	summaryHandle := agenthttp.NewHandle(summaryApplication)
+	roomAgentHandler := roomagentgrpc.NewRoomAgentContextHandler(roomAgentApplication, cfg, authCache)
+	roomAgentGRPCServer, err := grpcserver.NewGrpcServer(cfg.GRPC.RoomAgentAddress, roomAgentHandler)
+	if err != nil {
+		log.Fatal("启动 Room Agent gRPC 监听失败：", err)
+	}
+	defer roomAgentGRPCServer.Stop()
+	grpcServeErr := make(chan error, 1)
+	go func() {
+		grpcServeErr <- roomAgentGRPCServer.Serve()
+	}()
+	log.Printf("Room Agent gRPC 服务已启动：address=%s", cfg.GRPC.RoomAgentAddress)
 	roomApp := roomapp.NewRoomApplication(
 		roomRepository,
 		roomUserRepository,
@@ -420,8 +427,6 @@ func main() {
 		Rate:  cfg.Storage.MinIO.UploadRate,
 		Burst: cfg.Storage.MinIO.UploadBurst,
 	})
-	httpapi.RegisterAgentRouter(apiGroup, summaryHandle, authMiddle)
-
 	ws.RegisterWSRouter(apiGroup, wsHandle, authMiddle)
 
 	srv := &http.Server{
@@ -448,13 +453,32 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	<-quit
+	select {
+	case <-quit:
+	case err := <-grpcServeErr:
+		if err != nil {
+			log.Printf("Room Agent gRPC 服务异常退出：%v", err)
+		}
+		log.Printf("Room Agent gRPC 服务已停止，开始关闭后端")
+	}
 
 	log.Println("服务正在停止")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
+	grpcStopDone := make(chan struct{})
+	go func() {
+		defer close(grpcStopDone)
+		roomAgentGRPCServer.GracefulStop()
+	}()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("关闭 HTTP 服务失败：%v", err)
+	}
+	select {
+	case <-grpcStopDone:
+	case <-shutdownCtx.Done():
+		log.Printf("等待 Room Agent gRPC 请求优雅结束超时，强制停止")
+		roomAgentGRPCServer.Stop()
+		<-grpcStopDone
 	}
 	if err := realtimeGateway.Shutdown(shutdownCtx); err != nil {
 		log.Printf("等待 WebSocket 入站分发结束失败：%v", err)

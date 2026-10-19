@@ -22,6 +22,6 @@ COPY --from=builder /src/backend/configs /app/configs
 
 ENV CONFIG_PATH=/app/configs/config.yaml
 
-EXPOSE 8081
+EXPOSE 8081 50052
 
 ENTRYPOINT ["/app/im-backend"]

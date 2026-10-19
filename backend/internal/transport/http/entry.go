@@ -2,7 +2,6 @@ package api
 
 import (
 	shared_ratelimit "IM_backend/internal/shared/ratelimit"
-	agenthttp "IM_backend/internal/transport/http/agent"
 	conversationhttp "IM_backend/internal/transport/http/conversation"
 	filehttp "IM_backend/internal/transport/http/file"
 	friendhttp "IM_backend/internal/transport/http/friend"
@@ -54,8 +53,4 @@ func RegisterMessagesRouter(r *gin.RouterGroup, mh *messagehttp.MessageHandle, a
 func RegisterFileRouter(r *gin.RouterGroup, fh *filehttp.Handle, authMiddle *middleware.AuthMiddleware, limiter *middleware.LimitMiddleware, policy shared_ratelimit.Policy) {
 	fileGroup := r.Group("/files").Use(authMiddle.JWTAuthMiddleware())
 	filehttp.RegisterRoutes(fileGroup, fh, limiter, policy)
-}
-
-func RegisterAgentRouter(r *gin.RouterGroup, ah *agenthttp.Handle, authMiddle *middleware.AuthMiddleware) {
-	agenthttp.RegisterRoutes(r, ah, authMiddle)
 }

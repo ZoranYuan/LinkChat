@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package room_agent.v1;
+
+option go_package = "IM_backend/internal/transport/grpc/propto;roomagent";
+
+service RoomAgentContextService {
+  // 校验用户身份和房间访问权限，并返回该用户固定的未读消息上下文。
+  rpc GetRoomAgentContext(GetRoomAgentContextRequest)
+      returns (GetRoomAgentContextResponse);
+}
+
+message GetRoomAgentContextRequest {
+  // access_token 通过 gRPC metadata 的 authorization 字段传递。
+  string room_id = 1;
+}
+
+message GetRoomAgentContextResponse {
+  string user_id = 1;
+  // 由 user_id 和 room_id 稳定生成，用作 Agent 的长期上下文标识。
+  string thread_id = 2;
+  uint32 unread_message_count = 3;
+  UnreadSnapshot unread_snapshot = 4;
+  // 固定未读范围的起止 seq，包含边界。
+  int64 unread_begin_seq = 5;
+  int64 unread_end_seq = 6;
+}
+
+message UnreadSnapshot {
+  repeated ChatMessage messages = 1;
+}
+
+message ChatMessage {
+  string message_id = 1;
+  string conversation_id = 2;
+  string sender_id = 3;
+  // 原 IM 消息的客户端消息 ID，不是摘要任务的幂等键。
+  optional string client_msg_id = 4;
+  int64 seq = 5;
+  MessageType type = 6;
+  string content = 7;
+  MessageStatus status = 8;
+  // Unix 毫秒时间戳，与后端 Message.SendTime 一致。
+  int64 send_time = 9;
+}
+
+enum MessageType {
+  MESSAGE_TYPE_TEXT = 0;
+}
+
+enum MessageStatus {
+  MESSAGE_STATUS_NORMAL = 0;
+  MESSAGE_STATUS_RECALLED = 1;
+}

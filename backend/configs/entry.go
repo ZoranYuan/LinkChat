@@ -15,6 +15,7 @@ import (
 type Config struct {
 	App         App               `yaml:"app"`
 	Server      Server            `yaml:"server"`
+	GRPC        GRPCConfig        `yaml:"grpc"`
 	HTTP        HTTPConfig        `yaml:"http"`
 	Database    Database          `yaml:"database"`
 	JWT         JWT               `yaml:"jwt"`
@@ -25,7 +26,6 @@ type Config struct {
 	Storage     StorageConfig     `yaml:"storage"`
 	FileCleanup FileCleanupConfig `yaml:"file_cleanup"`
 	Cache       CacheConfig       `yaml:"cache"`
-	Agent       AgentConfig       `yaml:"agent"`
 }
 
 type HTTPConfig struct {
@@ -35,10 +35,6 @@ type HTTPConfig struct {
 type UserAPIRateLimitConfig struct {
 	RatePerSecond float64 `yaml:"rate_per_second"`
 	Burst         int64   `yaml:"burst"`
-}
-
-type AgentConfig struct {
-	RoomSummaryEndpoint string `yaml:"room_summary_endpoint"`
 }
 
 type UserProfile struct {
@@ -209,6 +205,10 @@ type Server struct {
 	Port string `yaml:"port"`
 }
 
+type GRPCConfig struct {
+	RoomAgentAddress string `yaml:"room_agent_address"`
+}
+
 type Database struct {
 	MySQL MySQL `yaml:"mysql"`
 	Redis Redis `yaml:"redis"`
@@ -254,6 +254,9 @@ func applyEnvironmentOverrides(config *Config) {
 	}
 	if value := os.Getenv("SERVER_PORT"); value != "" {
 		config.Server.Port = value
+	}
+	if value := os.Getenv("GRPC_ROOM_AGENT_ADDRESS"); value != "" {
+		config.GRPC.RoomAgentAddress = value
 	}
 	if value := os.Getenv("MYSQL_DSN"); value != "" {
 		config.Database.MySQL.DSN = value
@@ -325,6 +328,9 @@ func validateFileEndPoint(publicEndpoint string, allowedOrigins []string) error 
 func (c Config) Validate() error {
 	if c.Server.Port == "" {
 		return fmt.Errorf("server.port 不能为空")
+	}
+	if strings.TrimSpace(c.GRPC.RoomAgentAddress) == "" {
+		return fmt.Errorf("grpc.room_agent_address 不能为空")
 	}
 	if c.Database.MySQL.DSN == "" || c.Database.Redis.DSN == "" {
 		return fmt.Errorf("数据库配置不完整")

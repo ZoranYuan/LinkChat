@@ -79,6 +79,8 @@ services:
       CONFIG_PATH: /app/configs/config.yaml
     ports:
       - "8081:8081"
+    expose:
+      - "50052"
     networks:
       - common-bridge
 

@@ -6,13 +6,13 @@ app:
   machineId: 1
 server:
   port: ":8081"
+grpc:
+  room_agent_address: ":50051"
 http:
   user_api_rate_limit:
     # 本地压测准备允许同一来源批量登录；其他部署环境应按需覆盖。
     rate_per_second: 500
     burst: 500
-agent:
-  room_summary_endpoint: "dl_container:50051"
 database:
   mysql:
     dsn: "user:123456@tcp(mysql:3306)/IMChat?charset=utf8mb4&parseTime=True&loc=Local"
