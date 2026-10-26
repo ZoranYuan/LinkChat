@@ -51,7 +51,9 @@ const closeDialog = () => {
         class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/45 px-4 text-sm"
         @click.self="closeDialog"
       >
-        <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_24px_70px_rgba(15,23,42,0.18)]">
+        <div
+          class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_24px_70px_rgba(15,23,42,0.18)]"
+        >
           <div class="flex items-start gap-3">
             <div class="rounded-full bg-rose-50 p-3 text-rose-600">
               <CircleAlert :size="20" />
@@ -62,7 +64,11 @@ const closeDialog = () => {
             </div>
           </div>
           <div class="mt-6 flex justify-end gap-3">
-            <button class="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm text-slate-600 transition-colors hover:bg-slate-50" type="button" @click="closeDialog">
+            <button
+              class="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm text-slate-600 transition-colors hover:bg-slate-50"
+              type="button"
+              @click="closeDialog"
+            >
               {{ cancelLabel }}
             </button>
             <button

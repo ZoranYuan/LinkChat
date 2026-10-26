@@ -14,8 +14,9 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
-  const authenticated = hasChatAuth() || await ensureChatAuth();
-  if (to.meta.requiresAuth && !authenticated) return { name: "login", query: { redirect: to.fullPath } };
+  const authenticated = hasChatAuth() || (await ensureChatAuth());
+  if (to.meta.requiresAuth && !authenticated)
+    return { name: "login", query: { redirect: to.fullPath } };
   if (to.meta.guestOnly && authenticated) return "/chat";
   return true;
 });
