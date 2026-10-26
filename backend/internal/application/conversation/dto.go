@@ -1,47 +1,47 @@
 package conversation
 
 import (
-	messagevo "IM_backend/internal/domain/message/value_object"
+	domainmessage "IM_backend/internal/domain/message"
 )
 
 type PeerUserDTO struct {
-	UserID    string
-	Username  string
-	Nickname  string
-	Remark    string
-	AvatarURL string
+	UserID    string `json:"userId"`
+	Username  string `json:"userName"`
+	Nickname  string `json:"nickName"`
+	Remark    string `json:"remark"`
+	AvatarURL string `json:"avatar"`
 }
 
 type RoomDTO struct {
-	RoomID      string
-	RoomName    string
-	AvatarURL   string
-	Description string
-	MemberCount int
+	RoomID      string `json:"roomId"`
+	RoomName    string `json:"roomName"`
+	AvatarURL   string `json:"avatar"`
+	Description string `json:"description,omitempty"`
+	MemberCount int    `json:"memberCount,omitempty"`
 }
 
 type LatestMessageDTO struct {
-	MessageID      string
-	ConversationID string
-	SenderID       string
-	Seq            int64
-	Type           messagevo.CType
-	Content        string
-	SendTime       int64
+	MessageID      string                    `json:"messageId"`
+	ConversationID string                    `json:"conversationId"`
+	SenderID       string                    `json:"senderId"`
+	Seq            int64                     `json:"seq"`
+	Type           domainmessage.MessageType `json:"cType"`
+	Content        string                    `json:"content"`
+	SendTime       int64                     `json:"sendTime"`
 }
 
 type ConversationItemDTO struct {
-	ConversationID   string
-	ConversationType int8
-	TargetID         string
-	DisplayName      string
-	AvatarURL        string
-	Unread           int64
-	LatestSeq        int64
-	LastMessage      *LatestMessageDTO
+	ConversationID   string            `json:"conversationId"`
+	ConversationType int8              `json:"convType"`
+	TargetID         string            `json:"targetId"`
+	DisplayName      string            `json:"displayName"`
+	AvatarURL        string            `json:"avatar"`
+	Unread           int64             `json:"unread"`
+	LatestSeq        int64             `json:"latestSeq"`
+	LastMessage      *LatestMessageDTO `json:"lastMessage,omitempty"`
 
-	PeerUser *PeerUserDTO
-	Room     *RoomDTO
+	PeerUser *PeerUserDTO `json:"peerUser,omitempty"`
+	Room     *RoomDTO     `json:"room,omitempty"`
 
-	IsMuted bool
+	IsMuted bool `json:"isMuted"`
 }

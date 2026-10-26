@@ -1,58 +1,57 @@
 package room
 
 import (
-	conversationapp "IM_backend/internal/application/conversation"
-	eventbus "IM_backend/internal/application/ports/eventbus"
-	idport "IM_backend/internal/application/ports/id"
-	outboxport "IM_backend/internal/application/ports/outbox"
-	roomcache "IM_backend/internal/application/ports/persistence/cache/room"
-	conversationrepo "IM_backend/internal/application/ports/persistence/repository/conversation"
-	roomrepo "IM_backend/internal/application/ports/persistence/repository/room"
-	txmanager "IM_backend/internal/application/ports/persistence/tx_manager"
-	"IM_backend/internal/application/ports/realtime"
-	conversationentity "IM_backend/internal/domain/conversation/entity"
-	conversationvo "IM_backend/internal/domain/conversation/value_object"
-	roomentity "IM_backend/internal/domain/room/entity"
-	roomvo "IM_backend/internal/domain/room/value_object"
-	"IM_backend/internal/shared/protocol"
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"time"
+
+	"IM_backend/configs"
+	conversationapp "IM_backend/internal/application/conversation"
+	roomcache "IM_backend/internal/application/ports/cache/room"
+	idport "IM_backend/internal/application/ports/id"
+	"IM_backend/internal/application/ports/messaging"
+	outboxport "IM_backend/internal/application/ports/outbox"
+	"IM_backend/internal/application/ports/realtime"
+	"IM_backend/internal/application/ports/transaction"
+	domainconversation "IM_backend/internal/domain/conversation"
+	domainroom "IM_backend/internal/domain/room"
 )
 
 type RoomApplication struct {
-	roomRepository             roomrepo.RoomRepository
-	roomUserRepository         roomrepo.RoomUserRepository
-	userConversationRepository conversationrepo.UserConversationRepository
-	conversationRepository     conversationrepo.ConversationRepository
+	config                     configs.RoomConfig
+	roomRepository             domainroom.RoomRepository
+	roomMemberRepository       domainroom.RoomMemberRepository
+	userConversationRepository domainconversation.UserConversationRepository
+	conversationRepository     domainconversation.ConversationRepository
 	conversationApplication    *conversationapp.ConversationApplication
 	roomCache                  roomcache.RoomCache
 	roomMemberCache            roomcache.RoomMemberCache
 	roomInfoCache              roomcache.RoomInfoCache
 	roomInfoCacheTTL           time.Duration
-	txManager                  txmanager.TxManager
+	txManager                  transaction.Manager
 	idGenerator                idport.Generator
 	roomPresence               realtime.RoomPresence
 	roomMemberOutboxRepository outboxport.OutboxRepository
-	producerNotifier           eventbus.ProducerNotifier
+	producerNotifier           messaging.ProducerNotifier
 }
 
-func NewRoomApplication(roomRepository roomrepo.RoomRepository,
-	roomUserRepository roomrepo.RoomUserRepository,
-	userConversationRepository conversationrepo.UserConversationRepository,
-	conversationRepository conversationrepo.ConversationRepository,
+func NewRoomApplication(roomRepository domainroom.RoomRepository,
+	roomMemberRepository domainroom.RoomMemberRepository,
+	userConversationRepository domainconversation.UserConversationRepository,
+	conversationRepository domainconversation.ConversationRepository,
 	roomCache roomcache.RoomCache,
 	roomMemberCache roomcache.RoomMemberCache,
-	txManager txmanager.TxManager,
+	txManager transaction.Manager,
 	idGenerator idport.Generator,
 	roomPresence realtime.RoomPresence,
 	roomMemberOutboxRepository outboxport.OutboxRepository,
+	config configs.RoomConfig,
 ) *RoomApplication {
 	return &RoomApplication{
+		config:                     config,
 		roomRepository:             roomRepository,
-		roomUserRepository:         roomUserRepository,
+		roomMemberRepository:       roomMemberRepository,
 		conversationRepository:     conversationRepository,
 		userConversationRepository: userConversationRepository,
 		roomCache:                  roomCache,
@@ -65,7 +64,7 @@ func NewRoomApplication(roomRepository roomrepo.RoomRepository,
 }
 
 // SetProducerNotifier 在事务提交后唤醒 Producer。
-func (ra *RoomApplication) SetProducerNotifier(notifier eventbus.ProducerNotifier) {
+func (ra *RoomApplication) SetProducerNotifier(notifier messaging.ProducerNotifier) {
 	if ra == nil {
 		return
 	}
@@ -83,60 +82,42 @@ func (ra *RoomApplication) SetConversationApplication(application *conversationa
 	ra.conversationApplication = application
 }
 
-func (ra *RoomApplication) findActiveRoom(ctx context.Context, roomID string, status int) (*roomentity.Room, error) {
-	room, err := ra.GetRoomInfo(ctx, roomID)
-	if err != nil {
-		return nil, err
-	}
-	if int(room.Status) != status {
-		return nil, roomentity.ErrRoomNotFound
-	}
-	return room, nil
-}
-
 func (ra *RoomApplication) notifyProducer() {
 	if ra != nil && ra.producerNotifier != nil {
 		ra.producerNotifier.Notify()
 	}
 }
 
-func (ra *RoomApplication) Create(ctx context.Context, userId, roomName, avatar, description string) (*RoomAppDTO, error) {
-	roomId, err := ra.idGenerator.Generate()
+func (ra *RoomApplication) Create(ctx context.Context, userID, roomName, avatar, description string) (*RoomAppDTO, error) {
+	roomID, err := ra.idGenerator.Generate()
 	if err != nil {
 		return nil, err
 	}
-	conversationId, err := ra.idGenerator.Generate()
+	conversationID, err := ra.idGenerator.Generate()
 	if err != nil {
 		return nil, err
 	}
 
-	room, err := roomentity.NewRoom(roomId, userId, description, roomName, avatar)
+	room, err := domainroom.NewRoom(roomID, userID, description, roomName, avatar, ra.config.MaxMembers)
 	if err != nil {
-		if errors.Is(err, roomentity.ErrRoomNameRequired) {
+		if errors.Is(err, domainroom.ErrRoomNameRequired) {
 			return nil, ErrRoomNameRequired
 		} else {
 			return nil, ErrUnknown
 		}
 	}
-	roomUser := roomentity.NewRoomUser(userId, roomId, roomvo.HomeOwner)
-	roomUser.Join()
+	roomMember := domainroom.NewRoomMember(userID, roomID, domainroom.HomeOwner)
+	roomMember.Join()
 
-	conversation := conversationentity.NewConversation(
-		conversationId,
-		userId,
-		roomId,
-		int(conversationvo.RoomChat),
-		0,
-		"",
-	)
+	conversation := domainconversation.NewRoomConversation(conversationID, roomID)
 
-	userConversation := conversationentity.BuildUserConversation(
-		userId,
-		conversationId,
+	userConversation := domainconversation.BuildUserConversation(
+		userID,
+		conversationID,
 		0,
 	)
 
-	inviteCode, err := ra.roomCache.UpdateInviteCode(ctx, roomId, 5*time.Minute)
+	inviteCode, err := ra.roomCache.UpdateInviteCode(ctx, roomID, time.Duration(ra.config.InviteCodeTTLSeconds)*time.Second)
 	if err != nil {
 		log.Println("生成邀请码失败：", err)
 		return nil, ErrInviteCodeUnavailable
@@ -144,21 +125,21 @@ func (ra *RoomApplication) Create(ctx context.Context, userId, roomName, avatar,
 
 	if err := ra.txManager.WithinTransaction(ctx, func(tx any) error {
 		roomRepository := ra.roomRepository.WithTx(tx)
-		roomUserRepository := ra.roomUserRepository.WithTx(tx)
+		roomMemberRepository := ra.roomMemberRepository.WithTx(tx)
 		conversationRepository := ra.conversationRepository.WithTx(tx)
 		userConversationRepository := ra.userConversationRepository.WithTx(tx)
 
 		if err := roomRepository.Create(room); err != nil {
-			if errors.Is(err, roomentity.ErrDuplicateCreation) {
+			if errors.Is(err, domainroom.ErrDuplicateCreation) {
 				return ErrConcurrentUpdate
 			}
 			return err
 		}
 
-		if _, err := roomUserRepository.JoinRoom(roomUser); err != nil {
+		if _, err := roomMemberRepository.JoinRoom(roomMember); err != nil {
 			return err
 		}
-		if err := ra.writeMemberChangedEvent(ctx, tx, roomUser); err != nil {
+		if err := ra.writeMemberChangedEvent(ctx, tx, roomMember); err != nil {
 			return err
 		}
 
@@ -171,7 +152,7 @@ func (ra *RoomApplication) Create(ctx context.Context, userId, roomName, avatar,
 		}
 		return nil
 	}); err != nil {
-		if cleanupErr := ra.roomCache.DeleteInviteCode(ctx, roomId); cleanupErr != nil {
+		if cleanupErr := ra.roomCache.DeleteInviteCode(ctx, roomID); cleanupErr != nil {
 			log.Println("清理邀请码缓存失败：", cleanupErr)
 		}
 		return nil, err
@@ -180,18 +161,18 @@ func (ra *RoomApplication) Create(ctx context.Context, userId, roomName, avatar,
 	ra.cacheRoomInfo(ctx, room)
 	ra.conversationApplication.CacheConversationInfo(ctx, conversation)
 
-	ra.cacheRoomMemberState(ctx, roomUser)
+	ra.cacheRoomMemberState(ctx, roomMember)
 	if ra.roomPresence != nil {
-		ra.roomPresence.BindUserToRoom(userId, roomId)
+		ra.roomPresence.BindUserToRoom(userID, roomID)
 	}
 
 	return toRoomAppDTO(room, inviteCode), nil
 }
 
-func (ra *RoomApplication) Invite(ctx context.Context, userId, roomId string) (string, error) {
-	room, err := ra.findActiveRoom(ctx, roomId, int(roomvo.Normal))
+func (ra *RoomApplication) Invite(ctx context.Context, userID, roomID string) (string, error) {
+	room, err := ra.GetActiveRoom(ctx, roomID)
 	if err != nil {
-		if errors.Is(err, roomentity.ErrRoomNotFound) {
+		if errors.Is(err, domainroom.ErrRoomNotFound) {
 			return "", ErrRoomNotFound
 		}
 
@@ -199,15 +180,15 @@ func (ra *RoomApplication) Invite(ctx context.Context, userId, roomId string) (s
 		return "", ErrUnknown
 	}
 
-	roomUser, err := ra.roomUserRepository.GetRelationByIDs(userId, roomId)
+	roomMember, err := ra.roomMemberRepository.FindRoomMemberByUserIDAndRoomID(userID, roomID)
 	if err != nil {
-		if errors.Is(err, roomentity.ErrMemberNotFound) {
+		if errors.Is(err, domainroom.ErrMemberNotFound) {
 			return "", ErrNotRoomMember
 		}
 		return "", ErrUnknown
 	}
 
-	if err := roomUser.Invite(); err != nil {
+	if err := roomMember.Invite(); err != nil {
 		return "", ErrPermissionDenied
 	}
 
@@ -215,7 +196,7 @@ func (ra *RoomApplication) Invite(ctx context.Context, userId, roomId string) (s
 		return "", ErrRoomUnavailable
 	}
 
-	inviteCode, err := ra.roomCache.UpdateInviteCode(ctx, roomId, 5*time.Minute)
+	inviteCode, err := ra.roomCache.UpdateInviteCode(ctx, roomID, time.Duration(ra.config.InviteCodeTTLSeconds)*time.Second)
 
 	if err != nil {
 		log.Println("获取邀请码失败：", err)
@@ -225,259 +206,22 @@ func (ra *RoomApplication) Invite(ctx context.Context, userId, roomId string) (s
 	return inviteCode, nil
 }
 
-func (ra *RoomApplication) Join(ctx context.Context, userId, inviteCode string) (*RoomUserDTO, *RoomAppDTO, error) {
-	roomId, err := ra.roomCache.GetRoomIDByCode(ctx, inviteCode)
+// GetActiveRoom 复用基础信息缓存，统一拒绝已失效的房间。
+func (ra *RoomApplication) GetActiveRoom(ctx context.Context, roomID string) (*domainroom.Room, error) {
+	room, err := ra.GetRoomInfo(ctx, roomID)
 	if err != nil {
-		if errors.Is(err, roomentity.ErrInviteCodeExpired) {
-			return nil, nil, ErrInviteCodeExpired
-		}
-
-		log.Println("根据邀请码获取房间 ID 失败：", err)
-		return nil, nil, ErrUnknown
+		return nil, err
 	}
-
-	conversation, err := ra.conversationRepository.FindRoomConversation(ctx, roomId)
-	if err != nil {
-		return nil, nil, err
+	if room.Status != domainroom.Normal {
+		return nil, domainroom.ErrRoomNotFound
 	}
-	if conversation == nil {
-		return nil, nil, conversationapp.ErrConversationNotFound
-	}
-	conversationId := conversation.ConversationId
-
-	var persistedMember *roomentity.RoomUser
-	room, err := ra.findActiveRoom(ctx, roomId, int(roomvo.Normal))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if err := ra.txManager.WithinTransaction(ctx, func(tx any) error {
-		transactionRoomRepository := ra.roomRepository.WithTx(tx)
-
-		member, err := ra.roomUserRepository.WithTx(tx).GetRelationByIDs(userId, roomId)
-
-		switch {
-		case errors.Is(err, roomentity.ErrMemberNotFound):
-			// 第一次加入
-			newRoomUser := roomentity.NewRoomUser(userId, roomId, roomvo.RegularUser)
-			newRoomUser.Join()
-
-			updated, err := transactionRoomRepository.IncrementMemberCount(ctx, roomId, int(roomvo.Normal))
-			if err != nil {
-				return err
-			}
-			if !updated {
-				if _, checkErr := transactionRoomRepository.FindActiveRoom(roomId, int(roomvo.Normal)); checkErr != nil {
-					return checkErr
-				}
-				return ErrRoomFull
-			}
-
-			persistedMember, err = ra.roomUserRepository.WithTx(tx).JoinRoom(newRoomUser)
-
-			if err != nil {
-				return err
-			}
-		case err != nil:
-			return err
-
-		default:
-			// 重新加入
-			if err := member.ReJoin(); err != nil {
-				return err
-			}
-
-			updated, err := transactionRoomRepository.IncrementMemberCount(ctx, roomId, int(roomvo.Normal))
-			if err != nil {
-				return err
-			}
-			if !updated {
-				if _, checkErr := transactionRoomRepository.FindActiveRoom(roomId, int(roomvo.Normal)); checkErr != nil {
-					return checkErr
-				}
-				return ErrRoomFull
-			}
-
-			if err := ra.roomUserRepository.WithTx(tx).RejoinRoom(member); err != nil {
-				return err
-			}
-
-			persistedMember = member
-		}
-		room.MemberCount++
-		if err := ra.writeMemberChangedEvent(ctx, tx, persistedMember); err != nil {
-			return err
-		}
-
-		conv, err := ra.conversationRepository.WithTx(tx).GetByID(ctx, conversationId)
-		if err != nil {
-			return err
-		}
-		if conv == nil {
-			return conversationapp.ErrConversationNotFound
-		}
-
-		userConversation := conversationentity.BuildUserConversation(
-			userId,
-			conversationId,
-			conv.LatestSeq,
-		)
-
-		// 用户退出后，重新加入房间需要重新创建一个 userConversation
-		if err := ra.userConversationRepository.WithTx(tx).CreateUserConversation(ctx, userConversation); err != nil {
-			if errors.Is(err, roomentity.ErrVersionConflict) {
-				return ErrConcurrentUpdate
-			}
-			return ErrUnknown
-		}
-
-		return nil
-	}); err != nil {
-		return nil, nil, err
-	}
-	ra.notifyProducer()
-	ra.invalidateRoomInfo(ctx, roomId)
-
-	ra.cacheRoomMemberState(ctx, persistedMember)
-	if ra.roomPresence != nil {
-		ra.roomPresence.BindUserToRoom(userId, roomId)
-	}
-
-	return toRoomUserDTO(persistedMember), toRoomAppDTO(room, ""), nil
-}
-
-func (ra *RoomApplication) writeMemberChangedEvent(ctx context.Context, tx any, member *roomentity.RoomUser) error {
-	if ra.roomMemberOutboxRepository == nil || member == nil {
-		return nil
-	}
-	payload, err := json.Marshal(protocol.RoomMemberChangedEvent{
-		RoomID: member.RoomId, UserID: member.UserId,
-		Status: int(member.Status), Role: int(member.Role),
-		MuteUntil: member.MuteUtil, Version: member.Version,
-	})
-	if err != nil {
-		return err
-	}
-	return ra.roomMemberOutboxRepository.WithTx(tx).Create(ctx, &outboxport.Entry{
-		EventType:    protocol.EventRoomMemberChanged,
-		PartitionKey: member.RoomId + ":" + member.UserId,
-		Payload:      payload,
-	})
-}
-
-func (ra *RoomApplication) ApplyMemberChanged(ctx context.Context, event protocol.RoomMemberChangedEvent) error {
-	state := &roomcache.MemberState{
-		Status:    roomvo.RoomUserStatus(event.Status),
-		Role:      roomvo.Role(event.Role),
-		MuteUntil: event.MuteUntil,
-		Version:   event.Version,
-	}
-	updated := true
-	if ra.roomMemberCache != nil {
-		var err error
-		updated, err = ra.roomMemberCache.SetMemberIfVersionGreater(ctx, event.RoomID, event.UserID, state)
-		if err != nil {
-			return err
-		}
-	}
-	if !updated || ra.roomPresence == nil {
-		return nil
-	}
-	if state.Status == roomvo.Activate || state.Status == roomvo.BeMuted {
-		ra.roomPresence.BindUserToRoom(event.UserID, event.RoomID)
-	} else {
-		ra.roomPresence.UnbindUserFromRoom(event.UserID, event.RoomID)
-	}
-	return nil
-}
-
-func (ra *RoomApplication) cacheRoomMemberState(ctx context.Context, member *roomentity.RoomUser) {
-	if ra.roomMemberCache == nil || member == nil {
-		return
-	}
-	_, err := ra.roomMemberCache.SetMemberIfVersionGreater(ctx, member.RoomId, member.UserId, &roomcache.MemberState{
-		Status: member.Status, Role: member.Role, MuteUntil: member.MuteUtil, Version: member.Version,
-	})
-	if err != nil {
-		log.Printf("回填房间成员缓存失败：房间=%s 用户=%s 版本=%d 错误=%v", member.RoomId, member.UserId, member.Version, err)
-	}
-}
-
-func (ra *RoomApplication) Leave(ctx context.Context, userId, roomId string) error {
-	var memberState *roomcache.MemberState
-	var exist bool
-	var persistedMember *roomentity.RoomUser
-	if ra.roomMemberCache != nil {
-		memberState, exist, _ = ra.roomMemberCache.GetMember(ctx, roomId, userId)
-	}
-
-	if exist && (memberState == nil ||
-		(memberState.Status != roomvo.Activate &&
-			memberState.Status != roomvo.BeMuted)) {
-		return ErrNotRoomMember
-	}
-
-	if err := ra.txManager.WithinTransaction(ctx, func(tx any) error {
-		roomUser, err := ra.roomUserRepository.WithTx(tx).GetRelationByIDs(userId, roomId)
-		if err != nil {
-			return err
-		}
-
-		if roomUser == nil {
-			return ErrNotRoomMember
-		}
-
-		if err := roomUser.Leave(); err != nil {
-			return err
-		}
-
-		if err := ra.roomUserRepository.WithTx(tx).LeaveRoom(roomUser, []int{int(roomvo.Activate), int(roomvo.BeMuted)}); err != nil {
-			if errors.Is(err, roomentity.ErrVersionConflict) {
-				return ErrConcurrentUpdate
-			}
-			return ErrUnknown
-		}
-		persistedMember = roomUser
-		updated, err := ra.roomRepository.WithTx(tx).DecrementMemberCount(ctx, roomId, int(roomvo.Normal))
-		if err != nil {
-			return err
-		}
-		if !updated {
-			return ErrConcurrentUpdate
-		}
-		if err := ra.writeMemberChangedEvent(ctx, tx, roomUser); err != nil {
-			return err
-		}
-
-		conversation, err := ra.conversationRepository.WithTx(tx).FindRoomConversation(ctx, roomId)
-		if err != nil {
-			return err
-		}
-		if conversation == nil {
-			return conversationapp.ErrConversationNotFound
-		}
-		return ra.userConversationRepository.WithTx(tx).DelUserConversation(ctx, userId, conversation.ConversationId)
-	}); err != nil {
-		return err
-	}
-	ra.notifyProducer()
-	ra.invalidateRoomInfo(ctx, roomId)
-
-	ra.cacheRoomMemberState(ctx, persistedMember)
-	if ra.roomPresence != nil {
-		ra.roomPresence.UnbindUserFromRoom(userId, roomId)
-	}
-
-	return nil
+	return room, nil
 }
 
 // GetRoomInfo 先读 Redis；缓存未命中或不可用时回源 MySQL 并尝试回填。
-func (ra *RoomApplication) GetRoomInfo(ctx context.Context, roomID string) (*roomentity.Room, error) {
-	if ra == nil || ra.roomRepository == nil {
-		return nil, errors.New("房间应用未配置")
-	}
+func (ra *RoomApplication) GetRoomInfo(ctx context.Context, roomID string) (*domainroom.Room, error) {
 	if roomID == "" {
-		return nil, roomentity.ErrRoomNotFound
+		return nil, domainroom.ErrRoomNotFound
 	}
 	if ra.roomInfoCache != nil {
 		cached, found, err := ra.roomInfoCache.GetRoomInfo(ctx, roomID)
@@ -489,23 +233,23 @@ func (ra *RoomApplication) GetRoomInfo(ctx context.Context, roomID string) (*roo
 		}
 	}
 
-	room, err := ra.roomRepository.FindByID(ctx, roomID)
+	room, err := ra.roomRepository.FindRoomByRoomID(ctx, roomID)
 	if err != nil {
 		return nil, err
 	}
 	if room == nil {
-		return nil, roomentity.ErrRoomNotFound
+		return nil, domainroom.ErrRoomNotFound
 	}
 	ra.cacheRoomInfo(ctx, room)
 	return room, nil
 }
 
-func (ra *RoomApplication) cacheRoomInfo(ctx context.Context, room *roomentity.Room) {
+func (ra *RoomApplication) cacheRoomInfo(ctx context.Context, room *domainroom.Room) {
 	if ra == nil || ra.roomInfoCache == nil || room == nil || ra.roomInfoCacheTTL <= 0 {
 		return
 	}
 	if err := ra.roomInfoCache.SetRoomInfo(ctx, room, ra.roomInfoCacheTTL); err != nil {
-		log.Printf("写入房间基础信息缓存失败：room=%s error=%v", room.RoomId, err)
+		log.Printf("写入房间基础信息缓存失败：room=%s error=%v", room.RoomID, err)
 	}
 }
 
