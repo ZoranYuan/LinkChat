@@ -1,11 +1,13 @@
 app:
-  name: "IMChat"
-  version: "0.0.1"
   env: "development"
-  maxConnectionIdle: 
   machineId: 1
 server:
   port: ":8081"
+  read_timeout_seconds: 30
+  idle_timeout_seconds: 120
+  shutdown_timeout_seconds: 10
+  health_timeout_seconds: 2
+  max_header_bytes: 1048576
 grpc:
   room_agent_address: ":50051"
 http:
@@ -15,15 +17,24 @@ http:
     burst: 500
 database:
   mysql:
+    max_open_conns: 50
+    max_idle_conns: 50
+    conn_max_lifetime_seconds: 240
+    slow_threshold_milliseconds: 1000
+    log_level: "info"
     dsn: "user:123456@tcp(mysql:3306)/IMChat?charset=utf8mb4&parseTime=True&loc=Local"
   redis:
     dsn: "redis://redis:6379/1?dial_timeout=5s&read_timeout=3s&pool_size=50"
 jwt:
+  issuer: "IMChat"
   secret: "U2FsdGVkX19anQGSRtiUwgRLpWV333jI4xjlCF32dek="
   access_expire_minutes: 150
   refresh_expire_hours: 168
+  session_operation_timeout_seconds: 3
 
 security:
+  bcrypt_cost: 10
+  rate_limit_prefix: "rate:limit"
   allowed_origins: "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8081,http://127.0.0.1:8081"
 
 ws:
@@ -32,6 +43,7 @@ ws:
   ping_period_seconds: 50
   timer_interval_seconds: 30
   page_hidden_timeout_seconds: 600
+  close_timeout_seconds: 1
   max_message_size: 5120
   max_message_send_buffer_size: 256
   message_sequencer_shard_count: 16 # 消息 Sequencer 分片数；同一会话固定路由到同一分片。
@@ -43,14 +55,19 @@ ws:
   batch_max_bytes: 8192
   batch_linger_milliseconds: 20
   batch_ready_queue_size: 16
+room:
+  max_members: 1000
+  invite_code_ttl_seconds: 300
+  invite_code_length: 9
+  invite_code_attempts: 9
+friend:
+  request_timeout_seconds: 5
+  request_cooldown_seconds: 600
 message:
   room_realtime_fanout_limit: 500
   large_room_notice_linger_milliseconds: 50
   large_room_notice_shard_count: 16
   max_text_runes: 4096
-  max_width: 8192
-  max_height: 8192
-  max_video_ms: 86400000
   max_identifier_length: 128
   attachment_ttl_seconds: 1209600
   room_activity_window_seconds: 30
@@ -64,6 +81,10 @@ message:
   room_member_negative_ttl_seconds: 120
   history_default_limit: 20
   history_max_limit: 30
+  offline_page_size: 10
+  max_sync_seqs: 500
+  member_query_timeout_seconds: 3
+  room_activity_sweep_seconds: 60
 kafka:
   brokers:
     - "kafka:9092"
@@ -81,9 +102,10 @@ kafka:
     lease_stale_after_seconds: 10
     consume_retry_interval_seconds: 1
     dead_letter_suffix: ".dlq"
+    retry_initial_delay_milliseconds: 200
+    retry_max_delay_milliseconds: 800
 
   producer:
-    acks: "all"         # all / 1 / 0
     retries: 3
     batch_size: 16384
     linger_ms: 10
@@ -93,9 +115,8 @@ kafka:
     stale_after_seconds: 30
     base_retry_wait_seconds: 2
     max_retries: 10
+    max_retry_wait_seconds: 300
 
-  partition:
-    strategy: "conversation_hash"   # room_hash / user_hash / random
 storage:
   minio:
     endpoint: "minio:9000"
@@ -117,6 +138,16 @@ storage:
     max_multipart_parts: 10000
     upload_rate: 1
     upload_burst: 5
+    complete_lock_renew_timeout_seconds: 2
+    lock_release_timeout_seconds: 3
+    object_cleanup_timeout_seconds: 10
+    allowed_content_types:
+      - "image/jpeg"
+      - "image/png"
+      - "image/webp"
+      - "video/mp4"
+      - "application/pdf"
+      - "text/plain"
 
 file_cleanup:
   interval_seconds: 60
@@ -126,13 +157,18 @@ file_cleanup:
   operation_timeout_seconds: 30
   max_retries: 10
   orphan_after_seconds: 86400
+  complete_lock_ttl_seconds: 35
+  max_retry_wait_seconds: 1800
 
 cache:
+  message_dedup:
+    ttl_seconds: 300
+  room_messages:
+    ttl_seconds: 600
+    max_entries: 5000
   conversation_info:
     ttl_seconds: 600
-  user_profile:
-        ttl: 3600
-        negative_ttl: 30
+    negative_ttl_seconds: 120
   attachment_access:
     # 访问 URL 缓存时间，略短于 storage.minio.url_ttl_seconds。
     ttl_seconds: 3570
@@ -143,5 +179,5 @@ cache:
     # 用户进入房间前的未读摘要范围缓存时间。
     ttl_seconds: 120
   room_info:
-    # 房间基础信息缓存；成员数在入群、退群提交后主动失效。
+    # 房间基础信息缓存；成员数在加入房间、退出房间提交后主动失效。
     ttl_seconds: 60
