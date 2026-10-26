@@ -1,6 +1,8 @@
 package message
 
-import messageentity "IM_backend/internal/domain/message/entity"
+import (
+	domainmessage "IM_backend/internal/domain/message"
+)
 
 type SendMessageDTO struct {
 	ClientMessageID  string
@@ -12,9 +14,6 @@ type SendMessageDTO struct {
 	Content          string
 	AttachmentID     string
 	FileID           string
-	FileName         string
-	FileSize         int64
-	MimeType         string
 	Width            int
 	Height           int
 	DurationMs       *int64
@@ -52,7 +51,7 @@ type MessageDTO struct {
 	PackID       string
 }
 
-func toMessageDTOs(ms []*messageentity.Message) []MessageDTO {
+func toMessageDTOs(ms []*domainmessage.Message) []MessageDTO {
 	if len(ms) == 0 {
 		return nil
 	}
@@ -64,17 +63,17 @@ func toMessageDTOs(ms []*messageentity.Message) []MessageDTO {
 		}
 
 		item := MessageDTO{
-			MessageID:      m.MessageId,
-			ConversationID: m.ConversationId,
-			SenderID:       m.SenderId,
+			MessageID:      m.MessageID,
+			ConversationID: m.ConversationID,
+			SenderID:       m.SenderID,
 			Seq:            m.Seq,
 			Type:           int(m.Type),
 			Content:        m.Content,
 			Status:         int8(m.Status),
 			SendTime:       m.SendTime,
 		}
-		if m.ClientMsgId != nil {
-			clientMsgID := *m.ClientMsgId
+		if m.ClientMsgID != nil {
+			clientMsgID := *m.ClientMsgID
 			item.ClientMessageID = &clientMsgID
 		}
 		res = append(res, item)

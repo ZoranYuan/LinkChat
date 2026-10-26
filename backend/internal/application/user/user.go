@@ -1,44 +1,36 @@
 package user
 
 import (
-	idport "IM_backend/internal/application/ports/id"
-	authport "IM_backend/internal/application/ports/persistence/cache/auth"
-	usercache "IM_backend/internal/application/ports/persistence/cache/user"
-	userrepo "IM_backend/internal/application/ports/persistence/repository/user"
-	txmanager "IM_backend/internal/application/ports/persistence/tx_manager"
-	securityport "IM_backend/internal/application/ports/security"
-	userentity "IM_backend/internal/domain/user/entity"
-	uservo "IM_backend/internal/domain/user/value_object"
 	"context"
 	"errors"
 	"log"
 	"strings"
 	"time"
+
+	"IM_backend/configs"
+	authport "IM_backend/internal/application/ports/cache/auth"
+	idport "IM_backend/internal/application/ports/id"
+	securityport "IM_backend/internal/application/ports/security"
+	"IM_backend/internal/application/ports/transaction"
+	domainuser "IM_backend/internal/domain/user"
 )
 
 type UserApplication struct {
-	userRepository userrepo.UserRepository
+	userRepository domainuser.UserRepository
 	tokenIssuer    securityport.TokenIssuer
-	options        Options
+	config         configs.JWT
 	authCache      authport.AuthCache
-	userCache      usercache.UserCache
 
 	idGenerator    idport.Generator
 	passwordHasher securityport.PasswordHasher
-	txManager      txmanager.TxManager
+	txManager      transaction.Manager
 }
 
-type Options struct {
-	AccessTokenTTL  time.Duration
-	RefreshTokenTTL time.Duration
-}
-
-func NewUserApplication(userRepository userrepo.UserRepository, options Options, userCache usercache.UserCache, authCache authport.AuthCache, tokenIssuer securityport.TokenIssuer, idGenerator idport.Generator, passwordHasher securityport.PasswordHasher, txManager txmanager.TxManager) *UserApplication {
+func NewUserApplication(userRepository domainuser.UserRepository, config configs.JWT, authCache authport.AuthCache, tokenIssuer securityport.TokenIssuer, idGenerator idport.Generator, passwordHasher securityport.PasswordHasher, txManager transaction.Manager) *UserApplication {
 	return &UserApplication{
 		userRepository: userRepository,
-		options:        options,
+		config:         config,
 		authCache:      authCache,
-		userCache:      userCache,
 		tokenIssuer:    tokenIssuer,
 		idGenerator:    idGenerator,
 		passwordHasher: passwordHasher,
@@ -46,19 +38,19 @@ func NewUserApplication(userRepository userrepo.UserRepository, options Options,
 	}
 }
 
-func (ua *UserApplication) issueTokensAndCache(userId string) (string, string, error) {
-	accessToken, refreshToken, sessionID, err := ua.tokenIssuer.IssueToken(userId)
+func (ua *UserApplication) issueTokensAndCache(userID string) (string, string, error) {
+	accessToken, refreshToken, sessionID, err := ua.tokenIssuer.IssueToken(userID)
 	if err != nil {
 		return "", "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ua.config.SessionOperationTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	if err := ua.authCache.CreateSession(ctx, refreshToken, authport.RefreshSession{
-		UserID:    userId,
+		UserID:    userID,
 		SessionID: sessionID,
-	}, ua.options.RefreshTokenTTL); err != nil {
+	}, time.Duration(ua.config.RefreshExpireHours)*time.Hour); err != nil {
 		return "", "", err
 	}
 
@@ -66,7 +58,7 @@ func (ua *UserApplication) issueTokensAndCache(userId string) (string, string, e
 }
 
 func (ua *UserApplication) RegisterWithPhone(password string, phone string, reconfirmPassword string) (*UserAppDTO, error) {
-	if !uservo.Phone(phone).Validate() {
+	if !domainuser.Phone(phone).Validate() {
 		return nil, ErrInvalidPhoneNumber
 	}
 
@@ -88,9 +80,9 @@ func (ua *UserApplication) RegisterWithPhone(password string, phone string, reco
 		return nil, err
 	}
 
-	newUser, err := userentity.RegisterWithPhone(
-		uservo.Phone(phone),
-		uservo.Password(hashedPassword),
+	newUser, err := domainuser.RegisterWithPhone(
+		domainuser.Phone(phone),
+		domainuser.Password(hashedPassword),
 	)
 
 	if err != nil {
@@ -98,12 +90,12 @@ func (ua *UserApplication) RegisterWithPhone(password string, phone string, reco
 	}
 
 	// 生成 UserId
-	userId, err := ua.idGenerator.Generate()
+	userID, err := ua.idGenerator.Generate()
 	if err != nil {
 		return nil, err
 	}
 
-	newUser.UserId = userId
+	newUser.UserID = userID
 	err = ua.userRepository.Create(newUser)
 
 	if err != nil {
@@ -111,9 +103,9 @@ func (ua *UserApplication) RegisterWithPhone(password string, phone string, reco
 	}
 
 	userApp := &UserAppDTO{
-		UserID:    newUser.UserId,
-		Username:  newUser.UserName,
-		Nickname:  newUser.NickName,
+		UserID:    newUser.UserID,
+		Username:  newUser.Username,
+		Nickname:  newUser.Nickname,
 		AvatarURL: newUser.Avatar,
 		Phone:     string(newUser.Phone),
 	}
@@ -127,7 +119,7 @@ func (ua *UserApplication) Login(account, password string) (*UserAppDTO, error) 
 		return nil, ErrInvalidLoginAccount
 	}
 
-	user, err := ua.userRepository.FindByUsernameOrPhone(account)
+	user, err := ua.userRepository.FindUserByUsernameOrPhone(account)
 	if err != nil {
 		log.Println("账号登录失败：", err)
 		return nil, err
@@ -141,20 +133,20 @@ func (ua *UserApplication) Login(account, password string) (*UserAppDTO, error) 
 	}
 
 	// 更新当前用户上线时间
-	user.OnLineTime = time.Now()
-	if err := ua.userRepository.UpdateOnlineTime(user.UserId, string(user.Phone), user.OnLineTime); err != nil {
+	user.OnlineTime = time.Now()
+	if err := ua.userRepository.UpdateOnlineTime(user.UserID, string(user.Phone), user.OnlineTime); err != nil {
 		return nil, err
 	}
 
-	accessToken, refreshToken, err := ua.issueTokensAndCache(user.UserId)
+	accessToken, refreshToken, err := ua.issueTokensAndCache(user.UserID)
 	if err != nil {
 		return nil, err
 	}
 
 	return &UserAppDTO{
-		UserID:       user.UserId,
-		Username:     user.UserName,
-		Nickname:     user.NickName,
+		UserID:       user.UserID,
+		Username:     user.Username,
+		Nickname:     user.Nickname,
 		AvatarURL:    user.Avatar,
 		Phone:        string(user.Phone),
 		RefreshToken: refreshToken,
@@ -162,7 +154,7 @@ func (ua *UserApplication) Login(account, password string) (*UserAppDTO, error) 
 	}, nil
 }
 
-func (ua *UserApplication) UpdateUserProfile(ctx context.Context, userId string, avatar, nickName, userName *string) (*UserAppDTO, error) {
+func (ua *UserApplication) UpdateUserProfile(ctx context.Context, userID string, avatar, nickName, userName *string) (*UserAppDTO, error) {
 	updates := make(map[string]any)
 
 	if avatar != nil {
@@ -183,31 +175,27 @@ func (ua *UserApplication) UpdateUserProfile(ctx context.Context, userId string,
 		return nil, errors.New("用户资料更新事务管理器未配置")
 	}
 
-	var user *userentity.User
+	var user *domainuser.User
 	err := ua.txManager.WithinTransaction(ctx, func(tx any) error {
 		var err error
-		user, err = ua.userRepository.WithTx(tx).UpdateUserProfile(ctx, userId, updates)
+		user, err = ua.userRepository.WithTx(tx).UpdateUserProfile(ctx, userID, updates)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if err := ua.userCache.DeleteUserProfiles(ctx, []string{userId}); err != nil {
-		log.Printf("删除用户缓存失败 %s", err.Error())
-	}
-
 	return &UserAppDTO{
-		UserID:    user.UserId,
-		Username:  user.UserName,
-		Nickname:  user.NickName,
+		UserID:    user.UserID,
+		Username:  user.Username,
+		Nickname:  user.Nickname,
 		Phone:     string(user.Phone),
 		AvatarURL: user.Avatar,
 	}, nil
 }
 
-func (ua *UserApplication) FindUserByPhoneAndUserName(keyword string) (*UserAppDTO, error) {
-	user, err := ua.userRepository.FindByUsernameOrPhone(keyword)
+func (ua *UserApplication) FindUserByPhoneOrUsername(keyword string) (*UserAppDTO, error) {
+	user, err := ua.userRepository.FindUserByUsernameOrPhone(keyword)
 	if err != nil {
 		return nil, err
 	}
@@ -216,15 +204,15 @@ func (ua *UserApplication) FindUserByPhoneAndUserName(keyword string) (*UserAppD
 	}
 
 	return &UserAppDTO{
-		UserID:    user.UserId,
-		Username:  user.UserName,
-		Nickname:  user.NickName,
+		UserID:    user.UserID,
+		Username:  user.Username,
+		Nickname:  user.Nickname,
 		AvatarURL: user.Avatar,
 	}, nil
 }
 
-func (ua *UserApplication) Logout(userId, sessionID string) error {
-	user, err := ua.userRepository.FindByUserID(userId)
+func (ua *UserApplication) Logout(userID, sessionID string) error {
+	user, err := ua.userRepository.FindUserByUserID(userID)
 	if err != nil {
 		return err
 	}
@@ -233,19 +221,19 @@ func (ua *UserApplication) Logout(userId, sessionID string) error {
 		return ErrUserNotFound
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ua.config.SessionOperationTimeoutSeconds)*time.Second)
 	defer cancel()
-	if err := ua.authCache.DeleteSession(ctx, userId, sessionID); err != nil {
+	if err := ua.authCache.DeleteSession(ctx, userID, sessionID); err != nil {
 		return err
 	}
-	return ua.userRepository.UpdateOfflineTime(user.UserId, string(user.Phone), time.Now())
+	return ua.userRepository.UpdateOfflineTime(user.UserID, string(user.Phone), time.Now())
 }
 
 func (ua *UserApplication) Refresh(refreshToken string) (*UserAppDTO, error) {
 	if refreshToken == "" {
 		return nil, ErrUserNotFound
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ua.config.SessionOperationTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	session, found, err := ua.authCache.GetRefreshSession(ctx, refreshToken)
@@ -255,7 +243,7 @@ func (ua *UserApplication) Refresh(refreshToken string) (*UserAppDTO, error) {
 	if !found || session.UserID == "" {
 		return nil, ErrUserNotFound
 	}
-	user, err := ua.userRepository.FindByUserID(session.UserID)
+	user, err := ua.userRepository.FindUserByUserID(session.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -269,12 +257,12 @@ func (ua *UserApplication) Refresh(refreshToken string) (*UserAppDTO, error) {
 	rotated, err := ua.authCache.RotateRefreshSession(ctx, refreshToken, refresh, authport.RefreshSession{
 		UserID:    session.UserID,
 		SessionID: session.SessionID,
-	}, ua.options.RefreshTokenTTL)
+	}, time.Duration(ua.config.RefreshExpireHours)*time.Hour)
 	if err != nil {
 		return nil, err
 	}
 	if !rotated {
 		return nil, ErrUserNotFound
 	}
-	return &UserAppDTO{UserID: user.UserId, Username: user.UserName, Nickname: user.NickName, Phone: string(user.Phone), AvatarURL: user.Avatar, AccessToken: access, RefreshToken: refresh}, nil
+	return &UserAppDTO{UserID: user.UserID, Username: user.Username, Nickname: user.Nickname, Phone: string(user.Phone), AvatarURL: user.Avatar, AccessToken: access, RefreshToken: refresh}, nil
 }

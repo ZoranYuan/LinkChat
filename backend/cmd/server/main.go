@@ -1,59 +1,6 @@
 package main
 
 import (
-	"IM_backend/configs"
-	roomagentapp "IM_backend/internal/application/agent"
-	conversationapp "IM_backend/internal/application/conversation"
-	fileapp "IM_backend/internal/application/file"
-	friendapp "IM_backend/internal/application/friend"
-	messageapp "IM_backend/internal/application/message"
-	eventbus "IM_backend/internal/application/ports/eventbus"
-	roomapp "IM_backend/internal/application/room"
-	userapp "IM_backend/internal/application/user"
-	filecleanup "IM_backend/internal/infrastructure/filecleanup"
-	"IM_backend/internal/infrastructure/id/snow"
-	"IM_backend/internal/infrastructure/mq/kafka"
-	"IM_backend/internal/infrastructure/persistence"
-	"IM_backend/internal/infrastructure/persistence/mysql"
-	conversationmysql "IM_backend/internal/infrastructure/persistence/mysql/repository/conversation"
-	filemysql "IM_backend/internal/infrastructure/persistence/mysql/repository/file"
-	friendmysql "IM_backend/internal/infrastructure/persistence/mysql/repository/friend"
-	inboxmysql "IM_backend/internal/infrastructure/persistence/mysql/repository/inbox"
-	messagemysql "IM_backend/internal/infrastructure/persistence/mysql/repository/message"
-	outboxmysql "IM_backend/internal/infrastructure/persistence/mysql/repository/outbox"
-	roommysql "IM_backend/internal/infrastructure/persistence/mysql/repository/room"
-	roomusermysql "IM_backend/internal/infrastructure/persistence/mysql/repository/room_user"
-	usermysql "IM_backend/internal/infrastructure/persistence/mysql/repository/user"
-	"IM_backend/internal/infrastructure/persistence/redis"
-	authcache "IM_backend/internal/infrastructure/persistence/redis/cache/auth"
-	conversationcache "IM_backend/internal/infrastructure/persistence/redis/cache/conversation"
-	filecache "IM_backend/internal/infrastructure/persistence/redis/cache/file"
-	friendcache "IM_backend/internal/infrastructure/persistence/redis/cache/friend"
-	messagecache "IM_backend/internal/infrastructure/persistence/redis/cache/message"
-	roomcache "IM_backend/internal/infrastructure/persistence/redis/cache/room"
-	roomunreadcache "IM_backend/internal/infrastructure/persistence/redis/cache/summary"
-	usercache "IM_backend/internal/infrastructure/persistence/redis/cache/user"
-	"IM_backend/internal/infrastructure/ratelimit"
-	realtimews "IM_backend/internal/infrastructure/realtime/websocket"
-	authsvc "IM_backend/internal/infrastructure/security/auth"
-	passwordsecurity "IM_backend/internal/infrastructure/security/password"
-	minioobj "IM_backend/internal/infrastructure/storage/minio"
-	"IM_backend/internal/shared/diagnostics"
-	"IM_backend/internal/shared/protocol"
-	shared_ratelimit "IM_backend/internal/shared/ratelimit"
-	grpcserver "IM_backend/internal/transport/grpc"
-	roomagentgrpc "IM_backend/internal/transport/grpc/agent"
-	httpapi "IM_backend/internal/transport/http"
-	userconversationhttp "IM_backend/internal/transport/http/conversation"
-	filehttp "IM_backend/internal/transport/http/file"
-	friendhttp "IM_backend/internal/transport/http/friend"
-	friendrequesthttp "IM_backend/internal/transport/http/friend_request"
-	messagehttp "IM_backend/internal/transport/http/message"
-	"IM_backend/internal/transport/http/middleware"
-	roomhttp "IM_backend/internal/transport/http/room"
-	userhttp "IM_backend/internal/transport/http/user"
-	mqhandler "IM_backend/internal/transport/mq/handler"
-	"IM_backend/internal/transport/ws"
 	"context"
 	"log"
 	"net/http"
@@ -63,6 +10,52 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"IM_backend/configs"
+	roomagentapp "IM_backend/internal/application/agent"
+	conversationapp "IM_backend/internal/application/conversation"
+	fileapp "IM_backend/internal/application/file"
+	friendapp "IM_backend/internal/application/friend"
+	messageapp "IM_backend/internal/application/message"
+	"IM_backend/internal/application/ports/messaging"
+	ratelimitport "IM_backend/internal/application/ports/ratelimit"
+	roomapp "IM_backend/internal/application/room"
+	userapp "IM_backend/internal/application/user"
+	infracache "IM_backend/internal/infra/cache"
+	agentcache "IM_backend/internal/infra/cache/agent"
+	authcache "IM_backend/internal/infra/cache/auth"
+	conversationcache "IM_backend/internal/infra/cache/conversation"
+	filecache "IM_backend/internal/infra/cache/file"
+	messagecache "IM_backend/internal/infra/cache/message"
+	roomcache "IM_backend/internal/infra/cache/room"
+	"IM_backend/internal/infra/database"
+	infraconversation "IM_backend/internal/infra/database/conversation"
+	infrafile "IM_backend/internal/infra/database/file"
+	infrafriend "IM_backend/internal/infra/database/friend"
+	infrainbox "IM_backend/internal/infra/database/inbox"
+	inframessage "IM_backend/internal/infra/database/message"
+	infraoutbox "IM_backend/internal/infra/database/outbox"
+	infraroom "IM_backend/internal/infra/database/room"
+	infrauser "IM_backend/internal/infra/database/user"
+	"IM_backend/internal/infra/id/snowflake"
+	mqhandler "IM_backend/internal/infra/mq/handlers"
+	"IM_backend/internal/infra/mq/kafka"
+	"IM_backend/internal/infra/ratelimit"
+	authsvc "IM_backend/internal/infra/security/auth"
+	passwordsecurity "IM_backend/internal/infra/security/password"
+	minioobj "IM_backend/internal/infra/storage/minio"
+	grpcserver "IM_backend/internal/interfaces/grpc"
+	roomagentgrpc "IM_backend/internal/interfaces/grpc/agent"
+	httpapi "IM_backend/internal/interfaces/http"
+	userconversationhttp "IM_backend/internal/interfaces/http/conversation"
+	filehttp "IM_backend/internal/interfaces/http/file"
+	friendhttp "IM_backend/internal/interfaces/http/friend"
+	friendrequesthttp "IM_backend/internal/interfaces/http/friendrequest"
+	messagehttp "IM_backend/internal/interfaces/http/message"
+	"IM_backend/internal/interfaces/http/middleware"
+	roomhttp "IM_backend/internal/interfaces/http/room"
+	userhttp "IM_backend/internal/interfaces/http/user"
+	"IM_backend/internal/interfaces/ws"
 )
 
 func main() {
@@ -77,9 +70,6 @@ func main() {
 		configPath = "/workspace/IM/backend/configs/config.yaml"
 	}
 	cfg := configs.LoadConfig(configPath)
-	if err := cfg.Validate(); err != nil {
-		log.Fatal("配置校验失败：", err)
-	}
 
 	if cfg.App.Env == "development" {
 		gin.SetMode(gin.DebugMode)
@@ -87,26 +77,23 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	redisClient := redis.InitRedis(cfg.Database.Redis.DSN)
+	redisClient := infracache.InitRedis(cfg.Database.Redis.DSN)
 	defer redisClient.Close()
-	db := mysql.OpenMySQL(cfg.Database.MySQL.DSN)
+	db := database.OpenMySQL(cfg.Database.MySQL)
 	dbSQL, err := db.DB()
 	if err != nil {
 		log.Fatal("获取数据库连接失败：", err)
 	}
 	defer dbSQL.Close()
-	diagnostics.StartSQLPoolSampler(ctx, dbSQL, time.Second)
-	diagnostics.StartOutboxBacklogSampler(ctx, dbSQL, time.Second)
-	diagnostics.StartMySQLStatusSampler(ctx, dbSQL, 5*time.Second)
 
-	txManager := persistence.NewGormTxManager(db)
-	idGenerator, err := snow.NewGenerator(int(cfg.App.MachineID))
+	txManager := database.NewTransactionManager(db)
+	idGenerator, err := snowflake.NewGenerator(int(cfg.App.MachineID))
 	if err != nil {
 		log.Fatalln("初始化 ID 生成器失败：", err)
 	}
-	passwordHasher := passwordsecurity.NewHasher()
+	passwordHasher := passwordsecurity.NewHasher(cfg.Security)
 
-	realtimeGateway := realtimews.NewGateway(ctx)
+	realtimeGateway := ws.NewGateway(ctx)
 	realtimeGateway.SweepHiddenConnections(
 		realtimeGateway.NetworkContext(),
 		time.Duration(cfg.WebSocket.TimerInterval)*time.Second,
@@ -114,14 +101,12 @@ func main() {
 	)
 
 	authCache := authcache.NewAuthCache(redisClient)
-	roomCache := roomcache.NewRoomCache(redisClient, cfg.Message)
+	roomCache := roomcache.NewRoomCache(redisClient, cfg)
 	roomInfoCache := roomcache.NewRoomInfoCache(redisClient)
-	roomUnreadSnapshotCache := roomunreadcache.NewRoomUnreadSnapshotCache(redisClient)
+	roomUnreadSnapshotCache := agentcache.NewRoomUnreadSnapshotCache(redisClient)
 	roomMemberCache := roomcache.NewRoomMemberCache(redisClient, cfg.Message)
 	fileCache := filecache.NewFileCache(redisClient)
-	friendCache := friendcache.NewFriendCache(redisClient)
 	messageCache := messagecache.NewMessageCache(redisClient)
-	userCache := usercache.NewUserCache(redisClient)
 
 	kafkaClient, err := kafka.NewClient(cfg.Kafka)
 
@@ -134,11 +119,7 @@ func main() {
 		}
 	}()
 
-	tokenIssuer := authsvc.NewTokenIssuer(authsvc.Options{
-		Secret:          cfg.JWT.Secret,
-		AccessTokenTTL:  time.Duration(cfg.JWT.AccessExpireMinutes) * time.Minute,
-		RefreshTokenTTL: time.Duration(cfg.JWT.RefreshExpireHours) * time.Hour,
-	})
+	tokenService := authsvc.NewTokenService(cfg.JWT)
 
 	objectStorage, err := minioobj.NewObjectStorage(ctx, cfg.Storage.MinIO)
 	if err != nil {
@@ -152,7 +133,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	r.GET("/readyz", func(c *gin.Context) {
-		checkCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		checkCtx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.Server.HealthTimeoutSeconds)*time.Second)
 		defer cancel()
 		checks := gin.H{}
 		if err := dbSQL.PingContext(checkCtx); err != nil {
@@ -172,64 +153,47 @@ func main() {
 	})
 
 	// 构造依赖
-	fileRepository := filemysql.NewFileRepository(db)
-	fileUploadRepository := filemysql.NewFileUploadRepository(db)
-	messageAttachmentsRepository := messagemysql.NewMessageAttachmentRepository(db)
-	fileApplication := fileapp.NewFileApplication(fileapp.Options{
-		MultipartTTL:             time.Duration(cfg.Storage.MinIO.MultipartTTL) * time.Second,
-		CacheTTL:                 time.Duration(cfg.Storage.MinIO.CacheTTLSeconds) * time.Second,
-		AttachmentFileCardTTL:    time.Duration(cfg.Cache.AttachmentFileCard.TTLSeconds) * time.Second,
-		URLTTL:                   time.Duration(cfg.Storage.MinIO.URLTTLSeconds) * time.Second,
-		AttachmentAccessCacheTTL: time.Duration(cfg.Cache.AttachmentAccess.TTLSeconds) * time.Second,
-		PartURLTTL:               time.Duration(cfg.Storage.MinIO.PartURLTTLSeconds) * time.Second,
-		DirectUploadURLTTL:       time.Duration(cfg.Storage.MinIO.DirectUploadURLTTLSeconds) * time.Second,
-		DirectUploadMaxSize:      cfg.Storage.MinIO.DirectUploadMaxSizeBytes,
-		MultipartInitLockTTL:     time.Duration(cfg.Storage.MinIO.MultipartInitLockTTLSeconds) * time.Second,
-		MultipartCompleteLockTTL: time.Duration(cfg.Storage.MinIO.MultipartCompleteLockTTLSeconds) * time.Second,
-		MaxFileSize:              cfg.Storage.MinIO.MaxFileSizeBytes,
-		MaxMultipartParts:        cfg.Storage.MinIO.MaxMultipartParts,
-	}, fileRepository, fileUploadRepository, messageAttachmentsRepository, fileCache, objectStorage, idGenerator, txManager)
+	fileRepository := infrafile.NewFileRepository(db)
+	fileUploadRepository := infrafile.NewFileUploadRepository(db)
+	messageAttachmentsRepository := inframessage.NewMessageAttachmentRepository(db)
+	fileApplication := fileapp.NewFileApplication(cfg, fileRepository, fileUploadRepository, messageAttachmentsRepository, fileCache, objectStorage, idGenerator, txManager)
 
 	// file 清除 worker
-	fileCleanupWorker := filecleanup.NewWorker(
+	fileCleanupWorker := fileapp.NewCleanupWorker(
 		txManager,
 		fileUploadRepository,
 		fileRepository,
 		fileCache,
 		objectStorage,
 		cfg.FileCleanup,
-		time.Duration(cfg.Storage.MinIO.MultipartCompleteLockTTLSeconds)*time.Second,
+		cfg.Storage.MinIO,
 	)
 	cleanupDone := make(chan struct{})
 	go func() {
 		defer close(cleanupDone)
-		fileCleanupWorker.Start(ctx)
+		fileCleanupWorker.Run(ctx)
 	}()
-	fileHandle := filehttp.NewHandle(fileApplication)
+	fileHandler := filehttp.NewHandler(fileApplication)
 
-	messageRepository := messagemysql.NewMessageRepository(db)
-	messageStickerRepository := messagemysql.NewMessageStickerRepository(db)
-	outboxRepository := outboxmysql.NewOutboxRepository(db, idGenerator)
-	inboxRepository := inboxmysql.NewInboxRepository(db)
-	conversationRepository := conversationmysql.NewConversationRepository(db)
-	conversationInfoCache := conversationcache.NewConversationCache(redisClient)
+	messageRepository := inframessage.NewMessageRepository(db)
+	messageStickerRepository := inframessage.NewMessageStickerRepository(db)
+	outboxRepository := infraoutbox.NewOutboxRepository(db, idGenerator)
+	inboxRepository := infrainbox.NewInboxRepository(db)
+	conversationRepository := infraconversation.NewConversationRepository(db)
+	conversationInfoCache := conversationcache.NewConversationCache(redisClient, cfg.Cache.ConversationInfo)
 	conversationApplication := conversationapp.NewConversationApplication(conversationRepository, conversationInfoCache, time.Duration(cfg.Cache.ConversationInfo.TTLSeconds)*time.Second)
-	userConversationRepository := conversationmysql.NewUserConversationRepository(db)
+	userConversationRepository := infraconversation.NewUserConversationRepository(db)
 
-	userRepository := usermysql.NewUserRepository(db)
-	userApp := userapp.NewUserApplication(userRepository, userapp.Options{
-		AccessTokenTTL:  time.Duration(cfg.JWT.AccessExpireMinutes) * time.Minute,
-		RefreshTokenTTL: time.Duration(cfg.JWT.RefreshExpireHours) * time.Hour,
-	}, userCache, authCache, tokenIssuer, idGenerator, passwordHasher, txManager)
-	userHandle := userhttp.NewUserHandle(
+	userRepository := infrauser.NewUserRepository(db)
+	userApp := userapp.NewUserApplication(userRepository, cfg.JWT, authCache, tokenService, idGenerator, passwordHasher, txManager)
+	userHandler := userhttp.NewHandler(
 		userApp,
-		time.Duration(cfg.JWT.AccessExpireMinutes)*time.Minute,
-		time.Duration(cfg.JWT.RefreshExpireHours)*time.Hour,
+		cfg.JWT,
 		realtimeGateway,
 	)
 
-	friendRepository := friendmysql.NewFriendRepository(db)
-	friendRequestRepository := friendmysql.NewFriendRequestRepository(db)
+	friendRepository := infrafriend.NewFriendRepository(db)
+	friendRequestRepository := infrafriend.NewFriendRequestRepository(db)
 	friendRequestApp := friendapp.NewFriendRequestApplication(
 		friendRequestRepository,
 		userRepository,
@@ -237,30 +201,26 @@ func main() {
 		conversationRepository,
 		userConversationRepository,
 		friendRepository,
-		friendCache,
 		txManager,
 		idGenerator,
 		outboxRepository,
+		cfg.Friend,
 	)
-	friendRequestHandle := friendrequesthttp.NewFriendRequestHandle(friendRequestApp)
+	friendRequestHandler := friendrequesthttp.NewHandler(friendRequestApp)
 	friendRequestApp.SetConversationApplication(conversationApplication)
 
 	friendApp := friendapp.NewFriendApplication(friendRepository, userRepository)
-	friendHandle := friendhttp.NewFriendHandle(friendApp)
+	friendHandler := friendhttp.NewHandler(friendApp)
 
-	roomUserRepository := roomusermysql.NewRoomUserRepository(db)
-	roomRepository := roommysql.NewRoomRepository(db)
+	roomMemberRepository := infraroom.NewRoomMemberRepository(db)
+	roomRepository := infraroom.NewRoomRepository(db)
 	roomAgentApplication := roomagentapp.NewRoomAgentApplication(
-		roomUserRepository,
+		roomMemberRepository,
 		roomMemberCache,
-		conversationRepository,
-		userConversationRepository,
-		messageRepository,
-		roomUnreadSnapshotCache,
-		time.Duration(cfg.Cache.RoomUnreadSnapshot.TTLSeconds)*time.Second,
+		cfg.Message,
 	)
-	roomAgentHandler := roomagentgrpc.NewRoomAgentContextHandler(roomAgentApplication, cfg, authCache)
-	roomAgentGRPCServer, err := grpcserver.NewGrpcServer(cfg.GRPC.RoomAgentAddress, roomAgentHandler)
+	roomAgentHandler := roomagentgrpc.NewRoomAgentContextHandler(roomAgentApplication, tokenService, authCache)
+	roomAgentGRPCServer, err := grpcserver.NewServer(cfg.GRPC.RoomAgentAddress, roomAgentHandler)
 	if err != nil {
 		log.Fatal("启动 Room Agent gRPC 监听失败：", err)
 	}
@@ -272,7 +232,7 @@ func main() {
 	log.Printf("Room Agent gRPC 服务已启动：address=%s", cfg.GRPC.RoomAgentAddress)
 	roomApp := roomapp.NewRoomApplication(
 		roomRepository,
-		roomUserRepository,
+		roomMemberRepository,
 		userConversationRepository,
 		conversationRepository,
 		roomCache,
@@ -281,12 +241,13 @@ func main() {
 		idGenerator,
 		realtimeGateway,
 		outboxRepository,
+		cfg.Room,
 	)
 	roomApp.SetRoomInfoCache(roomInfoCache, time.Duration(cfg.Cache.RoomInfo.TTLSeconds)*time.Second)
 	roomApp.SetConversationApplication(conversationApplication)
-	roomHandle := roomhttp.NewRoomHandle(roomApp)
+	roomHandler := roomhttp.NewHandler(roomApp, conversationApplication)
 
-	roomActivityState := roomapp.NewRoomActivityState(time.Duration(cfg.Message.RoomActivityHoldSeconds) * time.Second)
+	roomActivityState := roomcache.NewActivityState(cfg.Message)
 	activityStateDone := make(chan struct{})
 	go func() {
 		defer close(activityStateDone)
@@ -294,32 +255,31 @@ func main() {
 	}()
 	messageDelivery := messageapp.NewMessageDelivery(
 		realtimeGateway,
-		roomRepository,
+		roomApp,
 		roomActivityState,
 		cfg.Message,
 	)
-	messageDelivery.SetRoomApplication(roomApp)
 	defer messageDelivery.Close(context.Background())
 	messageSendHandler := mqhandler.NewMessageHandler(messageDelivery)
 	readNotifyHandler := mqhandler.NewReadHandler(realtimeGateway)
-	friendRequestHandler := mqhandler.NewFriendRequestHandler(realtimeGateway)
+	friendRequestEventHandler := mqhandler.NewFriendRequestHandler(realtimeGateway)
 	roomMemberChangedHandler := mqhandler.NewRoomMemberChangedHandler(roomApp)
 	topicRouter, routerErr := kafka.NewTopicRouter(map[string]string{
-		string(protocol.EventTypeSendMessage):      cfg.Kafka.Topics.Message,
-		string(protocol.EventReadMessageCommitted): cfg.Kafka.Topics.ReadMessageCommitted,
-		string(protocol.EventFriendRequestCreated): cfg.Kafka.Topics.FriendRequestCreated,
-		string(protocol.EventRoomMemberChanged):    cfg.Kafka.Topics.RoomMemberChanged,
-	})
+		string(messaging.TypeMessage):              cfg.Kafka.Topics.Message,
+		string(messaging.TypeReadCommitted):        cfg.Kafka.Topics.ReadMessageCommitted,
+		string(messaging.TypeFriendRequestCreated): cfg.Kafka.Topics.FriendRequestCreated,
+		string(messaging.TypeRoomMemberChanged):    cfg.Kafka.Topics.RoomMemberChanged,
+	}, cfg.Kafka.Consumer.DeadLetterSuffix)
 	if routerErr != nil {
 		log.Fatal("创建 Kafka Topic 路由失败：", routerErr)
 	}
 	messageProducer := kafka.NewProducer(kafkaClient, topicRouter, txManager, outboxRepository, cfg.Kafka.Producer)
 	messageConsumer, err := kafka.NewConsumer(kafkaClient, topicRouter.Topics(), topicRouter,
-		map[string]eventbus.Handler{
-			protocol.EventTypeSendMessage:      messageSendHandler,
-			protocol.EventReadMessageCommitted: readNotifyHandler,
-			protocol.EventFriendRequestCreated: friendRequestHandler,
-			protocol.EventRoomMemberChanged:    roomMemberChangedHandler,
+		map[string]messaging.Handler{
+			messaging.TypeMessage:              messageSendHandler,
+			messaging.TypeReadCommitted:        readNotifyHandler,
+			messaging.TypeFriendRequestCreated: friendRequestEventHandler,
+			messaging.TypeRoomMemberChanged:    roomMemberChangedHandler,
 		},
 		inboxRepository,
 		txManager,
@@ -349,7 +309,6 @@ func main() {
 		roomMemberCache,
 		roomCache,
 		roomActivityState,
-		userCache,
 		txManager,
 		userConversationRepository,
 		conversationRepository,
@@ -357,18 +316,15 @@ func main() {
 		friendRepository,
 		fileRepository,
 		fileCache,
-		objectStorage,
 		messageStickerRepository,
-		userRepository,
 		messageRepository,
-		roomUserRepository,
-		roomRepository,
+		roomMemberRepository,
+		roomApp,
 		idGenerator,
 		cfg,
 		roomUnreadSnapshotCache,
 		messageAttachmentsRepository,
 	)
-	messageApplication.SetRoomApplication(roomApp)
 	messageApplication.SetConversationApplication(conversationApplication)
 	messageApplication.SetProducerNotifier(messageProducer)
 	messageApplication.SetRoomOnlineConnectionCounter(realtimeGateway)
@@ -380,15 +336,15 @@ func main() {
 		defer close(producerDone)
 		messageProducer.Start(ctx)
 	}()
-	messageHandle := messagehttp.NewMessageHandle(messageApplication)
+	messageHandler := messagehttp.NewHandler(messageApplication, cfg.Message)
 
-	wsHandle := ws.NewWSHandler(
-		ctx,
+	messageSequencer := messageapp.NewSequencer(ctx, messageApplication, cfg.WebSocket)
+	wsHandler := ws.NewHandler(
 		messageApplication,
+		messageSequencer,
 		cfg,
 		dispatcher,
 		realtimeGateway,
-		idGenerator,
 	)
 
 	userConversationApplication := conversationapp.NewUserConversationApplication(
@@ -397,47 +353,46 @@ func main() {
 		messageRepository,
 		friendRepository,
 		userRepository,
-		roomRepository,
+		roomApp,
 	)
-	userConversationApplication.SetRoomApplication(roomApp)
 
-	userConversationHandler := userconversationhttp.NewUserConversationHandle(userConversationApplication)
+	userConversationHandler := userconversationhttp.NewHandler(userConversationApplication)
 
 	// 注册中间件
-	authMiddle := middleware.NewAuthMiddleware(cfg, authCache)
+	authMiddle := middleware.NewAuthMiddleware(cfg, authCache, tokenService)
 
-	limiter := ratelimit.NewRedisLimit(redisClient, "rate:limit")
-	limiterMiddleware := middleware.NewLimitMiddleware(limiter, false)
-	wsHandle.SetLimiter(limiter)
+	limiter := ratelimit.NewRedisLimiter(redisClient, cfg.Security.RateLimitPrefix)
+	limiterMiddleware := middleware.NewRateLimitMiddleware(limiter, false)
+	wsHandler.SetLimiter(limiter)
 
 	// 注册路由
 	apiGroup := r.Group("/api/v1")
 	apiGroup.Use(authMiddle.CookieOriginProtectionMiddleware())
-	httpapi.RegisterFriendRequestRouter(apiGroup, friendRequestHandle, authMiddle)
-	userAPIRateLimit := shared_ratelimit.Policy{
+	httpapi.RegisterFriendRequestRouter(apiGroup, friendRequestHandler, authMiddle)
+	userAPIRateLimit := ratelimitport.Policy{
 		Rate:  cfg.HTTP.UserAPIRateLimit.RatePerSecond,
 		Burst: cfg.HTTP.UserAPIRateLimit.Burst,
 	}
-	httpapi.RegisterUserRouter(apiGroup, userHandle, authMiddle, limiterMiddleware, userAPIRateLimit)
+	httpapi.RegisterUserRouter(apiGroup, userHandler, authMiddle, limiterMiddleware, userAPIRateLimit)
 	httpapi.RegisterConversationRouter(apiGroup, userConversationHandler, authMiddle)
-	httpapi.RegisterFriendRouter(apiGroup, friendHandle, authMiddle)
-	httpapi.RegisterRoomRouter(apiGroup, roomHandle, authMiddle)
-	httpapi.RegisterMessagesRouter(apiGroup, messageHandle, authMiddle)
-	httpapi.RegisterFileRouter(apiGroup, fileHandle, authMiddle, limiterMiddleware, shared_ratelimit.Policy{
+	httpapi.RegisterFriendRouter(apiGroup, friendHandler, authMiddle)
+	httpapi.RegisterRoomRouter(apiGroup, roomHandler, authMiddle)
+	httpapi.RegisterMessagesRouter(apiGroup, messageHandler, authMiddle)
+	httpapi.RegisterFileRouter(apiGroup, fileHandler, authMiddle, limiterMiddleware, ratelimitport.Policy{
 		Rate:  cfg.Storage.MinIO.UploadRate,
 		Burst: cfg.Storage.MinIO.UploadBurst,
 	})
-	ws.RegisterWSRouter(apiGroup, wsHandle, authMiddle)
+	ws.RegisterWSRouter(apiGroup, wsHandler, authMiddle)
 
 	srv := &http.Server{
 		Addr:        cfg.Server.Port,
 		Handler:     r,
-		ReadTimeout: 30 * time.Second,
+		ReadTimeout: time.Duration(cfg.Server.ReadTimeoutSeconds) * time.Second,
 		// SSE 和 WebSocket 都是长连接，写超时由各自的连接心跳/写 deadline 控制。
 		WriteTimeout: 0,
-		IdleTimeout:  120 * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeoutSeconds) * time.Second,
 		// 关键：最大连接数限制
-		MaxHeaderBytes: 1 << 20, // 1MB
+		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
 	}
 
 	defer srv.Close()
@@ -463,7 +418,7 @@ func main() {
 	}
 
 	log.Println("服务正在停止")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Duration(cfg.Server.ShutdownTimeoutSeconds)*time.Second)
 	defer shutdownCancel()
 	grpcStopDone := make(chan struct{})
 	go func() {
@@ -484,7 +439,7 @@ func main() {
 		log.Printf("等待 WebSocket 入站分发结束失败：%v", err)
 		cancel()
 	}
-	wsHandle.FlushPendingMessages(shutdownCtx)
+	messageSequencer.Flush(shutdownCtx)
 	messageDelivery.Close(shutdownCtx)
 	cancel()
 	for _, done := range []<-chan struct{}{cleanupDone, consumerDone, producerDone, activityStateDone} {

@@ -1,19 +1,20 @@
 package friend
 
 import (
-	friendentity "IM_backend/internal/domain/friend/entity"
-	userentity "IM_backend/internal/domain/user/entity"
 	"errors"
+
+	domainfriend "IM_backend/internal/domain/friend"
+	domainuser "IM_backend/internal/domain/user"
 )
 
 var (
-	ErrRequestSentTooFrequently = friendentity.ErrRequestSentTooFrequently
-	ErrAlreadyFriends           = friendentity.ErrAlreadyFriends
-	ErrInvalidStatusTransition  = friendentity.ErrInvalidStatusTransition
-	ErrDuplicateOperation       = friendentity.ErrDuplicateRequestOperation
-	ErrSelfRequest              = friendentity.ErrSelfRequest
-	ErrUserNotFound             = userentity.ErrUserNotFound
-	ErrEmptyUserId              = errors.New("用户 ID 不能为空")
+	ErrRequestSentTooFrequently = domainfriend.ErrRequestSentTooFrequently
+	ErrAlreadyFriends           = domainfriend.ErrAlreadyFriends
+	ErrInvalidStatusTransition  = domainfriend.ErrInvalidStatusTransition
+	ErrDuplicateOperation       = domainfriend.ErrDuplicateRequestOperation
+	ErrSelfRequest              = domainfriend.ErrSelfRequest
+	ErrUserNotFound             = domainuser.ErrUserNotFound
+	ErrEmptyUserID              = errors.New("用户 ID 不能为空")
 	ErrOperationFailed          = errors.New("好友申请操作失败")
 	ErrUnknown                  = errors.New("未知错误")
 	ErrCreateConvFailed         = errors.New("创建会话失败")
