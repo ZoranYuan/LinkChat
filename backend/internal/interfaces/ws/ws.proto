@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package im.ws;
 
-option go_package = "IM_backend/internal/transport/ws/pb;wspb";
+option go_package = "IM_backend/internal/interfaces/ws/pb;wspb";
 
 message WsFrame {
   string op   = 1;

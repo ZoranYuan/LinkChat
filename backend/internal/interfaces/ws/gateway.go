@@ -1,4 +1,4 @@
-package websocket
+package ws
 
 import (
 	"context"
@@ -6,8 +6,6 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"IM_backend/internal/shared/diagnostics"
 )
 
 var ErrGatewayClosed = errors.New("实时通道网关已关闭")
@@ -95,9 +93,6 @@ func (g *Gateway) Shutdown(ctx context.Context) error {
 // RegisterAndStart 在同一把锁内检查停机状态并计数，只有入站分发结束才扣减计数。
 func (g *Gateway) RegisterAndStart(
 	connection *Connection,
-	pongWait int,
-	pingPeriod int,
-	writeWait int,
 	handler MessageHandler,
 	onClose func(*Connection),
 ) error {
@@ -110,7 +105,7 @@ func (g *Gateway) RegisterAndStart(
 
 	g.registerLocked(connection)
 	g.dispatchWg.Add(1)
-	connection.Start(g.businessCtx, pongWait, pingPeriod, writeWait, handler, onClose, func(_ *Connection) {
+	connection.Start(g.businessCtx, handler, onClose, func(_ *Connection) {
 		g.dispatchWg.Done()
 	})
 	g.mu.Unlock()
@@ -283,9 +278,6 @@ func (g *Gateway) UnbindUserFromRoom(userID, roomID string) {
 }
 
 func (g *Gateway) DeliverToOnlineRoomMembers(eventType, roomID string, payload []byte, excludeUserID string) error {
-	diagnosticEnabled := diagnostics.Enabled()
-	localDelivered := 0
-	localFailed := 0
 	for _, connection := range g.connectionsForRoom(roomID) {
 		// 排除发送者自身
 		if excludeUserID != "" && connection.UserID() == excludeUserID {
@@ -293,9 +285,6 @@ func (g *Gateway) DeliverToOnlineRoomMembers(eventType, roomID string, payload [
 		}
 
 		if err := connection.PushEvent(eventType, payload); err != nil {
-			if diagnosticEnabled {
-				localFailed++
-			}
 			// 当前 Connection 投递失败，主动断开，然后让前端重新连接并同步消息。
 			connection.Close()
 
@@ -309,14 +298,6 @@ func (g *Gateway) DeliverToOnlineRoomMembers(eventType, roomID string, payload [
 			)
 			continue
 		}
-		if diagnosticEnabled {
-			localDelivered++
-		}
-	}
-	if diagnosticEnabled {
-		messageID, seq := realtimeMessageIdentity(eventType, payload)
-		diagnostics.Logf("stage=ws_room_enqueue room_id=%s event_type=%s message_id=%s seq=%d delivered_connections=%d failed_connections=%d outcome=completed",
-			roomID, eventType, messageID, seq, localDelivered, localFailed)
 	}
 	return nil
 }

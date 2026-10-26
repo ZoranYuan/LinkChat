@@ -1,6 +1,8 @@
 package realtime
 
-import "context"
+import (
+	"context"
+)
 
 type UserDelivery interface {
 	DeliverToUser(eventType, userID string, payload []byte) error
