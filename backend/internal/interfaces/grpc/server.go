@@ -1,10 +1,11 @@
 package grpc
 
 import (
-	roomagent "IM_backend/internal/transport/grpc/propto"
 	"net"
 
 	googlegrpc "google.golang.org/grpc"
+
+	roomagent "IM_backend/internal/interfaces/grpc/pb"
 )
 
 type Server struct {
@@ -12,7 +13,7 @@ type Server struct {
 	server   *googlegrpc.Server
 }
 
-func NewGrpcServer(
+func NewServer(
 	address string,
 	service roomagent.RoomAgentContextServiceServer,
 	options ...googlegrpc.ServerOption,

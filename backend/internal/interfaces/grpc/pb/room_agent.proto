@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package room_agent.v1;
+
+option go_package = "IM_backend/internal/interfaces/grpc/pb;roomagent";
+
+service RoomAgentContextService {
+  rpc VerifyRoomAccess(VerifyRoomAccessRequest)
+  returns (VerifyRoomAccessResponse);
+
+  rpc GetRoomUnreadMessages(GetRoomUnreadMessagesRequest)
+  returns (GetRoomUnreadMessagesResponse);
+}
+
+message VerifyRoomAccessRequest {
+  string room_id = 1;
+}
+
+message VerifyRoomAccessResponse {
+  string thread_id = 3;
+}
+
+message GetRoomUnreadMessagesRequest {
+  string room_id   = 1;
+  uint32 page_size = 3;
+  int64  cursor    = 4;
+}
+
+message GetRoomUnreadMessagesResponse {
+  repeated ChatMessage messages    = 4;
+  int64                next_cursor = 5;
+}
+
+message ChatMessage {
+  string        message_id      = 1;
+  string        conversation_id = 2;
+  string        sender_id       = 3;
+  int64         seq             = 5;
+  MessageType   type            = 6;
+  string        content         = 7;
+  MessageStatus status          = 8;
+  int64         send_time       = 9;
+  string        sender_name     = 10;
+}
+
+enum MessageType {
+  MESSAGE_TYPE_TEXT = 0;
+}
+
+enum MessageStatus {
+  MESSAGE_STATUS_NORMAL   = 0;
+  MESSAGE_STATUS_RECALLED = 1;
+}

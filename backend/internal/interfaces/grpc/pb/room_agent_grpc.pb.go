@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v3.12.4
-// source: internal/transport/grpc/propto/room_agent.proto
+// source: internal/interfaces/grpc/pb/room_agent.proto
 
 package roomagent
 
@@ -19,15 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RoomAgentContextService_GetRoomAgentContext_FullMethodName = "/room_agent.v1.RoomAgentContextService/GetRoomAgentContext"
+	RoomAgentContextService_VerifyRoomAccess_FullMethodName      = "/room_agent.v1.RoomAgentContextService/VerifyRoomAccess"
+	RoomAgentContextService_GetRoomUnreadMessages_FullMethodName = "/room_agent.v1.RoomAgentContextService/GetRoomUnreadMessages"
 )
 
 // RoomAgentContextServiceClient is the client API for RoomAgentContextService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RoomAgentContextServiceClient interface {
-	// 校验用户身份和房间访问权限，并返回该用户固定的未读消息上下文。
-	GetRoomAgentContext(ctx context.Context, in *GetRoomAgentContextRequest, opts ...grpc.CallOption) (*GetRoomAgentContextResponse, error)
+	VerifyRoomAccess(ctx context.Context, in *VerifyRoomAccessRequest, opts ...grpc.CallOption) (*VerifyRoomAccessResponse, error)
+	GetRoomUnreadMessages(ctx context.Context, in *GetRoomUnreadMessagesRequest, opts ...grpc.CallOption) (*GetRoomUnreadMessagesResponse, error)
 }
 
 type roomAgentContextServiceClient struct {
@@ -38,10 +39,20 @@ func NewRoomAgentContextServiceClient(cc grpc.ClientConnInterface) RoomAgentCont
 	return &roomAgentContextServiceClient{cc}
 }
 
-func (c *roomAgentContextServiceClient) GetRoomAgentContext(ctx context.Context, in *GetRoomAgentContextRequest, opts ...grpc.CallOption) (*GetRoomAgentContextResponse, error) {
+func (c *roomAgentContextServiceClient) VerifyRoomAccess(ctx context.Context, in *VerifyRoomAccessRequest, opts ...grpc.CallOption) (*VerifyRoomAccessResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetRoomAgentContextResponse)
-	err := c.cc.Invoke(ctx, RoomAgentContextService_GetRoomAgentContext_FullMethodName, in, out, cOpts...)
+	out := new(VerifyRoomAccessResponse)
+	err := c.cc.Invoke(ctx, RoomAgentContextService_VerifyRoomAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *roomAgentContextServiceClient) GetRoomUnreadMessages(ctx context.Context, in *GetRoomUnreadMessagesRequest, opts ...grpc.CallOption) (*GetRoomUnreadMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRoomUnreadMessagesResponse)
+	err := c.cc.Invoke(ctx, RoomAgentContextService_GetRoomUnreadMessages_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -52,8 +63,8 @@ func (c *roomAgentContextServiceClient) GetRoomAgentContext(ctx context.Context,
 // All implementations must embed UnimplementedRoomAgentContextServiceServer
 // for forward compatibility.
 type RoomAgentContextServiceServer interface {
-	// 校验用户身份和房间访问权限，并返回该用户固定的未读消息上下文。
-	GetRoomAgentContext(context.Context, *GetRoomAgentContextRequest) (*GetRoomAgentContextResponse, error)
+	VerifyRoomAccess(context.Context, *VerifyRoomAccessRequest) (*VerifyRoomAccessResponse, error)
+	GetRoomUnreadMessages(context.Context, *GetRoomUnreadMessagesRequest) (*GetRoomUnreadMessagesResponse, error)
 	mustEmbedUnimplementedRoomAgentContextServiceServer()
 }
 
@@ -64,8 +75,11 @@ type RoomAgentContextServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedRoomAgentContextServiceServer struct{}
 
-func (UnimplementedRoomAgentContextServiceServer) GetRoomAgentContext(context.Context, *GetRoomAgentContextRequest) (*GetRoomAgentContextResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetRoomAgentContext not implemented")
+func (UnimplementedRoomAgentContextServiceServer) VerifyRoomAccess(context.Context, *VerifyRoomAccessRequest) (*VerifyRoomAccessResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyRoomAccess not implemented")
+}
+func (UnimplementedRoomAgentContextServiceServer) GetRoomUnreadMessages(context.Context, *GetRoomUnreadMessagesRequest) (*GetRoomUnreadMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRoomUnreadMessages not implemented")
 }
 func (UnimplementedRoomAgentContextServiceServer) mustEmbedUnimplementedRoomAgentContextServiceServer() {
 }
@@ -89,20 +103,38 @@ func RegisterRoomAgentContextServiceServer(s grpc.ServiceRegistrar, srv RoomAgen
 	s.RegisterService(&RoomAgentContextService_ServiceDesc, srv)
 }
 
-func _RoomAgentContextService_GetRoomAgentContext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetRoomAgentContextRequest)
+func _RoomAgentContextService_VerifyRoomAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyRoomAccessRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RoomAgentContextServiceServer).GetRoomAgentContext(ctx, in)
+		return srv.(RoomAgentContextServiceServer).VerifyRoomAccess(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RoomAgentContextService_GetRoomAgentContext_FullMethodName,
+		FullMethod: RoomAgentContextService_VerifyRoomAccess_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RoomAgentContextServiceServer).GetRoomAgentContext(ctx, req.(*GetRoomAgentContextRequest))
+		return srv.(RoomAgentContextServiceServer).VerifyRoomAccess(ctx, req.(*VerifyRoomAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RoomAgentContextService_GetRoomUnreadMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRoomUnreadMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RoomAgentContextServiceServer).GetRoomUnreadMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RoomAgentContextService_GetRoomUnreadMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RoomAgentContextServiceServer).GetRoomUnreadMessages(ctx, req.(*GetRoomUnreadMessagesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -115,10 +147,14 @@ var RoomAgentContextService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*RoomAgentContextServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "GetRoomAgentContext",
-			Handler:    _RoomAgentContextService_GetRoomAgentContext_Handler,
+			MethodName: "VerifyRoomAccess",
+			Handler:    _RoomAgentContextService_VerifyRoomAccess_Handler,
+		},
+		{
+			MethodName: "GetRoomUnreadMessages",
+			Handler:    _RoomAgentContextService_GetRoomUnreadMessages_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "internal/transport/grpc/propto/room_agent.proto",
+	Metadata: "internal/interfaces/grpc/pb/room_agent.proto",
 }
