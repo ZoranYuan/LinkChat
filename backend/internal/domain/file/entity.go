@@ -1,6 +1,8 @@
-package entity
+package domainfile
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	FileStatusUploaded = "uploaded"
@@ -8,8 +10,8 @@ const (
 )
 
 type File struct {
-	FileId      string
-	UploaderId  string
+	FileID      string `json:"FileId"`
+	UploaderID  string `json:"UploaderId"`
 	Bucket      string
 	ObjectKey   string
 	FileName    string
@@ -20,10 +22,10 @@ type File struct {
 	Status      string
 }
 
-func NewFile(fileId, uploaderId, bucket, objectKey, fileName, contentType string, size int64) *File {
+func NewFile(fileID, uploaderID, bucket, objectKey, fileName, contentType string, size int64) *File {
 	return &File{
-		FileId:      fileId,
-		UploaderId:  uploaderId,
+		FileID:      fileID,
+		UploaderID:  uploaderID,
 		Bucket:      bucket,
 		ObjectKey:   objectKey,
 		FileName:    fileName,

@@ -1,9 +1,11 @@
 package file
 
-import cachekey "IM_backend/internal/infrastructure/persistence/redis/cache/key"
+import (
+	keycache "IM_backend/internal/infra/cache/key"
+)
 
 func FileMetadataKey(fileID string) string {
-	return cachekey.FileMeta(fileID)
+	return keycache.FileMeta(fileID)
 }
 
 func FileByUploaderAndHashKey(uploaderID string, fileHash string) string {
@@ -27,9 +29,9 @@ func ActiveFileUploadKey(uploaderID string, fileHash string) string {
 }
 
 func AttachmentFileCardKey(attachmentID string) string {
-	return cachekey.Build("attachment", attachmentID, "file")
+	return keycache.Build("attachment", attachmentID, "file")
 }
 
 func AttachmentURLKey(attachmentID string) string {
-	return cachekey.Build("attachment", attachmentID, "url")
+	return keycache.Build("attachment", attachmentID, "url")
 }

@@ -1,8 +1,6 @@
 package minio
 
 import (
-	"IM_backend/configs"
-	objectport "IM_backend/internal/application/ports/storage/object"
 	"context"
 	"fmt"
 	"io"
@@ -15,6 +13,9 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+
+	"IM_backend/configs"
+	objectport "IM_backend/internal/application/ports/objectstorage"
 )
 
 type ObjectStorage struct {
@@ -37,9 +38,6 @@ func (s *ObjectStorage) Health(ctx context.Context) error {
 
 func NewObjectStorage(ctx context.Context, cfg configs.MinIOConfig) (objectport.ObjectStorage, error) {
 	region := strings.TrimSpace(cfg.Region)
-	if region == "" {
-		region = "us-east-1"
-	}
 
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
@@ -56,7 +54,7 @@ func NewObjectStorage(ctx context.Context, cfg configs.MinIOConfig) (objectport.
 		return nil, err
 	}
 	if !exists {
-		if err := client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{}); err != nil {
+		if err := client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{Region: region}); err != nil {
 			return nil, err
 		}
 	}
@@ -151,15 +149,12 @@ func (s *ObjectStorage) PresignedPutURL(ctx context.Context, objectKey string, t
 	return u.String(), nil
 }
 
-func (s *ObjectStorage) StatObject(ctx context.Context, objectKey string) (*objectport.ObjectInfo, error) {
+func (s *ObjectStorage) StatObject(ctx context.Context, objectKey string) (int64, error) {
 	info, err := s.client.StatObject(ctx, s.bucket, objectKey, minio.StatObjectOptions{})
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	return &objectport.ObjectInfo{
-		Size:        info.Size,
-		ContentType: info.ContentType,
-	}, nil
+	return info.Size, nil
 }
 
 func (s *ObjectStorage) OpenObject(ctx context.Context, objectKey string) (io.ReadCloser, error) {
@@ -176,12 +171,12 @@ func (s *ObjectStorage) CreateMultipartUpload(ctx context.Context, objectKey str
 	})
 }
 
-func (s *ObjectStorage) PresignMultipartPart(ctx context.Context, objectKey string, uploadId string, partNumber int, ttl time.Duration) (string, error) {
-	if uploadId == "" || partNumber <= 0 {
+func (s *ObjectStorage) PresignMultipartPart(ctx context.Context, objectKey string, uploadID string, partNumber int, ttl time.Duration) (string, error) {
+	if uploadID == "" || partNumber <= 0 {
 		return "", fmt.Errorf("参数错误")
 	}
 	u, err := s.presignClient.Presign(ctx, http.MethodPut, s.bucket, objectKey, ttl, url.Values{
-		"uploadId":   []string{uploadId},
+		"uploadId":   []string{uploadID},
 		"partNumber": []string{strconv.Itoa(partNumber)},
 	})
 	if err != nil {
@@ -190,11 +185,11 @@ func (s *ObjectStorage) PresignMultipartPart(ctx context.Context, objectKey stri
 	return u.String(), nil
 }
 
-func (s *ObjectStorage) ListMultipartParts(ctx context.Context, objectKey string, uploadId string) ([]objectport.MultipartPart, error) {
+func (s *ObjectStorage) ListMultipartParts(ctx context.Context, objectKey string, uploadID string) ([]objectport.MultipartPart, error) {
 	marker := 0
 	result := make([]objectport.MultipartPart, 0)
 	for {
-		listed, err := s.core.ListObjectParts(ctx, s.bucket, objectKey, uploadId, marker, 1000)
+		listed, err := s.core.ListObjectParts(ctx, s.bucket, objectKey, uploadID, marker, 1000)
 		if err != nil {
 			return nil, err
 		}
@@ -208,7 +203,7 @@ func (s *ObjectStorage) ListMultipartParts(ctx context.Context, objectKey string
 	}
 }
 
-func (s *ObjectStorage) CompleteMultipartUpload(ctx context.Context, objectKey string, uploadId string, parts []objectport.MultipartPart) error {
+func (s *ObjectStorage) CompleteMultipartUpload(ctx context.Context, objectKey string, uploadID string, parts []objectport.MultipartPart) error {
 	completeParts := make([]minio.CompletePart, 0, len(parts))
 	for _, part := range parts {
 		completeParts = append(completeParts, minio.CompletePart{
@@ -216,12 +211,12 @@ func (s *ObjectStorage) CompleteMultipartUpload(ctx context.Context, objectKey s
 			ETag:       part.ETag,
 		})
 	}
-	_, err := s.core.CompleteMultipartUpload(ctx, s.bucket, objectKey, uploadId, completeParts, minio.PutObjectOptions{})
+	_, err := s.core.CompleteMultipartUpload(ctx, s.bucket, objectKey, uploadID, completeParts, minio.PutObjectOptions{})
 	return err
 }
 
-func (s *ObjectStorage) AbortMultipartUpload(ctx context.Context, objectKey string, uploadId string) error {
-	return s.core.AbortMultipartUpload(ctx, s.bucket, objectKey, uploadId)
+func (s *ObjectStorage) AbortMultipartUpload(ctx context.Context, objectKey string, uploadID string) error {
+	return s.core.AbortMultipartUpload(ctx, s.bucket, objectKey, uploadID)
 }
 
 func (s *ObjectStorage) PresignedGetURL(ctx context.Context,

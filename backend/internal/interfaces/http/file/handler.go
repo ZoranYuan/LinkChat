@@ -1,26 +1,27 @@
 package file
 
 import (
-	fileapp "IM_backend/internal/application/file"
-	"IM_backend/internal/transport/http/response"
 	"errors"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	fileapp "IM_backend/internal/application/file"
+	"IM_backend/internal/interfaces/http/response"
 )
 
-type Handle struct {
+type Handler struct {
 	app *fileapp.FileApplication
 }
 
-func NewHandle(app *fileapp.FileApplication) *Handle {
-	return &Handle{app: app}
+func NewHandler(app *fileapp.FileApplication) *Handler {
+	return &Handler{app: app}
 }
 
-func (h *Handle) InitUpload(c *gin.Context) {
-	userId := c.GetString("userId")
-	if userId == "" {
+func (h *Handler) InitUpload(c *gin.Context) {
+	userID := c.GetString("userId")
+	if userID == "" {
 		c.JSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录过期"))
 		return
 	}
@@ -32,7 +33,7 @@ func (h *Handle) InitUpload(c *gin.Context) {
 	}
 
 	dto, err := h.app.InitUpload(c.Request.Context(), fileapp.UploadInitDTO{
-		UploaderID:  userId,
+		UploaderID:  userID,
 		FileName:    req.FileName,
 		ContentType: req.ContentType,
 		Size:        req.Size,
@@ -44,22 +45,22 @@ func (h *Handle) InitUpload(c *gin.Context) {
 		h.writeUploadInitError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, response.Success(toUploadInitResponse(dto)))
+	c.JSON(http.StatusOK, response.Success(dto))
 }
 
-func (h *Handle) CompleteUpload(c *gin.Context) {
-	userId := c.GetString("userId")
-	if userId == "" {
+func (h *Handler) CompleteUpload(c *gin.Context) {
+	userID := c.GetString("userId")
+	if userID == "" {
 		c.JSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录过期"))
 		return
 	}
-	uploadId := c.Param("uploadId")
-	if uploadId == "" {
+	uploadID := c.Param("uploadId")
+	if uploadID == "" {
 		c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, "参数错误"))
 		return
 	}
 
-	dto, err := h.app.CompleteUpload(c.Request.Context(), uploadId, userId)
+	dto, err := h.app.CompleteUpload(c.Request.Context(), uploadID, userID)
 	if err != nil {
 		h.writeUploadCompleteError(c, err)
 		return
@@ -67,7 +68,7 @@ func (h *Handle) CompleteUpload(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(toFileResponse(dto)))
 }
 
-func (h *Handle) writeUploadInitError(c *gin.Context, err error) {
+func (h *Handler) writeUploadInitError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, fileapp.ErrInvalidUpload), errors.Is(err, fileapp.ErrInvalidPart), errors.Is(err, fileapp.ErrInvalidMIME):
 		c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, err.Error()))
@@ -81,7 +82,7 @@ func (h *Handle) writeUploadInitError(c *gin.Context, err error) {
 	}
 }
 
-func (h *Handle) writeUploadCompleteError(c *gin.Context, err error) {
+func (h *Handler) writeUploadCompleteError(c *gin.Context, err error) {
 	var incompleteErr *fileapp.UploadIncompleteError
 	if errors.As(err, &incompleteErr) {
 		c.JSON(http.StatusConflict, response.ErrorWithData(
@@ -104,14 +105,14 @@ func (h *Handle) writeUploadCompleteError(c *gin.Context, err error) {
 	}
 }
 
-func (h *Handle) PresignMultipartParts(c *gin.Context) {
-	userId := c.GetString("userId")
-	if userId == "" {
+func (h *Handler) PresignMultipartParts(c *gin.Context) {
+	userID := c.GetString("userId")
+	if userID == "" {
 		c.JSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录过期"))
 		return
 	}
-	uploadId := c.Param("uploadId")
-	if uploadId == "" {
+	uploadID := c.Param("uploadId")
+	if uploadID == "" {
 		c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, "参数错误"))
 		return
 	}
@@ -120,7 +121,7 @@ func (h *Handle) PresignMultipartParts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, "分片参数错误"))
 		return
 	}
-	dtos, err := h.app.PresignMultipartParts(c.Request.Context(), uploadId, userId, req.PartNumbers)
+	dtos, err := h.app.PresignMultipartParts(c.Request.Context(), uploadID, userID, req.PartNumbers)
 	if err != nil {
 		if errors.Is(err, fileapp.ErrUploadUnauthorized) {
 			c.JSON(http.StatusForbidden, response.Error(http.StatusForbidden, "无权操作该上传任务"))
@@ -130,28 +131,24 @@ func (h *Handle) PresignMultipartParts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, "分片上传任务无效"))
 		return
 	}
-	res := make([]MultipartPartURLResponse, 0, len(dtos))
-	for _, dto := range dtos {
-		res = append(res, MultipartPartURLResponse{UploadID: dto.UploadID, PartNumber: dto.PartNumber, URL: dto.URL})
-	}
-	c.JSON(http.StatusOK, response.Success(res))
+	c.JSON(http.StatusOK, response.Success(dtos))
 }
 
-func (h *Handle) GetAttachmentAccessURL(c *gin.Context) {
-	userId := c.GetString("userId")
+func (h *Handler) GetAttachmentAccessURL(c *gin.Context) {
+	userID := c.GetString("userId")
 
-	if userId == "" {
+	if userID == "" {
 		c.JSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录过期"))
 		return
 	}
 
-	attachmentId := c.Param("attachmentId")
-	if attachmentId == "" {
+	attachmentID := c.Param("attachmentId")
+	if attachmentID == "" {
 		c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, "参数错误"))
 		return
 	}
 
-	dto, err := h.app.GetAttachmentAccessURL(c.Request.Context(), userId, attachmentId)
+	dto, err := h.app.GetAttachmentAccessURL(c.Request.Context(), userID, attachmentID)
 	if err != nil {
 		if errors.Is(err, fileapp.ErrFileNotFound) {
 			c.JSON(http.StatusNotFound, response.Error(http.StatusNotFound, "文件不存在"))
@@ -166,12 +163,12 @@ func (h *Handle) GetAttachmentAccessURL(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Success(toAttachmentAccessURLResponse(dto)))
+	c.JSON(http.StatusOK, response.Success(dto))
 }
 
-func (h *Handle) GetAttachmentAccessURLs(c *gin.Context) {
-	userId := c.GetString("userId")
-	if userId == "" {
+func (h *Handler) GetAttachmentAccessURLs(c *gin.Context) {
+	userID := c.GetString("userId")
+	if userID == "" {
 		c.JSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录过期"))
 		return
 	}
@@ -182,7 +179,7 @@ func (h *Handle) GetAttachmentAccessURLs(c *gin.Context) {
 		return
 	}
 
-	dtos, err := h.app.GetAttachmentAccessURLs(c.Request.Context(), userId, req.AttachmentIDs)
+	dtos, err := h.app.GetAttachmentAccessURLs(c.Request.Context(), userID, req.AttachmentIDs)
 	if err != nil {
 		if errors.Is(err, fileapp.ErrUploadUnauthorized) {
 			c.JSON(http.StatusForbidden, response.Error(http.StatusForbidden, "无权访问该附件"))
@@ -193,5 +190,5 @@ func (h *Handle) GetAttachmentAccessURLs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Success(toAttachmentAccessURLsResponse(dtos)))
+	c.JSON(http.StatusOK, response.Success(AttachmentAccessURLsResponse{Attachments: dtos}))
 }

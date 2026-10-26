@@ -1,18 +1,17 @@
-package file
+package infrafile
 
 import (
-	fileentity "IM_backend/internal/domain/file/entity"
-	"IM_backend/internal/infrastructure/persistence/mysql/model"
+	domainfile "IM_backend/internal/domain/file"
 )
 
-func toFileModel(f *fileentity.File) *model.File {
+func toFileModel(f *domainfile.File) *FileModel {
 	var fileHash *string
 	if f.FileHash != "" {
 		fileHash = &f.FileHash
 	}
-	return &model.File{
-		FileId:      f.FileId,
-		UploaderId:  f.UploaderId,
+	return &FileModel{
+		FileID:      f.FileID,
+		UploaderID:  f.UploaderID,
 		Bucket:      f.Bucket,
 		ObjectKey:   f.ObjectKey,
 		FileName:    f.FileName,
@@ -24,10 +23,10 @@ func toFileModel(f *fileentity.File) *model.File {
 	}
 }
 
-func toFileDomain(m *model.File) *fileentity.File {
-	return &fileentity.File{
-		FileId:      m.FileId,
-		UploaderId:  m.UploaderId,
+func toFileDomain(m *FileModel) *domainfile.File {
+	return &domainfile.File{
+		FileID:      m.FileID,
+		UploaderID:  m.UploaderID,
 		Bucket:      m.Bucket,
 		ObjectKey:   m.ObjectKey,
 		FileName:    m.FileName,

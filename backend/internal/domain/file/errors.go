@@ -1,6 +1,8 @@
-package entity
+package domainfile
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrFileHashConflict     = errors.New("文件哈希冲突")

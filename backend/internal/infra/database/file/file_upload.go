@@ -1,32 +1,32 @@
-package file
+package infrafile
 
 import (
-	filerepo "IM_backend/internal/application/ports/persistence/repository/file"
-	"IM_backend/internal/infrastructure/persistence/mysql/model"
 	"context"
 	"errors"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	domainfile "IM_backend/internal/domain/file"
 )
 
 type FileUploadRepository struct {
 	db *gorm.DB
 }
 
-func NewFileUploadRepository(db *gorm.DB) filerepo.FileUploadRepository {
+func NewFileUploadRepository(db *gorm.DB) domainfile.FileUploadRepository {
 	return &FileUploadRepository{db: db}
 }
 
-func (r *FileUploadRepository) WithTx(tx any) filerepo.FileUploadRepository {
+func (r *FileUploadRepository) WithTx(tx any) domainfile.FileUploadRepository {
 	return &FileUploadRepository{db: tx.(*gorm.DB)}
 }
 
-func (r *FileUploadRepository) CreateFileUpload(ctx context.Context, upload filerepo.FileUploadRecord) error {
+func (r *FileUploadRepository) CreateFileUpload(ctx context.Context, upload domainfile.Upload) error {
 	var storageUploadID *string
-	if upload.StorageUploadId != "" {
-		storageUploadID = &upload.StorageUploadId
+	if upload.StorageUploadID != "" {
+		storageUploadID = &upload.StorageUploadID
 	}
 	var chunkSize *int64
 	if upload.ChunkSize > 0 {
@@ -36,12 +36,12 @@ func (r *FileUploadRepository) CreateFileUpload(ctx context.Context, upload file
 	if upload.TotalChunks > 0 {
 		totalChunks = &upload.TotalChunks
 	}
-	return r.db.WithContext(ctx).Create(&model.FileUpload{
-		UploadId:        upload.UploadId,
-		FileId:          upload.FileId,
-		UploaderId:      upload.UploaderId,
+	return r.db.WithContext(ctx).Create(&FileUploadModel{
+		UploadID:        upload.UploadID,
+		FileID:          upload.FileID,
+		UploaderID:      upload.UploaderID,
 		UploadMode:      upload.UploadMode,
-		StorageUploadId: storageUploadID,
+		StorageUploadID: storageUploadID,
 		FileHash:        upload.FileHash,
 		ObjectKey:       upload.ObjectKey,
 		FileName:        upload.FileName,
@@ -61,22 +61,22 @@ func (r *FileUploadRepository) CreateFileUpload(ctx context.Context, upload file
 	}).Error
 }
 
-func (r *FileUploadRepository) FindFileUploadByID(ctx context.Context, uploadId string) (*filerepo.FileUploadRecord, error) {
-	var row model.FileUpload
-	if err := r.db.WithContext(ctx).Where("upload_id = ?", uploadId).First(&row).Error; err != nil {
+func (r *FileUploadRepository) FindFileUploadByID(ctx context.Context, uploadID string) (*domainfile.Upload, error) {
+	var row FileUploadModel
+	if err := r.db.WithContext(ctx).Where("upload_id = ?", uploadID).First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	record := toFileUploadRecord(row)
+	record := toUpload(row)
 	return &record, nil
 }
 
-func (r *FileUploadRepository) FindActiveFileUploadByUploaderAndHash(ctx context.Context, uploaderId, fileHash string, now int64) (*filerepo.FileUploadRecord, error) {
-	var row model.FileUpload
+func (r *FileUploadRepository) FindActiveFileUploadByUploaderAndHash(ctx context.Context, uploaderID, fileHash string, now int64) (*domainfile.Upload, error) {
+	var row FileUploadModel
 	err := r.db.WithContext(ctx).
-		Where("uploader_id = ? AND file_hash = ? AND status = ? AND expires_at > ?", uploaderId, fileHash, "uploading", now).
+		Where("uploader_id = ? AND file_hash = ? AND status = ? AND expires_at > ?", uploaderID, fileHash, "uploading", now).
 		Order("created_at DESC").
 		First(&row).Error
 	if err != nil {
@@ -85,16 +85,16 @@ func (r *FileUploadRepository) FindActiveFileUploadByUploaderAndHash(ctx context
 		}
 		return nil, err
 	}
-	record := toFileUploadRecord(row)
+	record := toUpload(row)
 	return &record, nil
 }
 
-func (r *FileUploadRepository) ClaimExpiredFileUploads(ctx context.Context, now int64, staleBefore int64, limit int) ([]filerepo.FileUploadRecord, error) {
+func (r *FileUploadRepository) ClaimExpiredFileUploads(ctx context.Context, now int64, staleBefore int64, limit int) ([]domainfile.Upload, error) {
 	if limit <= 0 {
-		return []filerepo.FileUploadRecord{}, nil
+		return []domainfile.Upload{}, nil
 	}
 
-	var rows []model.FileUpload
+	var rows []FileUploadModel
 	query := r.db.WithContext(ctx).
 		Where("status = ? AND expires_at <= ? AND next_retry_at <= ?", "uploading", now, now).
 		Where("locked_at IS NULL OR locked_at <= ?", staleBefore).
@@ -106,16 +106,16 @@ func (r *FileUploadRepository) ClaimExpiredFileUploads(ctx context.Context, now 
 		return nil, err
 	}
 	if len(rows) == 0 {
-		return []filerepo.FileUploadRecord{}, nil
+		return []domainfile.Upload{}, nil
 	}
 
 	ids := make([]string, 0, len(rows))
 	for i := range rows {
-		ids = append(ids, rows[i].UploadId)
+		ids = append(ids, rows[i].UploadID)
 	}
 	lockToken := uuid.NewString()
 	if err := r.db.WithContext(ctx).
-		Model(&model.FileUpload{}).
+		Model(&FileUploadModel{}).
 		Where("upload_id IN ?", ids).
 		Updates(map[string]any{
 			"locked_at":  now,
@@ -125,20 +125,20 @@ func (r *FileUploadRepository) ClaimExpiredFileUploads(ctx context.Context, now 
 		return nil, err
 	}
 
-	uploads := make([]filerepo.FileUploadRecord, 0, len(rows))
+	uploads := make([]domainfile.Upload, 0, len(rows))
 	for i := range rows {
 		row := rows[i]
 		row.LockedAt = &now
 		row.LockToken = lockToken
-		uploads = append(uploads, toFileUploadRecord(row))
+		uploads = append(uploads, toUpload(row))
 	}
 	return uploads, nil
 }
 
-func (r *FileUploadRepository) MarkExpired(ctx context.Context, uploadId, lockToken string, updatedAt int64) (bool, error) {
+func (r *FileUploadRepository) MarkExpired(ctx context.Context, uploadID, lockToken string, updatedAt int64) (bool, error) {
 	result := r.db.WithContext(ctx).
-		Model(&model.FileUpload{}).
-		Where("upload_id = ? AND status = ? AND lock_token = ?", uploadId, "uploading", lockToken).
+		Model(&FileUploadModel{}).
+		Where("upload_id = ? AND status = ? AND lock_token = ?", uploadID, "uploading", lockToken).
 		Updates(map[string]any{
 			"status":     "expired",
 			"locked_at":  nil,
@@ -148,10 +148,10 @@ func (r *FileUploadRepository) MarkExpired(ctx context.Context, uploadId, lockTo
 	return result.RowsAffected > 0, result.Error
 }
 
-func (r *FileUploadRepository) MarkCleanupRetry(ctx context.Context, uploadId, lockToken string, nextRetryAt int64, lastError string, updatedAt int64) (bool, error) {
+func (r *FileUploadRepository) MarkCleanupRetry(ctx context.Context, uploadID, lockToken string, nextRetryAt int64, lastError string, updatedAt int64) (bool, error) {
 	result := r.db.WithContext(ctx).
-		Model(&model.FileUpload{}).
-		Where("upload_id = ? AND status = ? AND lock_token = ?", uploadId, "uploading", lockToken).
+		Model(&FileUploadModel{}).
+		Where("upload_id = ? AND status = ? AND lock_token = ?", uploadID, "uploading", lockToken).
 		Updates(map[string]any{
 			"retry_count":   gorm.Expr("retry_count + 1"),
 			"next_retry_at": nextRetryAt,
@@ -163,10 +163,10 @@ func (r *FileUploadRepository) MarkCleanupRetry(ctx context.Context, uploadId, l
 	return result.RowsAffected > 0, result.Error
 }
 
-func (r *FileUploadRepository) MarkCleanupFailed(ctx context.Context, uploadId, lockToken string, lastError string, updatedAt int64) (bool, error) {
+func (r *FileUploadRepository) MarkCleanupFailed(ctx context.Context, uploadID, lockToken string, lastError string, updatedAt int64) (bool, error) {
 	result := r.db.WithContext(ctx).
-		Model(&model.FileUpload{}).
-		Where("upload_id = ? AND status = ? AND lock_token = ?", uploadId, "uploading", lockToken).
+		Model(&FileUploadModel{}).
+		Where("upload_id = ? AND status = ? AND lock_token = ?", uploadID, "uploading", lockToken).
 		Updates(map[string]any{
 			"status":     "cleanup_failed",
 			"locked_at":  nil,
@@ -177,13 +177,13 @@ func (r *FileUploadRepository) MarkCleanupFailed(ctx context.Context, uploadId, 
 	return result.RowsAffected > 0, result.Error
 }
 
-func (r *FileUploadRepository) MarkCompleted(ctx context.Context, uploadId, fileId string, completedAt int64) (bool, error) {
+func (r *FileUploadRepository) MarkCompleted(ctx context.Context, uploadID, fileID string, completedAt int64) (bool, error) {
 	result := r.db.WithContext(ctx).
-		Model(&model.FileUpload{}).
-		Where("upload_id = ? AND status = ?", uploadId, "uploading").
+		Model(&FileUploadModel{}).
+		Where("upload_id = ? AND status = ?", uploadID, "uploading").
 		Updates(map[string]any{
 			"status":       "completed",
-			"file_id":      fileId,
+			"file_id":      fileID,
 			"completed_at": completedAt,
 			"updated_at":   completedAt,
 		})
@@ -198,20 +198,20 @@ func (r *FileUploadRepository) MarkCompleted(ctx context.Context, uploadId, file
 		FileID string `gorm:"column:file_id"`
 	}
 	if err := r.db.WithContext(ctx).
-		Model(&model.FileUpload{}).
+		Model(&FileUploadModel{}).
 		Select("status, file_id").
-		Where("upload_id = ?", uploadId).
+		Where("upload_id = ?", uploadID).
 		Scan(&row).Error; err != nil {
 		return false, err
 	}
-	return row.Status == "completed" && row.FileID == fileId, nil
+	return row.Status == "completed" && row.FileID == fileID, nil
 }
 
 func (r *FileUploadRepository) DeleteFileUploadByUploadID(ctx context.Context, uploadID string) error {
-	return r.db.WithContext(ctx).Where("upload_id = ?", uploadID).Delete(&model.FileUpload{}).Error
+	return r.db.WithContext(ctx).Where("upload_id = ?", uploadID).Delete(&FileUploadModel{}).Error
 }
 
-func toFileUploadRecord(row model.FileUpload) filerepo.FileUploadRecord {
+func toUpload(row FileUploadModel) domainfile.Upload {
 	chunkSize := int64(0)
 	if row.ChunkSize != nil {
 		chunkSize = *row.ChunkSize
@@ -221,16 +221,16 @@ func toFileUploadRecord(row model.FileUpload) filerepo.FileUploadRecord {
 		totalChunks = *row.TotalChunks
 	}
 	storageUploadID := ""
-	if row.StorageUploadId != nil {
-		storageUploadID = *row.StorageUploadId
+	if row.StorageUploadID != nil {
+		storageUploadID = *row.StorageUploadID
 	}
 
-	return filerepo.FileUploadRecord{
-		UploadId:        row.UploadId,
-		FileId:          row.FileId,
-		UploaderId:      row.UploaderId,
+	return domainfile.Upload{
+		UploadID:        row.UploadID,
+		FileID:          row.FileID,
+		UploaderID:      row.UploaderID,
 		UploadMode:      row.UploadMode,
-		StorageUploadId: storageUploadID,
+		StorageUploadID: storageUploadID,
 		FileHash:        row.FileHash,
 		ObjectKey:       row.ObjectKey,
 		FileName:        row.FileName,
@@ -247,6 +247,5 @@ func toFileUploadRecord(row model.FileUpload) filerepo.FileUploadRecord {
 		LastError:       row.LastError,
 		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,
-		CompletedAt:     row.CompletedAt,
 	}
 }

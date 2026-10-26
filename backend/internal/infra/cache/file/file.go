@@ -1,9 +1,6 @@
 package file
 
 import (
-	filecache "IM_backend/internal/application/ports/persistence/cache/file"
-	fileentity "IM_backend/internal/domain/file/entity"
-	"IM_backend/internal/infrastructure/persistence/redis/cache/shared"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -11,25 +8,29 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	filecache "IM_backend/internal/application/ports/cache/file"
+	domainfile "IM_backend/internal/domain/file"
+	sharedcache "IM_backend/internal/infra/cache/shared"
 )
 
 type FileCache struct {
-	store *shared.Store
+	store *sharedcache.Store
 }
 
 func NewFileCache(client *redis.Client) filecache.FileCache {
-	return &FileCache{store: shared.NewStore(client)}
+	return &FileCache{store: sharedcache.NewStore(client)}
 }
 
-func (c *FileCache) SetFileMetadata(ctx context.Context, file *fileentity.File, ttl time.Duration) error {
-	if file == nil || file.FileId == "" {
+func (c *FileCache) SetFileMetadata(ctx context.Context, file *domainfile.File, ttl time.Duration) error {
+	if file == nil || file.FileID == "" {
 		return nil
 	}
-	return c.store.SetJSON(ctx, FileMetadataKey(file.FileId), file, ttl)
+	return c.store.SetJSON(ctx, FileMetadataKey(file.FileID), file, ttl)
 }
 
-func (c *FileCache) GetFileMetadata(ctx context.Context, fileID string) (*fileentity.File, error) {
-	var file fileentity.File
+func (c *FileCache) GetFileMetadata(ctx context.Context, fileID string) (*domainfile.File, error) {
+	var file domainfile.File
 	ok, err := c.store.GetJSON(ctx, FileMetadataKey(fileID), &file)
 	if err != nil {
 		return nil, err
@@ -44,10 +45,10 @@ func (c *FileCache) SetFileByUploaderAndHash(
 	ctx context.Context,
 	uploaderID string,
 	fileHash string,
-	file *fileentity.File,
+	file *domainfile.File,
 	ttl time.Duration,
 ) error {
-	if uploaderID == "" || fileHash == "" || file == nil || file.FileId == "" {
+	if uploaderID == "" || fileHash == "" || file == nil || file.FileID == "" {
 		return nil
 	}
 	return c.store.SetJSON(ctx, FileByUploaderAndHashKey(uploaderID, fileHash), file, ttl)
@@ -57,12 +58,12 @@ func (c *FileCache) GetFileByUploaderAndHash(
 	ctx context.Context,
 	uploaderID string,
 	fileHash string,
-) (*fileentity.File, error) {
+) (*domainfile.File, error) {
 	if uploaderID == "" || fileHash == "" {
 		return nil, nil
 	}
 
-	var file fileentity.File
+	var file domainfile.File
 	ok, err := c.store.GetJSON(ctx, FileByUploaderAndHashKey(uploaderID, fileHash), &file)
 	if err != nil {
 		return nil, err
@@ -135,10 +136,6 @@ func (c *FileCache) SetAttachmentFileCardBatch(ctx context.Context, values []*fi
 	return err
 }
 
-func (c *FileCache) DeleteAttachmentFileCard(ctx context.Context, attachmentIDs []string) error {
-	return c.deleteAttachmentKeys(ctx, attachmentIDs, AttachmentFileCardKey)
-}
-
 func (c *FileCache) GetAttachmentURLBatch(ctx context.Context, attachmentIDs []string) (map[string]*filecache.AttachmentURL, error) {
 	result := make(map[string]*filecache.AttachmentURL, len(attachmentIDs))
 	if len(attachmentIDs) == 0 {
@@ -195,23 +192,6 @@ func (c *FileCache) SetAttachmentURLBatch(ctx context.Context, values []*filecac
 	return err
 }
 
-func (c *FileCache) DeleteAttachmentURL(ctx context.Context, attachmentIDs []string) error {
-	return c.deleteAttachmentKeys(ctx, attachmentIDs, AttachmentURLKey)
-}
-
-func (c *FileCache) deleteAttachmentKeys(ctx context.Context, attachmentIDs []string, keyFn func(string) string) error {
-	keys := make([]string, 0, len(attachmentIDs))
-	for _, attachmentID := range attachmentIDs {
-		if attachmentID != "" {
-			keys = append(keys, keyFn(attachmentID))
-		}
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	return c.store.Client().Del(ctx, keys...).Err()
-}
-
 func (c *FileCache) DeleteFileMetadata(ctx context.Context, fileID string) error {
 	return c.store.Del(ctx, FileMetadataKey(fileID))
 }
@@ -242,7 +222,7 @@ func (c *FileCache) RenewFileCompleteLock(ctx context.Context, uploadID string, 
 }
 
 func (c *FileCache) SetUploadMeta(ctx context.Context, meta filecache.UploadMeta, ttl time.Duration) error {
-	return c.store.SetJSON(ctx, UploadMetaKey(meta.UploadId), meta, ttl)
+	return c.store.SetJSON(ctx, UploadMetaKey(meta.UploadID), meta, ttl)
 }
 
 func (c *FileCache) GetUploadMeta(ctx context.Context, uploadID string) (*filecache.UploadMeta, error) {

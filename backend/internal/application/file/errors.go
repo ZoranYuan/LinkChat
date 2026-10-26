@@ -1,9 +1,10 @@
 package file
 
 import (
-	fileentity "IM_backend/internal/domain/file/entity"
 	"errors"
 	"fmt"
+
+	domainfile "IM_backend/internal/domain/file"
 )
 
 type UploadIncompleteError struct {
@@ -20,13 +21,12 @@ func (e *UploadIncompleteError) Unwrap() error {
 }
 
 var (
-	ErrFileRequired         = errors.New("文件不能为空")
 	ErrFileNotFound         = errors.New("文件不存在")
 	ErrFileSizeMismatch     = errors.New("文件大小校验失败")
 	ErrFileHashMismatch     = errors.New("文件哈希校验失败")
 	ErrFileTooLarge         = errors.New("文件超过大小限制")
-	ErrFileHashConflict     = fileentity.ErrFileHashConflict
-	ErrFileIdentityConflict = fileentity.ErrFileIdentityConflict
+	ErrFileHashConflict     = domainfile.ErrFileHashConflict
+	ErrFileIdentityConflict = domainfile.ErrFileIdentityConflict
 	ErrInvalidUpload        = errors.New("上传任务不存在")
 	ErrInvalidMIME          = errors.New("不允许的媒体资源类型")
 	ErrInvalidPart          = errors.New("分片参数错误")

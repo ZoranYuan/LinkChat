@@ -9,10 +9,3 @@ export const UploadStatus = Object.freeze({
   FAILED: "failed",
   CANCELED: "canceled",
 });
-
-export const ActiveUploadStatuses = Object.freeze([
-  UploadStatus.HASHING,
-  UploadStatus.INITIALIZING,
-  UploadStatus.UPLOADING,
-  UploadStatus.COMPLETING,
-]);
