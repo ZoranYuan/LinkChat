@@ -1,4 +1,4 @@
-import { decodeFrame, decodePayload, encodeFrame } from "../wsProto.js";
+import { decodeFrame, decodePayload, encodeFrame } from "./protocol.js";
 
 const payloadTypes = {
   msg: "messageEvent",
@@ -14,8 +14,9 @@ const getDeviceId = () => {
   try {
     const existing = window.localStorage.getItem(DEVICE_ID_KEY);
     if (existing) return existing;
-    const generated = globalThis.crypto?.randomUUID?.()
-      || `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const generated =
+      globalThis.crypto?.randomUUID?.() ||
+      `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     window.localStorage.setItem(DEVICE_ID_KEY, generated);
     return generated;
   } catch {
@@ -80,7 +81,7 @@ export function createWsClient(callbacks = {}) {
     return `${protocol}//${window.location.host}/api/v1/ws?${params.toString()}`;
   };
 
-  /** 解码单个业务帧，并分发给消息、ACK、已读或大群通知回调。 */
+  /** 解码单个业务帧，并分发给消息、ACK、已读或大型房间通知回调。 */
   const dispatchApplicationFrame = (frame) => {
     const payloadType = payloadTypes[frame.op];
     if (!payloadType) {
@@ -137,11 +138,8 @@ export function createWsClient(callbacks = {}) {
     };
   };
 
-  const reportPageVisibility = () => send(
-    "connection_visibility",
-    "connectionVisibility",
-    { hidden: !isPageVisible() },
-  );
+  const reportPageVisibility = () =>
+    send("connection_visibility", "connectionVisibility", { hidden: !isPageVisible() });
 
   const handleVisibilityChange = () => {
     if (!isPageVisible()) {
@@ -173,10 +171,11 @@ export function createWsClient(callbacks = {}) {
   const connect = (nextAuthenticated = true) => {
     const nextState = Boolean(nextAuthenticated);
     if (
-      authenticated === nextState
-      && socket
-      && (socket.readyState === 0 || socket.readyState === 1)
-    ) return;
+      authenticated === nextState &&
+      socket &&
+      (socket.readyState === 0 || socket.readyState === 1)
+    )
+      return;
 
     authenticated = nextState;
     manualClose = false;
@@ -201,12 +200,22 @@ export function createWsClient(callbacks = {}) {
   /** 手动重连沿用自动重连前的离线补齐流程。 */
   const reconnect = async () => {
     if (!authenticated || !isPageVisible()) return;
-    if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
+    if (
+      socket &&
+      (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)
+    )
+      return;
     manualClose = false;
     window.clearTimeout(reconnectTimer);
     try {
       await prepareReconnect();
-      if (authenticated && !manualClose && isPageVisible() && (!socket || socket.readyState === WebSocket.CLOSED)) open();
+      if (
+        authenticated &&
+        !manualClose &&
+        isPageVisible() &&
+        (!socket || socket.readyState === WebSocket.CLOSED)
+      )
+        open();
     } catch (error) {
       callbacks.onReconnectPreparationError?.(error);
       scheduleReconnect();

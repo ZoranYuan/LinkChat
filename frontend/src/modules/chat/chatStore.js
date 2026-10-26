@@ -2,13 +2,13 @@ import { defineStore } from "pinia";
 import { computed, reactive, watch } from "vue";
 import {
   createFriendRequest,
-  createRoom,
+  createRoom as createRoomRequest,
   getAttachmentAccessURLs,
   getConversations,
   getOfflineMessages,
   getFriendRequests,
   getFriends,
-  joinRoom,
+  joinRoom as joinRoomRequest,
   loginUser,
   logoutUser,
   operateFriendRequest,
@@ -16,7 +16,7 @@ import {
   registerUser,
   syncMessages,
   updateUserProfile,
-} from "../../api.js";
+} from "../../services/http/api.js";
 import { useFileUpload } from "../../composables/useFileUpload.js";
 import { ConversationType } from "../../constants/conversation.js";
 import { MessageType } from "../../constants/message.js";
@@ -25,24 +25,18 @@ import {
   insertConversations,
   queryConversationsByUserId,
   replaceConversations,
-} from "../../db/services/conversationService.js";
+} from "../../db/conversationRepository.js";
 import {
   clearMessages,
   deleteMessagesByConversation,
   insertMessages,
   queryMessagesByCursor,
-} from "../../db/services/messageService.js";
-import { createWsClient } from "../../services/wsClient.js";
+} from "../../db/messageRepository.js";
+import { createWsClient } from "../../services/websocket/client.js";
 import { createAttachmentResolver } from "./services/attachmentService.js";
-import { createMediaUploadService } from "./services/mediaUploadService.js";
+import { authUserProfile, initialUser, persistSession } from "./services/authService.js";
 import {
-  authUserProfile,
-  initialUser,
-  persistSession,
-} from "./services/authService.js";
-import { createMessageSyncService } from "./services/messageSyncService.js";
-import {
-  applyRealtimeMessageToConversation,
+  applyMessagesToConversation,
   findConversation,
   sortConversations,
 } from "./utils/conversationState.js";
@@ -52,11 +46,7 @@ import {
   createMessageRequest,
   createOutgoingMessage,
 } from "./utils/messageComposer.js";
-import {
-  confirmedMessages,
-  mergeMessageLists,
-  normalizeMessage,
-} from "./utils/messageMerge.js";
+import { mergeMessageLists, normalizeMessage } from "./utils/messageMerge.js";
 
 const HISTORY_PAGE_SIZE = 30;
 const THEME_CONTACT_AVATAR = "#8b72d6";
@@ -101,12 +91,11 @@ const captureSession = () => ({
   userId: currentUserId(),
 });
 /** 判断异步操作对应的用户会话是否仍然有效。 */
-const isSessionActive = ({ generation, userId }) => (
-  state.authenticated
-  && generation === sessionGeneration
-  && userId !== ""
-  && userId === currentUserId()
-);
+const isSessionActive = ({ generation, userId }) =>
+  state.authenticated &&
+  generation === sessionGeneration &&
+  userId !== "" &&
+  userId === currentUserId();
 
 const formatTime = (timestamp) => {
   if (!timestamp) return "";
@@ -125,27 +114,21 @@ const formatTime = (timestamp) => {
 /** 原子持久化确认消息和调用方已确认的本地连续序号。 */
 const persistConfirmedMessages = async (
   messages,
-  {
-    session = captureSession(),
-    lastContinuousSeqByConversation = {},
-  } = {},
+  { session = captureSession(), lastContinuousSeqByConversation = {} } = {},
 ) => {
   if (!isSessionActive(session)) return;
 
-  const result = await insertMessages(
-    confirmedMessages(messages),
-    { userId: session.userId, lastContinuousSeqByConversation },
-  );
+  const result = await insertMessages(messages, {
+    userId: session.userId,
+    lastContinuousSeqByConversation,
+  });
 
   if (!isSessionActive(session)) return result;
 
   for (const [conversationId, seq] of Object.entries(
     result?.lastContinuousSeqByConversation || {},
   )) {
-    const conversation = findConversation(
-      state.conversations,
-      conversationId,
-    );
+    const conversation = findConversation(state.conversations, conversationId);
     if (!conversation) continue;
 
     conversation.lastContinuousSeq = Math.max(
@@ -160,33 +143,15 @@ const persistConfirmedMessages = async (
 /** 将会话快照写入当前用户的本地会话表。 */
 const persistConversation = (conversation, session = captureSession()) => {
   if (!conversation || !isSessionActive(session)) return Promise.resolve();
-  return insertConversations(session.userId, [conversation]).catch(() => { });
+  return insertConversations(session.userId, [conversation]).catch(() => {});
 };
 
-const messageSync = createMessageSyncService({
-  syncMessages,
-});
-
-/** 合并消息、解析附件展示信息，并按需持久化消息本体。 */
-const mergeMessages = async (
-  conversationId,
-  incomingItems,
-  { persist = true, session = captureSession() } = {},
-) => {
-  const incoming = (incomingItems || []).map(normalizeMessage);
-  const mergedMessages = mergeMessageLists(
-    state.messages[conversationId] || [],
-    incoming,
-  );
+/** 合并已持久化的消息并解析附件展示信息。 */
+const mergeMessages = async (conversationId, incomingItems, session) => {
+  const mergedMessages = mergeMessageLists(state.messages[conversationId] || [], incomingItems);
   await attachmentResolver.resolve(mergedMessages);
-  if (!isSessionActive(session)) {
-    return state.messages[conversationId] || [];
-  }
+  if (!isSessionActive(session)) return;
   state.messages[conversationId] = mergedMessages;
-  if (persist && isSessionActive(session)) {
-    await persistConfirmedMessages(incoming, { session });
-  }
-  return state.messages[conversationId];
 };
 
 /** 按最新消息时间重新排列内存中的会话列表。 */
@@ -195,19 +160,13 @@ const updateConversationList = () => {
 };
 
 /** 按 clientMsgId 找到内存中的发送消息。 */
-const findPendingMessage = (clientMsgId, conversationId = "") => {
+const findPendingMessage = (clientMsgId, conversationId) => {
   if (!clientMsgId) return null;
-  if (conversationId) {
-    return (state.messages[conversationId] || []).find(
+  return (
+    (state.messages[conversationId] || []).find(
       (message) => message.clientMsgId === clientMsgId,
-    ) || null;
-  }
-
-  for (const messages of Object.values(state.messages)) {
-    const message = messages.find((item) => item.clientMsgId === clientMsgId);
-    if (message) return message;
-  }
-  return null;
+    ) || null
+  );
 };
 
 /** 更新发送消息的前端临时投递状态，不触碰 IndexedDB。 */
@@ -220,19 +179,19 @@ const updatePendingMessage = (clientMsgId, conversationId, changes) => {
   return message;
 };
 
-const markPendingMessageFailed = (clientMsgId, conversationId, error) => (
+const markPendingMessageFailed = (clientMsgId, conversationId, error) =>
   updatePendingMessage(clientMsgId, conversationId, {
     error: error?.message || String(error || "消息发送失败"),
-  })
-);
+  });
 
 /** 为图片或视频生成本地预览地址；该地址只存在于内存中。 */
 const createLocalPreviewURL = (file, cType) => {
   if (
-    !file
-    || (Number(cType) !== MessageType.IMAGE && Number(cType) !== MessageType.VIDEO)
-    || !globalThis.URL?.createObjectURL
-  ) return "";
+    !file ||
+    (Number(cType) !== MessageType.IMAGE && Number(cType) !== MessageType.VIDEO) ||
+    !globalThis.URL?.createObjectURL
+  )
+    return "";
   return globalThis.URL.createObjectURL(file);
 };
 
@@ -251,17 +210,15 @@ const releaseUploadPreview = (clientMsgId, message) => {
 };
 
 /** 将统一上传组件的阶段和进度同步到对应的消息气泡。 */
-const watchUploadTask = (task, session) => watch(
-  [task.uploader.status, task.uploader.progress],
-  ([uploadStatus, uploadProgress]) => {
+const watchUploadTask = (task, session) =>
+  watch([task.uploader.status, task.uploader.progress], ([uploadStatus, uploadProgress]) => {
     if (!isSessionActive(session)) return;
     updatePendingMessage(task.clientMsgId, task.conversationId, {
       uploadStage: uploadStatus,
       uploadProgress: Number(uploadProgress) || 0,
       error: ["canceled", "failed"].includes(uploadStatus) ? "上传失败" : "",
     });
-  },
-);
+  });
 
 /** 发送独立的 WS 请求对象；失败时保留请求供用户重试。 */
 const sendPendingMessage = (clientMsgId, conversation, request, session = captureSession()) => {
@@ -269,10 +226,7 @@ const sendPendingMessage = (clientMsgId, conversation, request, session = captur
   if (!message || !request || !isSessionActive(session)) return null;
 
   const pendingRequest = { ...request, clientMsgId };
-  if (
-    Number(pendingRequest.cType) !== MessageType.TEXT
-    && !pendingRequest.fileId
-  ) {
+  if (Number(pendingRequest.cType) !== MessageType.TEXT && !pendingRequest.fileId) {
     throw new Error("媒体文件尚未上传完成，无法发送消息。");
   }
   pendingSendRequests.set(clientMsgId, pendingRequest);
@@ -297,12 +251,11 @@ const sendPendingMessage = (clientMsgId, conversation, request, session = captur
 const uploadAndSendAttachment = async (task, conversation, session) => {
   const stopWatching = watchUploadTask(task, session);
   try {
-    const uploaded = await task.mediaUploadService.upload(task.file, task.cType);
+    const uploaded = await task.uploader.upload(task.file);
     if (!isSessionActive(session)) return null;
 
     task.fileId = uploaded.fileId;
     updatePendingMessage(task.clientMsgId, task.conversationId, {
-      cType: uploaded.cType,
       uploadStage: "completed",
       uploadProgress: 100,
       error: "",
@@ -355,12 +308,13 @@ const drainUploadQueue = () => {
 };
 
 /** 将附件任务放入上传队列；占位消息在入队前就已经创建。 */
-const enqueueUploadTask = (task) => new Promise((resolve, reject) => {
-  task.resolve = resolve;
-  task.reject = reject;
-  uploadQueue.push(task);
-  drainUploadQueue();
-});
+const enqueueUploadTask = (task) =>
+  new Promise((resolve, reject) => {
+    task.resolve = resolve;
+    task.reject = reject;
+    uploadQueue.push(task);
+    drainUploadQueue();
+  });
 
 /** 同一会话顺序处理实时消息，避免并发请求基于相同边界重复同步。 */
 const enqueueConversationMessage = (conversationId, task) => {
@@ -423,9 +377,7 @@ const catchUpOfflineConversation = async (conversation, session) => {
     });
     if (!isSessionActive(session)) return;
 
-    cursor = Number(
-      persisted?.lastContinuousSeqByConversation?.[conversationId],
-    ) || nextCursor;
+    cursor = Number(persisted?.lastContinuousSeqByConversation?.[conversationId]) || nextCursor;
     conversation.lastContinuousSeq = cursor;
 
     if (page?.hasMore && cursor <= previousCursor) {
@@ -449,38 +401,41 @@ const catchUpAllOfflineConversations = async (session = captureSession()) => {
  * 处理一条带完整内容的实时消息：连续则直接提交，存在缺口则从本地边界同步。
  * WebSocket 消息和发送 ACK 都复用这条路径。
  */
-const processRealtimeMessage = async (
-  rawMessage,
-  { increaseUnread = false, sendRead = false } = {},
-) => {
+const processRealtimeMessage = async (rawMessage) => {
   const session = captureSession();
   const message = normalizeMessage(rawMessage);
   const conversationId = message.conversationId || "";
   const conversation = findConversation(state.conversations, conversationId);
-  if (!isSessionActive(session) || !conversation || !message.messageId || Number(message.seq) <= 0) {
-    return false;
+  if (
+    !isSessionActive(session) ||
+    !conversation ||
+    !message.messageId ||
+    Number(message.seq) <= 0
+  ) {
+    return;
   }
 
   return enqueueConversationMessage(conversationId, async () => {
-    if (!isSessionActive(session)) return false;
+    if (!isSessionActive(session)) return;
 
     const localBoundary = Number(conversation.lastContinuousSeq) || 0;
     const messageSeq = Number(message.seq);
-    if (messageSeq <= localBoundary) return false;
+    if (messageSeq <= localBoundary) return;
 
     let messagesToPersist = [message];
     let nextBoundary = messageSeq;
     if (messageSeq > localBoundary + 1) {
-      const scope = `${session.userId}:${session.generation}`;
-      const syncResult = await messageSync.syncAfter(conversationId, localBoundary, scope);
-      if (!isSessionActive(session)) return false;
+      const syncResult = await syncMessages(conversationId, localBoundary);
+      if (!isSessionActive(session)) return;
 
       const synchronized = (syncResult?.messages || [])
         .map(normalizeMessage)
         .filter((item) => item.messageId && Number(item.seq) > 0);
       const bySeq = new Map(synchronized.map((item) => [Number(item.seq), item]));
       bySeq.set(messageSeq, message);
-      messagesToPersist = [...bySeq.values()].sort((left, right) => Number(left.seq) - Number(right.seq));
+      messagesToPersist = [...bySeq.values()].sort(
+        (left, right) => Number(left.seq) - Number(right.seq),
+      );
 
       if (!isOrderedAfter(messagesToPersist, localBoundary)) {
         throw new Error("消息同步结果存在重复或乱序");
@@ -492,40 +447,32 @@ const processRealtimeMessage = async (
       session,
       lastContinuousSeqByConversation: { [conversationId]: nextBoundary },
     });
-    if (!isSessionActive(session)) return false;
+    if (!isSessionActive(session)) return;
 
-    conversation.lastContinuousSeq = Number(
-      persisted?.lastContinuousSeqByConversation?.[conversationId],
-    ) || nextBoundary;
-    conversation.latestSeq = Math.max(Number(conversation.latestSeq) || 0, nextBoundary);
+    conversation.lastContinuousSeq =
+      Number(persisted?.lastContinuousSeqByConversation?.[conversationId]) || nextBoundary;
 
     const active = state.activeConversationId === conversationId;
     if (active) {
-      await mergeMessages(conversationId, messagesToPersist, { persist: false, session });
+      await mergeMessages(conversationId, messagesToPersist, session);
     }
 
-    const latestMessage = messagesToPersist.at(-1) || message;
-    applyRealtimeMessageToConversation(conversation, latestMessage, {
-      active,
-      increaseUnread: !active && increaseUnread,
-    });
+    applyMessagesToConversation(
+      conversation,
+      messagesToPersist,
+      state.activeConversationId,
+      currentUserId(),
+    );
     updateConversationList();
     await persistConversation(conversation, session);
 
-    if (active && sendRead && latestMessage.senderId !== currentUserId()) {
-      sendReadAck(conversationId);
-    }
-    return true;
+    sendReadAck(conversationId);
   });
 };
 
 /** WebSocket 完整消息是本地消息库的唯一实时更新入口。 */
 const upsertIncomingMessage = (payload) => {
-  const message = normalizeMessage(payload);
-  processRealtimeMessage(message, {
-    increaseUnread: message.senderId !== currentUserId(),
-    sendRead: true,
-  }).catch(() => {});
+  processRealtimeMessage(payload).catch(() => {});
 };
 
 /** 将消息 ACK 应用到发送中的本地消息，并用服务端 seq 完成确认。 */
@@ -544,17 +491,17 @@ const handleMessageAck = (ack) => {
     attachmentId: ack.attachmentId || pending.attachmentId || "",
     sendTime: Number(ack.sendTime) || pending.sendTime,
     status: Number(pending.status) || 1,
-    error: failed ? (ack.extra || "消息发送失败") : "",
+    error: failed ? ack.extra || "消息发送失败" : "",
   });
 
-  state.messages[conversationId] = mergeMessageLists(
-    state.messages[conversationId] || [],
-    [updated],
+  state.messages[conversationId] = mergeMessageLists(state.messages[conversationId] || [], [
+    updated,
+  ]);
+  const storedMessage = state.messages[conversationId].find(
+    (item) =>
+      (updated.seq > 0 && Number(item.seq) === updated.seq) ||
+      (updated.clientMsgId && item.clientMsgId === updated.clientMsgId),
   );
-  const storedMessage = state.messages[conversationId].find((item) => (
-    (updated.seq > 0 && Number(item.seq) === updated.seq)
-    || (updated.clientMsgId && item.clientMsgId === updated.clientMsgId)
-  ));
   if (failed) {
     // 失败消息必须继续保留在待处理表中，点击重试时复用原 clientMsgId。
     pendingMessages.set(ack.clientMsgId, storedMessage || updated);
@@ -566,14 +513,17 @@ const handleMessageAck = (ack) => {
   }
 
   if (storedMessage) {
-    attachmentResolver.resolve([storedMessage]).finally(() => {
-      if (!failed) releaseUploadPreview(ack.clientMsgId, storedMessage);
-    }).catch(() => { });
+    attachmentResolver
+      .resolve([storedMessage])
+      .finally(() => {
+        if (!failed) releaseUploadPreview(ack.clientMsgId, storedMessage);
+      })
+      .catch(() => {});
   } else if (!failed) {
     pendingUploadTasks.delete(ack.clientMsgId);
   }
   if (!failed && updated.seq > 0) {
-    processRealtimeMessage(updated).catch(() => { });
+    processRealtimeMessage(updated).catch(() => {});
   }
 };
 
@@ -582,7 +532,8 @@ const handleReadNotify = (receipt) => {
   const conversationId = receipt?.conversationId || "";
   const lastReadSeq = Number(receipt?.lastReadSeq) || 0;
   const conversation = findConversation(state.conversations, conversationId);
-  if (!conversation || conversation.convType !== ConversationType.PRIVATE_CHAT || lastReadSeq <= 0) return;
+  if (!conversation || conversation.convType !== ConversationType.PRIVATE_CHAT || lastReadSeq <= 0)
+    return;
 
   const previous = Number(conversation.readWatermark) || 0;
   if (lastReadSeq <= previous) return;
@@ -610,9 +561,7 @@ const refreshConversationSnapshot = async (session = captureSession()) => {
   const conversations = sortConversations(
     (items || []).map((conversation) => ({
       ...conversation,
-      lastContinuousSeq: localContinuousSeqByConversation.get(
-        conversation.conversationId,
-      ) || 0,
+      lastContinuousSeq: localContinuousSeqByConversation.get(conversation.conversationId) || 0,
       readWatermark: readWatermarkByConversation.get(conversation.conversationId) || 0,
     })),
   );
@@ -620,7 +569,7 @@ const refreshConversationSnapshot = async (session = captureSession()) => {
   if (!findConversation(conversations, state.activeConversationId)) {
     state.activeConversationId = "";
   }
-  await replaceConversations(session.userId, conversations).catch(() => { });
+  await replaceConversations(session.userId, conversations).catch(() => {});
   return conversations;
 };
 
@@ -635,10 +584,7 @@ const syncConversationFromLocal = async (
   return enqueueConversationMessage(conversationId, async () => {
     const localBoundary = Number(conversation.lastContinuousSeq) || 0;
     if (targetSeq > 0 && targetSeq <= localBoundary) return;
-    const knownLatestSeq = Number(conversation.latestSeq) || 0;
-
-    const scope = `${session.userId}:${session.generation}`;
-    const result = await messageSync.syncAfter(conversationId, localBoundary, scope);
+    const result = await syncMessages(conversationId, localBoundary);
     if (!isSessionActive(session)) return;
 
     const messages = (result?.messages || []).map(normalizeMessage);
@@ -646,41 +592,31 @@ const syncConversationFromLocal = async (
       throw new Error("消息同步结果存在重复或乱序");
     }
 
-    const latestMessageSeq = Number(messages.at(-1)?.seq) || localBoundary;
-    const nextBoundary = latestMessageSeq;
+    const nextBoundary = Number(messages.at(-1)?.seq) || localBoundary;
     if (nextBoundary <= localBoundary) return;
 
     const persisted = await persistConfirmedMessages(messages, {
       session,
       lastContinuousSeqByConversation: { [conversationId]: nextBoundary },
     });
-    conversation.lastContinuousSeq = Number(
-      persisted?.lastContinuousSeqByConversation?.[conversationId],
-    ) || nextBoundary;
+    conversation.lastContinuousSeq =
+      Number(persisted?.lastContinuousSeqByConversation?.[conversationId]) || nextBoundary;
 
-    const latest = messages.at(-1);
     const active = state.activeConversationId === conversationId;
-    if (active && messages.length) await mergeMessages(conversationId, messages, { persist: false, session });
-    conversation.latestSeq = Math.max(Number(conversation.latestSeq) || 0, nextBoundary);
-    if (latest) {
-      applyRealtimeMessageToConversation(conversation, latest, {
-        active,
-        increaseUnread: false,
-      });
-      if (!active) {
-        conversation.unread = (Number(conversation.unread) || 0) + messages.filter(
-          (message) => Number(message.seq) > knownLatestSeq
-          && message.senderId !== currentUserId(),
-        ).length;
-      }
-    }
+    if (active) await mergeMessages(conversationId, messages, session);
+    applyMessagesToConversation(
+      conversation,
+      messages,
+      state.activeConversationId,
+      currentUserId(),
+    );
     updateConversationList();
     await persistConversation(conversation, session);
-    if (active && latest?.senderId !== currentUserId()) sendReadAck(conversationId);
+    sendReadAck(conversationId);
   });
 };
 
-/** 大群轻量通知没有消息正文，按其 seq 从本地边界补齐。 */
+/** 大型房间轻量通知没有消息正文，按其 seq 从本地边界补齐。 */
 const syncRoomMessageNotice = async (notice) => {
   const conversationId = notice?.conversationId || "";
   const targetSeq = Number(notice?.seq) || 0;
@@ -691,42 +627,11 @@ const syncRoomMessageNotice = async (notice) => {
 /** WebSocket 建立或重连后，逐会话补齐离线快照与实时连接之间的缺口。 */
 const syncAllConversationGaps = async (session = captureSession()) => {
   const conversations = [...state.conversations];
-  await Promise.all(conversations.map((conversation) => (
-    syncConversationFromLocal(conversation.conversationId, { session })
-  )));
-};
-
-/** 首次打开本地尚无消息的会话时，从 0 同步完整历史；后续点击只读本地。 */
-const syncInitialConversation = async (conversationId) => {
-  const session = captureSession();
-  const conversation = findConversation(state.conversations, conversationId);
-  if (!conversation || !isSessionActive(session)) return;
-  if ((Number(conversation.lastContinuousSeq) || 0) > 0) return;
-
-  return enqueueConversationMessage(conversationId, async () => {
-    const localBoundary = Number(conversation.lastContinuousSeq) || 0;
-    if (localBoundary > 0 || !isSessionActive(session)) return;
-
-    const scope = `${session.userId}:${session.generation}`;
-    const result = await messageSync.syncAfter(conversationId, localBoundary, scope);
-    if (!isSessionActive(session)) return;
-
-    const messages = (result?.messages || []).map(normalizeMessage);
-    if (messages.length && !isOrderedAfter(messages, localBoundary)) {
-      throw new Error("首次消息同步结果存在重复或乱序");
-    }
-
-    const nextBoundary = Number(messages.at(-1)?.seq) || localBoundary;
-    if (nextBoundary <= localBoundary) return;
-    const persisted = await persistConfirmedMessages(messages, {
-      session,
-      lastContinuousSeqByConversation: { [conversationId]: nextBoundary },
-    });
-    conversation.lastContinuousSeq = Number(
-      persisted?.lastContinuousSeqByConversation?.[conversationId],
-    ) || nextBoundary;
-    conversation.latestSeq = Math.max(Number(conversation.latestSeq) || 0, nextBoundary);
-  });
+  await Promise.all(
+    conversations.map((conversation) =>
+      syncConversationFromLocal(conversation.conversationId, { session }),
+    ),
+  );
 };
 
 const wsClient = createWsClient({
@@ -755,18 +660,19 @@ const wsClient = createWsClient({
   onAck: handleMessageAck,
   onReadNotify: handleReadNotify,
   onRoomMessageNotice: (notice) => {
-    syncRoomMessageNotice(notice).catch(() => { });
+    syncRoomMessageNotice(notice).catch(() => {});
   },
 });
 
 const sendRoomEntry = (conversationId) => {
   const conversation = findConversation(state.conversations, conversationId);
   if (
-    !conversation
-    || conversation.convType !== ConversationType.ROOM_CHAT
-    || state.activeConversationId !== conversationId
-    || !wsClient.isConnected()
-  ) return false;
+    !conversation ||
+    conversation.convType !== ConversationType.ROOM ||
+    state.activeConversationId !== conversationId ||
+    !wsClient.isConnected()
+  )
+    return false;
 
   const sent = wsClient.sendRoomEntry({ roomId: conversation.targetId });
   if (sent && pendingRoomEntryConversationID === conversationId) {
@@ -780,17 +686,17 @@ const sendReadAck = (conversationId = state.activeConversationId) => {
   const conversation = findConversation(state.conversations, conversationId);
   const lastContinuousSeq = Number(conversation?.lastContinuousSeq) || 0;
   if (
-    !conversation
-    || state.activeConversationId !== conversationId
-    || conversation.convType !== ConversationType.PRIVATE_CHAT
-    || lastContinuousSeq <= 0
-    || !wsClient.isConnected()
-  ) return;
+    !conversation ||
+    state.activeConversationId !== conversationId ||
+    lastContinuousSeq <= 0 ||
+    !wsClient.isConnected()
+  )
+    return;
 
   const boundaryMessage = (state.messages[conversationId] || []).find(
     (message) => Number(message.seq) === lastContinuousSeq,
   );
-  if (!boundaryMessage?.messageId) return;
+  if (!boundaryMessage?.messageId || boundaryMessage.senderId === currentUserId()) return;
 
   const sent = wsClient.sendReadAck({
     messageId: boundaryMessage.messageId,
@@ -844,10 +750,7 @@ const clearAuthState = () => {
     storage.removeItem("im_user");
   }
 
-  cacheClearPromise = Promise.all([
-    clearMessages(),
-    clearConversations(),
-  ]).catch(() => { });
+  cacheClearPromise = Promise.all([clearMessages(), clearConversations()]).catch(() => {});
   return cacheClearPromise;
 };
 
@@ -883,9 +786,9 @@ export const ensureChatAuth = async () => {
 };
 
 export const useChatStore = defineStore("chat", () => {
-  const activeConversation = computed(() => (
-    findConversation(state.conversations, state.activeConversationId)
-  ));
+  const activeConversation = computed(() =>
+    findConversation(state.conversations, state.activeConversationId),
+  );
   const activeMessages = computed(() => state.messages[state.activeConversationId] || []);
 
   const authenticate = async ({ mode, account, password, reconfirmPassword, remember }) => {
@@ -945,19 +848,17 @@ export const useChatStore = defineStore("chat", () => {
       const conversations = sortConversations(
         remoteResult.ok
           ? (remoteResult.value || []).map((conversation) => ({
-            ...conversation,
-            lastContinuousSeq: cachedContinuousSeqByConversation.get(
-              conversation.conversationId,
-            ) || 0,
-            readWatermark: cachedReadWatermarkByConversation.get(
-              conversation.conversationId,
-            ) || 0,
-          }))
+              ...conversation,
+              lastContinuousSeq:
+                cachedContinuousSeqByConversation.get(conversation.conversationId) || 0,
+              readWatermark:
+                cachedReadWatermarkByConversation.get(conversation.conversationId) || 0,
+            }))
           : cachedConversations,
       );
       state.conversations = conversations;
       if (remoteResult.ok) {
-        await replaceConversations(session.userId, conversations).catch(() => { });
+        await replaceConversations(session.userId, conversations).catch(() => {});
         if (startupCatchupGeneration !== session.generation) {
           await catchUpAllOfflineConversations(session);
           if (!isSessionActive(session)) return;
@@ -978,14 +879,16 @@ export const useChatStore = defineStore("chat", () => {
         avatarColor: THEME_CONTACT_AVATAR,
         conversationId: conversationByTargetId.get(item.friendUserId)?.conversationId || "",
       }));
-      state.friendRequests = (requests || []).filter((item) => item.status === 1).map((item) => ({
-        id: item.requestId,
-        applicantUserId: item.applicantUserId || "",
-        name: item.applicantNickName || "新联系人",
-        note: item.message,
-        time: formatTime(item.applyTime),
-        avatarColor: "#8069a8",
-      }));
+      state.friendRequests = (requests || [])
+        .filter((item) => item.status === 1)
+        .map((item) => ({
+          id: item.requestId,
+          applicantUserId: item.applicantUserId || "",
+          name: item.applicantNickName || "新联系人",
+          note: item.message,
+          time: formatTime(item.applyTime),
+          avatarColor: "#8069a8",
+        }));
       if (!findConversation(state.conversations, state.activeConversationId)) {
         state.activeConversationId = "";
       }
@@ -1013,7 +916,7 @@ export const useChatStore = defineStore("chat", () => {
       if (!isSessionActive(session) || state.activeConversationId !== conversationId) return;
 
       // 历史消息完全读取本地 IndexedDB，不在滚动分页时回源。
-      await mergeMessages(conversationId, data.messages, { persist: false, session });
+      await mergeMessages(conversationId, data.messages, session);
       state.historyCursor[conversationId] = data.nextCursor;
       state.historyHasMore[conversationId] = data.hasMore;
     } finally {
@@ -1028,13 +931,12 @@ export const useChatStore = defineStore("chat", () => {
     state.activeConversationId = conversationId;
     const conversation = findConversation(state.conversations, conversationId);
     if (conversation) conversation.unread = 0;
-    if (conversation?.convType === ConversationType.ROOM_CHAT) {
+    if (conversation?.convType === ConversationType.ROOM) {
       pendingRoomEntryConversationID = conversationId;
       sendRoomEntry(conversationId);
     } else {
       pendingRoomEntryConversationID = "";
     }
-    await syncInitialConversation(conversationId);
     if (state.authenticated) await loadHistory(conversationId, 0);
   };
 
@@ -1057,10 +959,8 @@ export const useChatStore = defineStore("chat", () => {
       state.messages[conversation.conversationId],
       [message],
     );
-    const storedMessage = findPendingMessage(
-      payload.clientMsgId,
-      conversation.conversationId,
-    ) || message;
+    const storedMessage =
+      findPendingMessage(payload.clientMsgId, conversation.conversationId) || message;
     pendingMessages.set(payload.clientMsgId, storedMessage);
     conversation.lastMessage = createConversationPreview(
       conversation,
@@ -1099,6 +999,15 @@ export const useChatStore = defineStore("chat", () => {
 
   const sendAttachment = async (file, cType) => {
     if (!file) return null;
+    if (![MessageType.IMAGE, MessageType.VIDEO, MessageType.FILE].includes(Number(cType))) {
+      throw new Error("不支持的媒体类型。");
+    }
+    if (Number(cType) === MessageType.IMAGE && file.type && !file.type.startsWith("image/")) {
+      throw new Error("请选择图片文件。");
+    }
+    if (Number(cType) === MessageType.VIDEO && file.type && !file.type.startsWith("video/")) {
+      throw new Error("请选择视频文件。");
+    }
     const conversation = activeConversation.value;
     if (!conversation) return null;
     if (!state.authenticated) throw new Error("登录状态已失效，请重新登录。");
@@ -1131,7 +1040,6 @@ export const useChatStore = defineStore("chat", () => {
       fileId: "",
       previewURL,
       uploader,
-      mediaUploadService: createMediaUploadService(uploader),
       running: false,
       settled: false,
       cancelRequested: false,
@@ -1146,12 +1054,9 @@ export const useChatStore = defineStore("chat", () => {
   const retryMessage = async (message) => {
     const clientMsgId = message?.clientMsgId || "";
     const session = captureSession();
-    const conversation = findConversation(
-      state.conversations,
-      message?.conversationId,
-    );
-    const pending = pendingMessages.get(clientMsgId)
-      || findPendingMessage(clientMsgId, message?.conversationId);
+    const conversation = findConversation(state.conversations, message?.conversationId);
+    const pending =
+      pendingMessages.get(clientMsgId) || findPendingMessage(clientMsgId, message?.conversationId);
 
     if (!clientMsgId || !pending || !conversation || !isSessionActive(session)) {
       throw new Error("消息已失效，请重新选择会话后重试。");
@@ -1213,11 +1118,7 @@ export const useChatStore = defineStore("chat", () => {
     task.cancelRequested = true;
     if (task.running) {
       task.uploader.cancel();
-      markPendingMessageFailed(
-        clientMsgId,
-        task.conversationId,
-        new Error("上传已取消"),
-      );
+      markPendingMessageFailed(clientMsgId, task.conversationId, new Error("上传已取消"));
       return;
     }
 
@@ -1253,20 +1154,20 @@ export const useChatStore = defineStore("chat", () => {
     if (accepted) await loadWorkspace();
   };
 
-  const addFriendRequest = (form) => createFriendRequest(form);
-
   const startConversation = async (contact) => {
-    let conversation = state.conversations.find((item) => (
-      item.convType === ConversationType.PRIVATE_CHAT
-      && (item.targetId === contact.id || (contact.conversationId && item.conversationId === contact.conversationId))
-    ));
+    let conversation = state.conversations.find(
+      (item) =>
+        item.convType === ConversationType.PRIVATE_CHAT &&
+        (item.targetId === contact.id ||
+          (contact.conversationId && item.conversationId === contact.conversationId)),
+    );
     if (!conversation) {
       const session = captureSession();
       await refreshConversationSnapshot(session);
       if (!isSessionActive(session)) return null;
-      conversation = state.conversations.find((item) => (
-        item.convType === ConversationType.PRIVATE_CHAT && item.targetId === contact.id
-      ));
+      conversation = state.conversations.find(
+        (item) => item.convType === ConversationType.PRIVATE_CHAT && item.targetId === contact.id,
+      );
       if (!conversation) throw new Error("会话不存在，请刷新好友列表后重试。");
     }
 
@@ -1274,23 +1175,20 @@ export const useChatStore = defineStore("chat", () => {
     return conversation;
   };
 
-  const createChatRoom = async (form) => {
-    const room = await createRoom(form);
+  const createRoom = async (form) => {
+    const room = await createRoomRequest(form);
     await loadWorkspace();
     return room;
   };
 
-  const joinChatRoom = async (inviteCode) => {
-    const room = await joinRoom(inviteCode);
+  const joinRoom = async (inviteCode) => {
+    const room = await joinRoomRequest(inviteCode);
     await loadWorkspace();
     return room;
   };
 
-  const retryConnection = () => (
-    startupCatchupGeneration === sessionGeneration
-      ? wsClient.reconnect()
-      : loadWorkspace()
-  );
+  const retryConnection = () =>
+    startupCatchupGeneration === sessionGeneration ? wsClient.reconnect() : loadWorkspace();
 
   const logout = async () => {
     try {
@@ -1315,10 +1213,10 @@ export const useChatStore = defineStore("chat", () => {
     sendReadAck,
     clearConversation,
     handleFriendRequest,
-    addFriendRequest,
+    addFriendRequest: createFriendRequest,
     startConversation,
-    createChatRoom,
-    joinChatRoom,
+    createRoom,
+    joinRoom,
     retryConnection,
     pauseUpload,
     resumeUpload,

@@ -40,7 +40,8 @@ const unwrapResponse = (response) => {
 
 const refreshAccessToken = () => {
   if (!refreshPromise) {
-    refreshPromise = refreshHttp.post("/users/refresh")
+    refreshPromise = refreshHttp
+      .post("/users/refresh")
       .then(unwrapResponse)
       .then((data) => {
         if (!data) throw new ApiError("刷新令牌无效", { status: 401 });
@@ -63,31 +64,28 @@ const clearAuthAndRedirect = () => {
   }
 };
 
-http.interceptors.response.use(
-  unwrapResponse,
-  async (error) => {
-    const status = error.status || error.response?.status || 0;
-    const requestConfig = error.requestConfig || error.config;
-    const requestURL = requestConfig?.url || "";
-    const isAuthRequest = /\/users\/(login|register|refresh)$/.test(requestURL);
-    if (status === 401 && !isAuthRequest && requestConfig && !requestConfig._retry) {
-      requestConfig._retry = true;
-      try {
-        await refreshAccessToken();
-        return http(requestConfig);
-      } catch {
-        clearAuthAndRedirect();
-      }
+http.interceptors.response.use(unwrapResponse, async (error) => {
+  const status = error.status || error.response?.status || 0;
+  const requestConfig = error.requestConfig || error.config;
+  const requestURL = requestConfig?.url || "";
+  const isAuthRequest = /\/users\/(login|register|refresh)$/.test(requestURL);
+  if (status === 401 && !isAuthRequest && requestConfig && !requestConfig._retry) {
+    requestConfig._retry = true;
+    try {
+      await refreshAccessToken();
+      return http(requestConfig);
+    } catch {
+      clearAuthAndRedirect();
     }
-    if (error instanceof ApiError) throw error;
-    const payload = error.response?.data;
-    throw new ApiError(payload?.message || error.message || "网络连接失败", {
-      code: payload?.code || error.response?.status || 0,
-      status: error.response?.status || 0,
-      data: payload?.data,
-    });
-  },
-);
+  }
+  if (error instanceof ApiError) throw error;
+  const payload = error.response?.data;
+  throw new ApiError(payload?.message || error.message || "网络连接失败", {
+    code: payload?.code || error.response?.status || 0,
+    status: error.response?.status || 0,
+    data: payload?.data,
+  });
+});
 
 export const loginUser = ({ account, password }) =>
   http.post("/users/login", {
@@ -105,11 +103,10 @@ export const registerUser = ({ phone, password, reconfirmPassword }) =>
 
 export const logoutUser = () => http.post("/users/logout");
 
-export const refreshSession = () => refreshAccessToken();
+export { refreshAccessToken as refreshSession };
 
-export const findUserByPhoneAndUserName = (keyword) => (
-	http.get("/users/resolve", { params: { keyword: (keyword || "").trim() } })
-);
+export const findUserByPhoneOrUsername = (keyword) =>
+  http.get("/users/resolve", { params: { keyword: (keyword || "").trim() } });
 
 export const updateUserProfile = ({ username, nickName, avatar }) => {
   const payload = {};
@@ -144,17 +141,12 @@ export const syncMessages = (conversationId, afterSeq = 0) =>
     },
   });
 
-export const getOfflineMessages = ({
-  conversationId,
-  afterSeq = 0,
-  snapshotSeq,
-  limit = 10,
-}) => http.get("/messages/offline", {
-  params: { conversationId, afterSeq, snapshotSeq, limit },
-});
+export const getOfflineMessages = ({ conversationId, afterSeq = 0, snapshotSeq, limit = 10 }) =>
+  http.get("/messages/offline", {
+    params: { conversationId, afterSeq, snapshotSeq, limit },
+  });
 
-export const initFileUpload = (payload) =>
-  http.post("/files/uploads/init", payload);
+export const initFileUpload = (payload) => http.post("/files/uploads/init", payload);
 
 export const uploadDirectObjectToStorage = (url, file, signal) =>
   axios.put(url, file, {
@@ -162,8 +154,7 @@ export const uploadDirectObjectToStorage = (url, file, signal) =>
     signal,
   });
 
-export const completeFileUpload = (uploadId) =>
-  http.post(`/files/uploads/${uploadId}/complete`);
+export const completeFileUpload = (uploadId) => http.post(`/files/uploads/${uploadId}/complete`);
 
 export const presignMultipartParts = (uploadId, partNumbers) =>
   http.post(`/files/uploads/${uploadId}/parts/presign`, { partNumbers });

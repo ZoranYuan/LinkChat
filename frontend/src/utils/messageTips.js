@@ -30,7 +30,6 @@ function show(input, fallbackType = "info") {
 }
 
 export const messageTips = {
-  show,
   success(input) {
     return show(input, "success");
   },
@@ -42,8 +41,5 @@ export const messageTips = {
   },
   info(input) {
     return show(input, "info");
-  },
-  closeAll() {
-    ElMessage.closeAll();
   },
 };

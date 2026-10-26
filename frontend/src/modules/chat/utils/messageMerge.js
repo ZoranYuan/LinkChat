@@ -5,10 +5,12 @@ export const normalizeMessage = (message = {}) => ({
 });
 
 /** 按服务端 seq 升序排列消息，未确认消息放在末尾。 */
-export const sortMessages = (messages = []) => [...messages].sort((left, right) => (
-  (Number(left.seq) || Number.MAX_SAFE_INTEGER)
-  - (Number(right.seq) || Number.MAX_SAFE_INTEGER)
-));
+export const sortMessages = (messages = []) =>
+  [...messages].sort(
+    (left, right) =>
+      (Number(left.seq) || Number.MAX_SAFE_INTEGER) -
+      (Number(right.seq) || Number.MAX_SAFE_INTEGER),
+  );
 
 /** 合并本地、同步和实时消息，并按 seq/clientMsgId 消除重复记录。 */
 export const mergeMessageLists = (existing = [], incoming = []) => {
@@ -49,8 +51,3 @@ export const mergeMessageLists = (existing = [], incoming = []) => {
     ...pendingWithoutClientMsgId,
   ]);
 };
-
-/** 过滤出可以写入 IndexedDB 的已确认消息。 */
-export const confirmedMessages = (messages = []) => messages.filter((message) => (
-  Number(message.seq) > 0 && message.messageId
-));

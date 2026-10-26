@@ -1,9 +1,8 @@
 import { MessageType } from "../../../constants/message.js";
 
-export const createClientMessageId = () => (
-  globalThis.crypto?.randomUUID?.()
-  || `message-${Date.now()}-${Math.random().toString(16).slice(2)}`
-);
+export const createClientMessageId = () =>
+  globalThis.crypto?.randomUUID?.() ||
+  `message-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 export const createOutgoingMessage = (conversation, payload, currentUser) => {
   const sendTime = Date.now();
