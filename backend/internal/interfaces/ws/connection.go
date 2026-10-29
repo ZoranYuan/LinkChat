@@ -70,11 +70,15 @@ type Connection struct {
 	conn *gorilla.Conn
 	ctx  context.Context // 网络读写随连接关闭而取消。
 
+	mu sync.RWMutex
+
 	identity ConnectionIdentity
 
-	config   configs.WebSocketConfig
-	outbound chan Message
-	inbound  chan Message
+	config         configs.WebSocketConfig
+	outbound       chan Message
+	outboundClosed bool
+
+	inbound chan Message
 
 	cancel        context.CancelFunc
 	closeOnce     sync.Once
@@ -154,9 +158,6 @@ func (s *Connection) Close() {
 }
 
 func (s *Connection) Enqueue(message Message) error {
-	if s.ctx.Err() != nil {
-		return ErrConnectionClosed
-	}
 	select {
 	case <-s.ctx.Done():
 		return ErrConnectionClosed
