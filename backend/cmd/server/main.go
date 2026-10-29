@@ -216,8 +216,13 @@ func main() {
 	roomRepository := infraroom.NewRoomRepository(db)
 	roomAgentApplication := roomagentapp.NewRoomAgentApplication(
 		roomMemberRepository,
+		conversationRepository,
+		userConversationRepository,
+		userRepository,
+		messageRepository,
 		roomMemberCache,
 		cfg.Message,
+		cfg.GRPC,
 	)
 	roomAgentHandler := roomagentgrpc.NewRoomAgentContextHandler(roomAgentApplication, tokenService, authCache)
 	roomAgentGRPCServer, err := grpcserver.NewServer(cfg.GRPC.RoomAgentAddress, roomAgentHandler)

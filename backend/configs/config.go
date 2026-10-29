@@ -231,7 +231,9 @@ type Server struct {
 }
 
 type GRPCConfig struct {
-	RoomAgentAddress string `yaml:"room_agent_address"`
+	RoomAgentAddress                string `yaml:"room_agent_address"`
+	RoomMessageSyncDefaultBatchSize int    `yaml:"room_message_sync_default_batch_size"`
+	RoomMessageSyncMaxBatchSize     int    `yaml:"room_message_sync_max_batch_size"`
 }
 
 type Database struct {

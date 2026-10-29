@@ -156,7 +156,7 @@ func (x *VerifyRoomAccessRequest) GetRoomId() string {
 
 type VerifyRoomAccessResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ThreadId      string                 `protobuf:"bytes,3,opt,name=thread_id,json=threadId,proto3" json:"thread_id,omitempty"`
+	ThreadId      string                 `protobuf:"bytes,1,opt,name=thread_id,json=threadId,proto3" json:"thread_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -201,8 +201,7 @@ func (x *VerifyRoomAccessResponse) GetThreadId() string {
 type GetRoomUnreadMessagesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RoomId        string                 `protobuf:"bytes,1,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
-	PageSize      uint32                 `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	Cursor        int64                  `protobuf:"varint,4,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	Limit         uint32                 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -244,24 +243,16 @@ func (x *GetRoomUnreadMessagesRequest) GetRoomId() string {
 	return ""
 }
 
-func (x *GetRoomUnreadMessagesRequest) GetPageSize() uint32 {
+func (x *GetRoomUnreadMessagesRequest) GetLimit() uint32 {
 	if x != nil {
-		return x.PageSize
-	}
-	return 0
-}
-
-func (x *GetRoomUnreadMessagesRequest) GetCursor() int64 {
-	if x != nil {
-		return x.Cursor
+		return x.Limit
 	}
 	return 0
 }
 
 type GetRoomUnreadMessagesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Messages      []*ChatMessage         `protobuf:"bytes,4,rep,name=messages,proto3" json:"messages,omitempty"`
-	NextCursor    int64                  `protobuf:"varint,5,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
+	Messages      []*ChatMessage         `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -303,11 +294,264 @@ func (x *GetRoomUnreadMessagesResponse) GetMessages() []*ChatMessage {
 	return nil
 }
 
-func (x *GetRoomUnreadMessagesResponse) GetNextCursor() int64 {
+type SyncRoomMessagesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RoomId        string                 `protobuf:"bytes,1,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	AfterSeq      int64                  `protobuf:"varint,2,opt,name=after_seq,json=afterSeq,proto3" json:"after_seq,omitempty"`
+	Limit         uint32                 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncRoomMessagesRequest) Reset() {
+	*x = SyncRoomMessagesRequest{}
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncRoomMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncRoomMessagesRequest) ProtoMessage() {}
+
+func (x *SyncRoomMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[4]
 	if x != nil {
-		return x.NextCursor
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncRoomMessagesRequest.ProtoReflect.Descriptor instead.
+func (*SyncRoomMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SyncRoomMessagesRequest) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *SyncRoomMessagesRequest) GetAfterSeq() int64 {
+	if x != nil {
+		return x.AfterSeq
 	}
 	return 0
+}
+
+func (x *SyncRoomMessagesRequest) GetLimit() uint32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type SyncRoomMessagesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Messages      []*ChatMessage         `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncRoomMessagesResponse) Reset() {
+	*x = SyncRoomMessagesResponse{}
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncRoomMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncRoomMessagesResponse) ProtoMessage() {}
+
+func (x *SyncRoomMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncRoomMessagesResponse.ProtoReflect.Descriptor instead.
+func (*SyncRoomMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SyncRoomMessagesResponse) GetMessages() []*ChatMessage {
+	if x != nil {
+		return x.Messages
+	}
+	return nil
+}
+
+type SearchRoomMessagesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RoomId        string                 `protobuf:"bytes,1,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	Ranges        []*MessageSeqRange     `protobuf:"bytes,2,rep,name=ranges,proto3" json:"ranges,omitempty"`
+	Limit         uint32                 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SearchRoomMessagesRequest) Reset() {
+	*x = SearchRoomMessagesRequest{}
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchRoomMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchRoomMessagesRequest) ProtoMessage() {}
+
+func (x *SearchRoomMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchRoomMessagesRequest.ProtoReflect.Descriptor instead.
+func (*SearchRoomMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SearchRoomMessagesRequest) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *SearchRoomMessagesRequest) GetRanges() []*MessageSeqRange {
+	if x != nil {
+		return x.Ranges
+	}
+	return nil
+}
+
+func (x *SearchRoomMessagesRequest) GetLimit() uint32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type MessageSeqRange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SeqStart      int64                  `protobuf:"varint,1,opt,name=seq_start,json=seqStart,proto3" json:"seq_start,omitempty"`
+	SeqEnd        int64                  `protobuf:"varint,2,opt,name=seq_end,json=seqEnd,proto3" json:"seq_end,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MessageSeqRange) Reset() {
+	*x = MessageSeqRange{}
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MessageSeqRange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MessageSeqRange) ProtoMessage() {}
+
+func (x *MessageSeqRange) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MessageSeqRange.ProtoReflect.Descriptor instead.
+func (*MessageSeqRange) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *MessageSeqRange) GetSeqStart() int64 {
+	if x != nil {
+		return x.SeqStart
+	}
+	return 0
+}
+
+func (x *MessageSeqRange) GetSeqEnd() int64 {
+	if x != nil {
+		return x.SeqEnd
+	}
+	return 0
+}
+
+type SearchRoomMessagesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Messages      []*ChatMessage         `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SearchRoomMessagesResponse) Reset() {
+	*x = SearchRoomMessagesResponse{}
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchRoomMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchRoomMessagesResponse) ProtoMessage() {}
+
+func (x *SearchRoomMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchRoomMessagesResponse.ProtoReflect.Descriptor instead.
+func (*SearchRoomMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SearchRoomMessagesResponse) GetMessages() []*ChatMessage {
+	if x != nil {
+		return x.Messages
+	}
+	return nil
 }
 
 type ChatMessage struct {
@@ -327,7 +571,7 @@ type ChatMessage struct {
 
 func (x *ChatMessage) Reset() {
 	*x = ChatMessage{}
-	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[4]
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -339,7 +583,7 @@ func (x *ChatMessage) String() string {
 func (*ChatMessage) ProtoMessage() {}
 
 func (x *ChatMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[4]
+	mi := &file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -352,7 +596,7 @@ func (x *ChatMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatMessage.ProtoReflect.Descriptor instead.
 func (*ChatMessage) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP(), []int{4}
+	return file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ChatMessage) GetMessageId() string {
@@ -426,15 +670,27 @@ const file_internal_interfaces_grpc_pb_room_agent_proto_rawDesc = "" +
 	"\x17VerifyRoomAccessRequest\x12\x17\n" +
 	"\aroom_id\x18\x01 \x01(\tR\x06roomId\"7\n" +
 	"\x18VerifyRoomAccessResponse\x12\x1b\n" +
-	"\tthread_id\x18\x03 \x01(\tR\bthreadId\"l\n" +
+	"\tthread_id\x18\x01 \x01(\tR\bthreadId\"[\n" +
 	"\x1cGetRoomUnreadMessagesRequest\x12\x17\n" +
-	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12\x1b\n" +
-	"\tpage_size\x18\x03 \x01(\rR\bpageSize\x12\x16\n" +
-	"\x06cursor\x18\x04 \x01(\x03R\x06cursor\"x\n" +
+	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\rR\x05limitJ\x04\b\x03\x10\x04R\x06cursor\"j\n" +
 	"\x1dGetRoomUnreadMessagesResponse\x126\n" +
-	"\bmessages\x18\x04 \x03(\v2\x1a.room_agent.v1.ChatMessageR\bmessages\x12\x1f\n" +
-	"\vnext_cursor\x18\x05 \x01(\x03R\n" +
-	"nextCursor\"\xc2\x02\n" +
+	"\bmessages\x18\x01 \x03(\v2\x1a.room_agent.v1.ChatMessageR\bmessagesJ\x04\b\x02\x10\x03R\vnext_cursor\"e\n" +
+	"\x17SyncRoomMessagesRequest\x12\x17\n" +
+	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12\x1b\n" +
+	"\tafter_seq\x18\x02 \x01(\x03R\bafterSeq\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\rR\x05limit\"R\n" +
+	"\x18SyncRoomMessagesResponse\x126\n" +
+	"\bmessages\x18\x01 \x03(\v2\x1a.room_agent.v1.ChatMessageR\bmessages\"\x82\x01\n" +
+	"\x19SearchRoomMessagesRequest\x12\x17\n" +
+	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x126\n" +
+	"\x06ranges\x18\x02 \x03(\v2\x1e.room_agent.v1.MessageSeqRangeR\x06ranges\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\rR\x05limit\"G\n" +
+	"\x0fMessageSeqRange\x12\x1b\n" +
+	"\tseq_start\x18\x01 \x01(\x03R\bseqStart\x12\x17\n" +
+	"\aseq_end\x18\x02 \x01(\x03R\x06seqEnd\"T\n" +
+	"\x1aSearchRoomMessagesResponse\x126\n" +
+	"\bmessages\x18\x01 \x03(\v2\x1a.room_agent.v1.ChatMessageR\bmessages\"\xc2\x02\n" +
 	"\vChatMessage\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12'\n" +
@@ -452,10 +708,12 @@ const file_internal_interfaces_grpc_pb_room_agent_proto_rawDesc = "" +
 	"\x11MESSAGE_TYPE_TEXT\x10\x00*G\n" +
 	"\rMessageStatus\x12\x19\n" +
 	"\x15MESSAGE_STATUS_NORMAL\x10\x00\x12\x1b\n" +
-	"\x17MESSAGE_STATUS_RECALLED\x10\x012\xf2\x01\n" +
+	"\x17MESSAGE_STATUS_RECALLED\x10\x012\xc8\x03\n" +
 	"\x17RoomAgentContextService\x12c\n" +
-	"\x10VerifyRoomAccess\x12&.room_agent.v1.VerifyRoomAccessRequest\x1a'.room_agent.v1.VerifyRoomAccessResponse\x12r\n" +
-	"\x15GetRoomUnreadMessages\x12+.room_agent.v1.GetRoomUnreadMessagesRequest\x1a,.room_agent.v1.GetRoomUnreadMessagesResponseB2Z0IM_backend/internal/interfaces/grpc/pb;roomagentb\x06proto3"
+	"\x10VerifyRoomAccess\x12&.room_agent.v1.VerifyRoomAccessRequest\x1a'.room_agent.v1.VerifyRoomAccessResponse\x12t\n" +
+	"\x15GetRoomUnreadMessages\x12+.room_agent.v1.GetRoomUnreadMessagesRequest\x1a,.room_agent.v1.GetRoomUnreadMessagesResponse0\x01\x12e\n" +
+	"\x10SyncRoomMessages\x12&.room_agent.v1.SyncRoomMessagesRequest\x1a'.room_agent.v1.SyncRoomMessagesResponse0\x01\x12k\n" +
+	"\x12SearchRoomMessages\x12(.room_agent.v1.SearchRoomMessagesRequest\x1a).room_agent.v1.SearchRoomMessagesResponse0\x01B2Z0IM_backend/internal/interfaces/grpc/pb;roomagentb\x06proto3"
 
 var (
 	file_internal_interfaces_grpc_pb_room_agent_proto_rawDescOnce sync.Once
@@ -470,7 +728,7 @@ func file_internal_interfaces_grpc_pb_room_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_internal_interfaces_grpc_pb_room_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_internal_interfaces_grpc_pb_room_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_internal_interfaces_grpc_pb_room_agent_proto_goTypes = []any{
 	(MessageType)(0),                      // 0: room_agent.v1.MessageType
 	(MessageStatus)(0),                    // 1: room_agent.v1.MessageStatus
@@ -478,21 +736,33 @@ var file_internal_interfaces_grpc_pb_room_agent_proto_goTypes = []any{
 	(*VerifyRoomAccessResponse)(nil),      // 3: room_agent.v1.VerifyRoomAccessResponse
 	(*GetRoomUnreadMessagesRequest)(nil),  // 4: room_agent.v1.GetRoomUnreadMessagesRequest
 	(*GetRoomUnreadMessagesResponse)(nil), // 5: room_agent.v1.GetRoomUnreadMessagesResponse
-	(*ChatMessage)(nil),                   // 6: room_agent.v1.ChatMessage
+	(*SyncRoomMessagesRequest)(nil),       // 6: room_agent.v1.SyncRoomMessagesRequest
+	(*SyncRoomMessagesResponse)(nil),      // 7: room_agent.v1.SyncRoomMessagesResponse
+	(*SearchRoomMessagesRequest)(nil),     // 8: room_agent.v1.SearchRoomMessagesRequest
+	(*MessageSeqRange)(nil),               // 9: room_agent.v1.MessageSeqRange
+	(*SearchRoomMessagesResponse)(nil),    // 10: room_agent.v1.SearchRoomMessagesResponse
+	(*ChatMessage)(nil),                   // 11: room_agent.v1.ChatMessage
 }
 var file_internal_interfaces_grpc_pb_room_agent_proto_depIdxs = []int32{
-	6, // 0: room_agent.v1.GetRoomUnreadMessagesResponse.messages:type_name -> room_agent.v1.ChatMessage
-	0, // 1: room_agent.v1.ChatMessage.type:type_name -> room_agent.v1.MessageType
-	1, // 2: room_agent.v1.ChatMessage.status:type_name -> room_agent.v1.MessageStatus
-	2, // 3: room_agent.v1.RoomAgentContextService.VerifyRoomAccess:input_type -> room_agent.v1.VerifyRoomAccessRequest
-	4, // 4: room_agent.v1.RoomAgentContextService.GetRoomUnreadMessages:input_type -> room_agent.v1.GetRoomUnreadMessagesRequest
-	3, // 5: room_agent.v1.RoomAgentContextService.VerifyRoomAccess:output_type -> room_agent.v1.VerifyRoomAccessResponse
-	5, // 6: room_agent.v1.RoomAgentContextService.GetRoomUnreadMessages:output_type -> room_agent.v1.GetRoomUnreadMessagesResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	11, // 0: room_agent.v1.GetRoomUnreadMessagesResponse.messages:type_name -> room_agent.v1.ChatMessage
+	11, // 1: room_agent.v1.SyncRoomMessagesResponse.messages:type_name -> room_agent.v1.ChatMessage
+	9,  // 2: room_agent.v1.SearchRoomMessagesRequest.ranges:type_name -> room_agent.v1.MessageSeqRange
+	11, // 3: room_agent.v1.SearchRoomMessagesResponse.messages:type_name -> room_agent.v1.ChatMessage
+	0,  // 4: room_agent.v1.ChatMessage.type:type_name -> room_agent.v1.MessageType
+	1,  // 5: room_agent.v1.ChatMessage.status:type_name -> room_agent.v1.MessageStatus
+	2,  // 6: room_agent.v1.RoomAgentContextService.VerifyRoomAccess:input_type -> room_agent.v1.VerifyRoomAccessRequest
+	4,  // 7: room_agent.v1.RoomAgentContextService.GetRoomUnreadMessages:input_type -> room_agent.v1.GetRoomUnreadMessagesRequest
+	6,  // 8: room_agent.v1.RoomAgentContextService.SyncRoomMessages:input_type -> room_agent.v1.SyncRoomMessagesRequest
+	8,  // 9: room_agent.v1.RoomAgentContextService.SearchRoomMessages:input_type -> room_agent.v1.SearchRoomMessagesRequest
+	3,  // 10: room_agent.v1.RoomAgentContextService.VerifyRoomAccess:output_type -> room_agent.v1.VerifyRoomAccessResponse
+	5,  // 11: room_agent.v1.RoomAgentContextService.GetRoomUnreadMessages:output_type -> room_agent.v1.GetRoomUnreadMessagesResponse
+	7,  // 12: room_agent.v1.RoomAgentContextService.SyncRoomMessages:output_type -> room_agent.v1.SyncRoomMessagesResponse
+	10, // 13: room_agent.v1.RoomAgentContextService.SearchRoomMessages:output_type -> room_agent.v1.SearchRoomMessagesResponse
+	10, // [10:14] is the sub-list for method output_type
+	6,  // [6:10] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_internal_interfaces_grpc_pb_room_agent_proto_init() }
@@ -506,7 +776,7 @@ func file_internal_interfaces_grpc_pb_room_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_interfaces_grpc_pb_room_agent_proto_rawDesc), len(file_internal_interfaces_grpc_pb_room_agent_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   5,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

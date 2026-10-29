@@ -10,6 +10,8 @@ server:
   max_header_bytes: 1048576
 grpc:
   room_agent_address: ":50051"
+  room_message_sync_default_batch_size: 100
+  room_message_sync_max_batch_size: 500
 http:
   user_api_rate_limit:
     # 本地压测准备允许同一来源批量登录；其他部署环境应按需覆盖。

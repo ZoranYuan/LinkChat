@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"log"
 	"strings"
 	"time"
@@ -13,26 +12,206 @@ import (
 
 	"IM_backend/configs"
 	roomcache "IM_backend/internal/application/ports/cache/room"
+	domainconversation "IM_backend/internal/domain/conversation"
+	domainmessage "IM_backend/internal/domain/message"
 	domainroom "IM_backend/internal/domain/room"
+	domainuser "IM_backend/internal/domain/user"
 )
 
 type RoomAgentApplication struct {
-	roomMemberRepository domainroom.RoomMemberRepository
-	roomMemberCache      roomcache.RoomMemberCache
-	config               configs.MessageConfig
-	sf                   singleflight.Group
+	roomMemberRepository       domainroom.RoomMemberRepository
+	conversationRepository     domainconversation.ConversationRepository
+	userConversationRepository domainconversation.UserConversationRepository
+	messageRepository          domainmessage.MessageRepository
+	userRepository             domainuser.UserRepository
+	roomMemberCache            roomcache.RoomMemberCache
+	config                     configs.MessageConfig
+	grpcConfig                 configs.GRPCConfig
+	sf                         singleflight.Group
 }
 
 func NewRoomAgentApplication(
 	roomMemberRepository domainroom.RoomMemberRepository,
+	conversationRepository domainconversation.ConversationRepository,
+	userConversationRepository domainconversation.UserConversationRepository,
+	userRepository domainuser.UserRepository,
+	messageRepository domainmessage.MessageRepository,
 	roomMemberCache roomcache.RoomMemberCache,
 	config configs.MessageConfig,
+	grpcConfig configs.GRPCConfig,
 ) *RoomAgentApplication {
 	return &RoomAgentApplication{
-		roomMemberRepository: roomMemberRepository,
-		roomMemberCache:      roomMemberCache,
-		config:               config,
+		roomMemberRepository:       roomMemberRepository,
+		conversationRepository:     conversationRepository,
+		userConversationRepository: userConversationRepository,
+		userRepository:             userRepository,
+		messageRepository:          messageRepository,
+		roomMemberCache:            roomMemberCache,
+		config:                     config,
+		grpcConfig:                 grpcConfig,
 	}
+}
+
+// sendMessagesByStream 按 (afterSeq, untilSeq] 分批查询，只输出未撤回的文本消息。
+func (ra *RoomAgentApplication) sendMessagesByStream(
+	ctx context.Context,
+	conversationID string,
+	afterSeq, untilSeq int64,
+	limit int,
+	send func([]ChatMessageDTO) error,
+) error {
+	if limit <= 0 {
+		limit = ra.grpcConfig.RoomMessageSyncDefaultBatchSize
+	}
+	if limit > ra.grpcConfig.RoomMessageSyncMaxBatchSize {
+		limit = ra.grpcConfig.RoomMessageSyncMaxBatchSize
+	}
+
+	for afterSeq < untilSeq {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		messages, err := ra.messageRepository.ListAfterSeqUntil(
+			ctx, conversationID, afterSeq, untilSeq, limit,
+		)
+		if err != nil {
+			return err
+		}
+		if len(messages) == 0 {
+			return nil
+		}
+
+		// 先推进原始查询游标，过滤后为空也能继续读取下一批。
+		afterSeq = messages[len(messages)-1].Seq
+
+		items := make([]ChatMessageDTO, 0, len(messages))
+		senderIDs := make([]string, 0, len(messages))
+		senders := make(map[string]struct{})
+
+		for _, message := range messages {
+			if message.Type != domainmessage.Text ||
+				message.Status == domainmessage.Withdrawn {
+				continue
+			}
+
+			items = append(items, ChatMessageDTO{
+				MessageID:      message.MessageID,
+				ConversationID: message.ConversationID,
+				SenderID:       message.SenderID,
+				Seq:            message.Seq,
+				Type:           0,
+				Content:        message.Content,
+				Status:         0,
+				SendTime:       message.SendTime,
+			})
+
+			if _, exists := senders[message.SenderID]; !exists {
+				senders[message.SenderID] = struct{}{}
+				senderIDs = append(senderIDs, message.SenderID)
+			}
+		}
+
+		// 当前一批消息可能是撤回或者不满足条件的消息，这里需要再次查询
+		if len(items) == 0 {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// 批量查询用户信息
+		users, err := ra.userRepository.ListUsersByUserIDs(senderIDs)
+		if err != nil {
+			return err
+		}
+
+		names := make(map[string]string, len(users))
+		for _, user := range users {
+			name := user.Nickname
+			if name == "" {
+				name = user.Username
+			}
+			names[user.UserID] = name
+		}
+		for i := range items {
+			items[i].SenderName = names[items[i].SenderID]
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := send(items); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (ra *RoomAgentApplication) SearchRoomMessages(
+	ctx context.Context,
+	roomID, userID string,
+	ranges [][2]int64,
+	limit uint32,
+	send func([]ChatMessageDTO) error,
+) error {
+	if _, err := ra.VerifyRoomAccess(ctx, roomID, userID); err != nil {
+		return err
+	}
+
+	conversation, err := ra.conversationRepository.FindConversationByRoomID(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	if conversation == nil {
+		return domainconversation.ErrConversationNotCreated
+	}
+
+	// 区间已由 Agent 校验、排序及合并，本次查询不超过开始时的最新序号。
+	untilSeq := conversation.LatestSeq
+	for _, item := range ranges {
+		if err := ra.sendMessagesByStream(
+			ctx,
+			conversation.ConversationID,
+			item[0]-1,
+			min(item[1], untilSeq),
+			int(limit),
+			send,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ra *RoomAgentApplication) SyncRoomMessages(
+	ctx context.Context,
+	roomID, userID string,
+	afterSeq int64,
+	limit uint32,
+	send func([]ChatMessageDTO) error,
+) error {
+	if _, err := ra.VerifyRoomAccess(ctx, roomID, userID); err != nil {
+		return err
+	}
+
+	conversation, err := ra.conversationRepository.FindConversationByRoomID(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	if conversation == nil {
+		return domainconversation.ErrConversationNotCreated
+	}
+
+	return ra.sendMessagesByStream(
+		ctx,
+		conversation.ConversationID,
+		afterSeq,
+		conversation.LatestSeq,
+		int(limit),
+		send,
+	)
 }
 
 func (ra *RoomAgentApplication) VerifyRoomAccess(ctx context.Context, roomID, userID string) (string, error) {
@@ -98,8 +277,47 @@ func (ra *RoomAgentApplication) VerifyRoomAccess(ctx context.Context, roomID, us
 	return hex.EncodeToString(threadID[:]), nil
 }
 
-func (ra *RoomAgentApplication) GetRoomUnreadMessages(ctx context.Context, roomID, userID string, pageSize uint32, cursor int64) (
-	[]ChatMessageDTO, int64, error,
-) {
-	return nil, 0, errors.New("Room Agent 未读消息查询尚未实现")
+func (ra *RoomAgentApplication) GetRoomUnreadMessages(
+	ctx context.Context,
+	roomID, userID string,
+	limit uint32,
+	send func([]ChatMessageDTO) error,
+) error {
+	if _, err := ra.VerifyRoomAccess(ctx, roomID, userID); err != nil {
+		return err
+	}
+
+	conversation, err := ra.conversationRepository.FindConversationByRoomID(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	if conversation == nil {
+		return domainconversation.ErrConversationNotCreated
+	}
+
+	userConversation, err := ra.userConversationRepository.FindUserConversationByUserIDAndConversationID(
+		ctx, userID, conversation.ConversationID,
+	)
+	if err != nil {
+		return err
+	}
+	if userConversation == nil {
+		return domainconversation.ErrConversationNotCreated
+	}
+
+	// 固定已保存的未读范围，不使用当前已读水位重新计算，也不修改快照。
+	beginSeq := userConversation.SummaryUnreadBeginSeq
+	endSeq := userConversation.SummaryUnreadEndSeq
+	if beginSeq == 0 && endSeq == 0 {
+		return nil
+	}
+
+	return ra.sendMessagesByStream(
+		ctx,
+		conversation.ConversationID,
+		beginSeq-1,
+		endSeq,
+		int(limit),
+		send,
+	)
 }

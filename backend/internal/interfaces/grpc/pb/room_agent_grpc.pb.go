@@ -21,6 +21,8 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	RoomAgentContextService_VerifyRoomAccess_FullMethodName      = "/room_agent.v1.RoomAgentContextService/VerifyRoomAccess"
 	RoomAgentContextService_GetRoomUnreadMessages_FullMethodName = "/room_agent.v1.RoomAgentContextService/GetRoomUnreadMessages"
+	RoomAgentContextService_SyncRoomMessages_FullMethodName      = "/room_agent.v1.RoomAgentContextService/SyncRoomMessages"
+	RoomAgentContextService_SearchRoomMessages_FullMethodName    = "/room_agent.v1.RoomAgentContextService/SearchRoomMessages"
 )
 
 // RoomAgentContextServiceClient is the client API for RoomAgentContextService service.
@@ -28,7 +30,9 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RoomAgentContextServiceClient interface {
 	VerifyRoomAccess(ctx context.Context, in *VerifyRoomAccessRequest, opts ...grpc.CallOption) (*VerifyRoomAccessResponse, error)
-	GetRoomUnreadMessages(ctx context.Context, in *GetRoomUnreadMessagesRequest, opts ...grpc.CallOption) (*GetRoomUnreadMessagesResponse, error)
+	GetRoomUnreadMessages(ctx context.Context, in *GetRoomUnreadMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetRoomUnreadMessagesResponse], error)
+	SyncRoomMessages(ctx context.Context, in *SyncRoomMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SyncRoomMessagesResponse], error)
+	SearchRoomMessages(ctx context.Context, in *SearchRoomMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SearchRoomMessagesResponse], error)
 }
 
 type roomAgentContextServiceClient struct {
@@ -49,22 +53,71 @@ func (c *roomAgentContextServiceClient) VerifyRoomAccess(ctx context.Context, in
 	return out, nil
 }
 
-func (c *roomAgentContextServiceClient) GetRoomUnreadMessages(ctx context.Context, in *GetRoomUnreadMessagesRequest, opts ...grpc.CallOption) (*GetRoomUnreadMessagesResponse, error) {
+func (c *roomAgentContextServiceClient) GetRoomUnreadMessages(ctx context.Context, in *GetRoomUnreadMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetRoomUnreadMessagesResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetRoomUnreadMessagesResponse)
-	err := c.cc.Invoke(ctx, RoomAgentContextService_GetRoomUnreadMessages_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &RoomAgentContextService_ServiceDesc.Streams[0], RoomAgentContextService_GetRoomUnreadMessages_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[GetRoomUnreadMessagesRequest, GetRoomUnreadMessagesResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RoomAgentContextService_GetRoomUnreadMessagesClient = grpc.ServerStreamingClient[GetRoomUnreadMessagesResponse]
+
+func (c *roomAgentContextServiceClient) SyncRoomMessages(ctx context.Context, in *SyncRoomMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SyncRoomMessagesResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RoomAgentContextService_ServiceDesc.Streams[1], RoomAgentContextService_SyncRoomMessages_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SyncRoomMessagesRequest, SyncRoomMessagesResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RoomAgentContextService_SyncRoomMessagesClient = grpc.ServerStreamingClient[SyncRoomMessagesResponse]
+
+func (c *roomAgentContextServiceClient) SearchRoomMessages(ctx context.Context, in *SearchRoomMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SearchRoomMessagesResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RoomAgentContextService_ServiceDesc.Streams[2], RoomAgentContextService_SearchRoomMessages_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SearchRoomMessagesRequest, SearchRoomMessagesResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RoomAgentContextService_SearchRoomMessagesClient = grpc.ServerStreamingClient[SearchRoomMessagesResponse]
 
 // RoomAgentContextServiceServer is the server API for RoomAgentContextService service.
 // All implementations must embed UnimplementedRoomAgentContextServiceServer
 // for forward compatibility.
 type RoomAgentContextServiceServer interface {
 	VerifyRoomAccess(context.Context, *VerifyRoomAccessRequest) (*VerifyRoomAccessResponse, error)
-	GetRoomUnreadMessages(context.Context, *GetRoomUnreadMessagesRequest) (*GetRoomUnreadMessagesResponse, error)
+	GetRoomUnreadMessages(*GetRoomUnreadMessagesRequest, grpc.ServerStreamingServer[GetRoomUnreadMessagesResponse]) error
+	SyncRoomMessages(*SyncRoomMessagesRequest, grpc.ServerStreamingServer[SyncRoomMessagesResponse]) error
+	SearchRoomMessages(*SearchRoomMessagesRequest, grpc.ServerStreamingServer[SearchRoomMessagesResponse]) error
 	mustEmbedUnimplementedRoomAgentContextServiceServer()
 }
 
@@ -78,8 +131,14 @@ type UnimplementedRoomAgentContextServiceServer struct{}
 func (UnimplementedRoomAgentContextServiceServer) VerifyRoomAccess(context.Context, *VerifyRoomAccessRequest) (*VerifyRoomAccessResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VerifyRoomAccess not implemented")
 }
-func (UnimplementedRoomAgentContextServiceServer) GetRoomUnreadMessages(context.Context, *GetRoomUnreadMessagesRequest) (*GetRoomUnreadMessagesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetRoomUnreadMessages not implemented")
+func (UnimplementedRoomAgentContextServiceServer) GetRoomUnreadMessages(*GetRoomUnreadMessagesRequest, grpc.ServerStreamingServer[GetRoomUnreadMessagesResponse]) error {
+	return status.Error(codes.Unimplemented, "method GetRoomUnreadMessages not implemented")
+}
+func (UnimplementedRoomAgentContextServiceServer) SyncRoomMessages(*SyncRoomMessagesRequest, grpc.ServerStreamingServer[SyncRoomMessagesResponse]) error {
+	return status.Error(codes.Unimplemented, "method SyncRoomMessages not implemented")
+}
+func (UnimplementedRoomAgentContextServiceServer) SearchRoomMessages(*SearchRoomMessagesRequest, grpc.ServerStreamingServer[SearchRoomMessagesResponse]) error {
+	return status.Error(codes.Unimplemented, "method SearchRoomMessages not implemented")
 }
 func (UnimplementedRoomAgentContextServiceServer) mustEmbedUnimplementedRoomAgentContextServiceServer() {
 }
@@ -121,23 +180,38 @@ func _RoomAgentContextService_VerifyRoomAccess_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RoomAgentContextService_GetRoomUnreadMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetRoomUnreadMessagesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _RoomAgentContextService_GetRoomUnreadMessages_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetRoomUnreadMessagesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(RoomAgentContextServiceServer).GetRoomUnreadMessages(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RoomAgentContextService_GetRoomUnreadMessages_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RoomAgentContextServiceServer).GetRoomUnreadMessages(ctx, req.(*GetRoomUnreadMessagesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(RoomAgentContextServiceServer).GetRoomUnreadMessages(m, &grpc.GenericServerStream[GetRoomUnreadMessagesRequest, GetRoomUnreadMessagesResponse]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RoomAgentContextService_GetRoomUnreadMessagesServer = grpc.ServerStreamingServer[GetRoomUnreadMessagesResponse]
+
+func _RoomAgentContextService_SyncRoomMessages_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SyncRoomMessagesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RoomAgentContextServiceServer).SyncRoomMessages(m, &grpc.GenericServerStream[SyncRoomMessagesRequest, SyncRoomMessagesResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RoomAgentContextService_SyncRoomMessagesServer = grpc.ServerStreamingServer[SyncRoomMessagesResponse]
+
+func _RoomAgentContextService_SearchRoomMessages_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SearchRoomMessagesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RoomAgentContextServiceServer).SearchRoomMessages(m, &grpc.GenericServerStream[SearchRoomMessagesRequest, SearchRoomMessagesResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RoomAgentContextService_SearchRoomMessagesServer = grpc.ServerStreamingServer[SearchRoomMessagesResponse]
 
 // RoomAgentContextService_ServiceDesc is the grpc.ServiceDesc for RoomAgentContextService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -150,11 +224,23 @@ var RoomAgentContextService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "VerifyRoomAccess",
 			Handler:    _RoomAgentContextService_VerifyRoomAccess_Handler,
 		},
+	},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "GetRoomUnreadMessages",
-			Handler:    _RoomAgentContextService_GetRoomUnreadMessages_Handler,
+			StreamName:    "GetRoomUnreadMessages",
+			Handler:       _RoomAgentContextService_GetRoomUnreadMessages_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SyncRoomMessages",
+			Handler:       _RoomAgentContextService_SyncRoomMessages_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SearchRoomMessages",
+			Handler:       _RoomAgentContextService_SearchRoomMessages_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "internal/interfaces/grpc/pb/room_agent.proto",
 }

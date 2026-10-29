@@ -9,7 +9,13 @@ service RoomAgentContextService {
   returns (VerifyRoomAccessResponse);
 
   rpc GetRoomUnreadMessages(GetRoomUnreadMessagesRequest)
-  returns (GetRoomUnreadMessagesResponse);
+  returns (stream GetRoomUnreadMessagesResponse);
+
+  rpc SyncRoomMessages(SyncRoomMessagesRequest)
+  returns (stream SyncRoomMessagesResponse);
+
+  rpc SearchRoomMessages(SearchRoomMessagesRequest)
+  returns (stream SearchRoomMessagesResponse);
 }
 
 message VerifyRoomAccessRequest {
@@ -17,18 +23,47 @@ message VerifyRoomAccessRequest {
 }
 
 message VerifyRoomAccessResponse {
-  string thread_id = 3;
+  string thread_id = 1;
 }
 
 message GetRoomUnreadMessagesRequest {
-  string room_id   = 1;
-  uint32 page_size = 3;
-  int64  cursor    = 4;
+  string room_id = 1;
+  uint32 limit = 2;
+
+  reserved 3;
+  reserved "cursor";
 }
 
 message GetRoomUnreadMessagesResponse {
-  repeated ChatMessage messages    = 4;
-  int64                next_cursor = 5;
+  repeated ChatMessage messages = 1;
+
+  reserved 2;
+  reserved "next_cursor";
+}
+
+message SyncRoomMessagesRequest {
+  string room_id = 1;
+  int64 after_seq = 2;
+  uint32 limit = 3;
+}
+
+message SyncRoomMessagesResponse {
+  repeated ChatMessage messages = 1;
+}
+
+message SearchRoomMessagesRequest {
+  string room_id = 1;
+  repeated MessageSeqRange ranges = 2;
+  uint32 limit = 3;
+}
+
+message MessageSeqRange {
+  int64 seq_start = 1;
+  int64 seq_end = 2;
+}
+
+message SearchRoomMessagesResponse {
+  repeated ChatMessage messages = 1;
 }
 
 message ChatMessage {
