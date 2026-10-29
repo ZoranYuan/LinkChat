@@ -47,8 +47,8 @@ ws:
   max_message_size: 5120
   max_message_send_buffer_size: 256
   message_sequencer_shard_count: 16 # 消息 Sequencer 分片数；同一会话固定路由到同一分片。
-  message_batch_size: 64 # 每个 Sequencer 分片 channel 的容量，也是满批 flush 的阈值。
-  message_flush_interval_milliseconds: 5 # 周期性 flush 间隔，单位毫秒。
+  message_batch_size: 128 # 每个 Sequencer 分片 channel 的容量，后续入队遇满时触发 flush。
+  message_flush_interval_milliseconds: 10 # 周期性 flush 间隔，单位毫秒。
   send_message_rate: 10
   send_message_burst: 20
   batch_max_messages: 64
