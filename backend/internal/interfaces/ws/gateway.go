@@ -278,13 +278,18 @@ func (g *Gateway) UnbindUserFromRoom(userID, roomID string) {
 }
 
 func (g *Gateway) DeliverToOnlineRoomMembers(eventType, roomID string, payload []byte, excludeUserID string) error {
+	encoded, err := EncodePayload(eventType, payload)
+	if err != nil {
+		return err
+	}
+	message := Message{Op: eventType, Data: encoded}
 	for _, connection := range g.connectionsForRoom(roomID) {
 		// 排除发送者自身
 		if excludeUserID != "" && connection.UserID() == excludeUserID {
 			continue
 		}
 
-		if err := connection.PushEvent(eventType, payload); err != nil {
+		if err := connection.Enqueue(message); err != nil {
 			// 当前 Connection 投递失败，主动断开，然后让前端重新连接并同步消息。
 			connection.Close()
 

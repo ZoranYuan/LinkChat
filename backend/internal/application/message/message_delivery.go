@@ -216,9 +216,6 @@ func (shard *largeRoomMessageBatchShard) flush(ctx context.Context) {
 		}
 		if err != nil {
 			log.Printf("投递大型房间轻量提醒失败：room=%s seq=%d error=%v", item.notice.ConversationID, item.notice.Seq, err)
-			if retryErr := shard.put(item); retryErr != nil {
-				log.Printf("重新合并大型房间提醒失败：room=%s seq=%d error=%v", item.notice.ConversationID, item.notice.Seq, retryErr)
-			}
 		}
 	}
 }
