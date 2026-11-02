@@ -28,7 +28,7 @@ database:
   redis:
     dsn: "redis://redis:6379/1?dial_timeout=5s&read_timeout=3s&pool_size=50"
 jwt:
-  issuer: "IMChat"
+  issuer: "LinkChat"
   secret: "U2FsdGVkX19anQGSRtiUwgRLpWV333jI4xjlCF32dek="
   access_expire_minutes: 150
   refresh_expire_hours: 168

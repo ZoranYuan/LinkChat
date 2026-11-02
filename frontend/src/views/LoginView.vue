@@ -93,7 +93,7 @@ watch(mode, () => {
         >
           <MessageCircle :size="25" />
         </span>
-        <span class="mt-2.75 text-base font-bold tracking-[-0.02em]">IMChat</span>
+        <span class="mt-2.75 text-base font-bold tracking-[-0.02em]">LinkChat</span>
         <span class="mt-7.5 text-[10px] font-extrabold tracking-[0.16em] text-[#5b35f5]"
           >ACCOUNT ACCESS</span
         >

@@ -20,7 +20,7 @@ defineEmits(["select", "logout", "retry"]);
       >
         <MessageCircle :size="20" />
       </span>
-      <strong class="text-sm font-extrabold tracking-[-0.03em] text-[#241b43]">IMChat</strong>
+      <strong class="text-sm font-extrabold tracking-[-0.03em] text-[#241b43]">LinkChat</strong>
     </div>
 
     <nav class="mt-9 flex w-full flex-1 flex-col gap-1" aria-label="主要导航">

@@ -43,7 +43,7 @@ const filtered = computed(() => {
   <section class="flex h-full min-w-0 flex-col bg-white text-sm">
     <header class="flex items-center justify-between px-5 pb-4 pt-6">
       <div>
-        <p class="mb-1 text-[10px] font-bold tracking-[0.16em] text-[#5b35f5]">IMCHAT</p>
+        <p class="mb-1 text-[10px] font-bold tracking-[0.16em] text-[#5b35f5]">LinkChat</p>
         <h1 class="m-0 text-[20px] font-bold tracking-[-0.03em] text-[#17122c]">消息</h1>
       </div>
       <div class="flex items-center gap-1.5">
