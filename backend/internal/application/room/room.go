@@ -218,6 +218,49 @@ func (ra *RoomApplication) GetActiveRoom(ctx context.Context, roomID string) (*d
 	return room, nil
 }
 
+func (ra *RoomApplication) GetActiveRooms(ctx context.Context, roomIDs []string) (map[string]*domainroom.Room, error) {
+	rooms := make(map[string]*domainroom.Room, len(roomIDs))
+	if len(roomIDs) == 0 {
+		return rooms, nil
+	}
+
+	roomByID := make(map[string]*domainroom.Room, len(roomIDs))
+	if ra.roomInfoCache != nil {
+		cached, err := ra.roomInfoCache.GetRoomInfos(ctx, roomIDs)
+		if err != nil {
+			log.Printf("批量读取房间基础信息缓存失败：room_count=%d error=%v", len(roomIDs), err)
+		} else {
+			roomByID = cached
+		}
+	}
+
+	missIDs := make([]string, 0, len(roomIDs))
+	for _, roomID := range roomIDs {
+		if roomByID[roomID] == nil {
+			missIDs = append(missIDs, roomID)
+		}
+	}
+	databaseRooms, err := ra.roomRepository.ListRoomsByIDs(ctx, missIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, room := range databaseRooms {
+		roomByID[room.RoomID] = room
+	}
+	if ra.roomInfoCache != nil && ra.roomInfoCacheTTL > 0 && len(databaseRooms) > 0 {
+		if err := ra.roomInfoCache.SetRoomInfos(ctx, databaseRooms, ra.roomInfoCacheTTL); err != nil {
+			log.Printf("批量回填房间基础信息缓存失败：room_count=%d error=%v", len(databaseRooms), err)
+		}
+	}
+
+	for _, roomID := range roomIDs {
+		if room := roomByID[roomID]; room != nil && room.Status == domainroom.Normal {
+			rooms[roomID] = room
+		}
+	}
+	return rooms, nil
+}
+
 // GetRoomInfo 先读 Redis；缓存未命中或不可用时回源 MySQL 并尝试回填。
 func (ra *RoomApplication) GetRoomInfo(ctx context.Context, roomID string) (*domainroom.Room, error) {
 	if roomID == "" {

@@ -193,7 +193,7 @@ func (uh *Handler) FindUserByPhoneOrUsername(c *gin.Context) {
 		return
 	}
 
-	userApp, err := uh.app.FindUserByPhoneOrUsername(keyword)
+	userApp, err := uh.app.FindUserByPhoneOrUsername(c.Request.Context(), keyword)
 	if err != nil {
 		log.Println("根据手机号或用户名查询用户失败：", err)
 		c.JSON(http.StatusNotFound, response.Error(http.StatusNotFound, "用户不存在"))

@@ -50,6 +50,21 @@ func (rr *RoomRepository) FindRoomByRoomID(ctx context.Context, roomID string) (
 	return toDomain(m), nil
 }
 
+func (rr *RoomRepository) ListRoomsByIDs(ctx context.Context, roomIDs []string) ([]*domainroom.Room, error) {
+	if len(roomIDs) == 0 {
+		return []*domainroom.Room{}, nil
+	}
+	var models []RoomModel
+	if err := rr.db.WithContext(ctx).Where("room_id IN ?", roomIDs).Find(&models).Error; err != nil {
+		return nil, err
+	}
+	rooms := make([]*domainroom.Room, 0, len(models))
+	for _, model := range models {
+		rooms = append(rooms, toDomain(model))
+	}
+	return rooms, nil
+}
+
 func (rr *RoomRepository) IncrementMemberCount(ctx context.Context, roomID string, status int) (bool, error) {
 	result := rr.db.WithContext(ctx).
 		Model(&RoomModel{}).

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	conversationcache "IM_backend/internal/application/ports/cache/conversation"
+	usercache "IM_backend/internal/application/ports/cache/user"
 	domainconversation "IM_backend/internal/domain/conversation"
 	domainfriend "IM_backend/internal/domain/friend"
 	domainmessage "IM_backend/internal/domain/message"
@@ -76,12 +77,13 @@ func (ca *ConversationApplication) CacheConversationInfo(ctx context.Context, re
 }
 
 type roomInfoService interface {
-	GetActiveRoom(ctx context.Context, roomID string) (*domainroom.Room, error)
+	GetActiveRooms(ctx context.Context, roomIDs []string) (map[string]*domainroom.Room, error)
 }
 
 type UserConversationApplication struct {
 	friendRepository           domainfriend.FriendRepository
 	userRepository             domainuser.UserRepository
+	userProfileCache           usercache.ProfileCache
 	roomApplication            roomInfoService
 	userConversationRepository domainconversation.UserConversationRepository
 	conversationRepository     domainconversation.ConversationRepository
@@ -94,11 +96,13 @@ func NewUserConversationApplication(
 	messageRepository domainmessage.MessageRepository,
 	friendRepository domainfriend.FriendRepository,
 	userRepository domainuser.UserRepository,
+	userProfileCache usercache.ProfileCache,
 	roomApplication roomInfoService,
 ) *UserConversationApplication {
 	return &UserConversationApplication{
 		friendRepository:           friendRepository,
 		userRepository:             userRepository,
+		userProfileCache:           userProfileCache,
 		roomApplication:            roomApplication,
 		userConversationRepository: userConversationRepository,
 		conversationRepository:     conversationRepository,
@@ -194,26 +198,52 @@ func (uc *UserConversationApplication) GetUserConversationsByUserID(ctx context.
 
 	userByID := make(map[string]PeerUserDTO, len(privatePeerIDs))
 	if len(privatePeerIDs) > 0 {
-		users, err := uc.userRepository.ListUsersByUserIDs(privatePeerIDs)
+		profileByID := make(map[string]*usercache.Profile, len(privatePeerIDs))
+		if uc.userProfileCache != nil {
+			cached, cacheErr := uc.userProfileCache.GetByUserIDs(ctx, privatePeerIDs)
+			if cacheErr != nil {
+				log.Printf("批量读取用户资料缓存失败：user_count=%d error=%v", len(privatePeerIDs), cacheErr)
+			} else {
+				profileByID = cached
+			}
+		}
+
+		missIDs := make([]string, 0, len(privatePeerIDs))
+		for _, id := range privatePeerIDs {
+			if profileByID[id] == nil {
+				missIDs = append(missIDs, id)
+			}
+		}
+		users, err := uc.userRepository.ListUsersByUserIDs(missIDs)
 		if err != nil {
 			return nil, err
 		}
 		for _, user := range users {
-			userByID[user.UserID] = PeerUserDTO{
-				UserID:    user.UserID,
-				Username:  user.Username,
-				Nickname:  user.Nickname,
-				AvatarURL: user.Avatar,
+			profile := &usercache.Profile{
+				UserID: user.UserID, Username: user.Username,
+				Nickname: user.Nickname, Avatar: user.Avatar,
+			}
+			profileByID[user.UserID] = profile
+			if uc.userProfileCache != nil {
+				if err := uc.userProfileCache.SetByUserID(ctx, user.UserID, profile, 10*time.Minute); err != nil {
+					log.Printf("回填用户 ID 资料缓存失败：user=%s error=%v", user.UserID, err)
+				}
+			}
+		}
+		for id, profile := range profileByID {
+			userByID[id] = PeerUserDTO{
+				UserID: id, Username: profile.Username,
+				Nickname: profile.Nickname, AvatarURL: profile.Avatar,
 			}
 		}
 	}
 
 	roomByID := make(map[string]RoomDTO, len(roomIDs))
-	for _, roomID := range roomIDs {
-		room, err := uc.roomApplication.GetActiveRoom(ctx, roomID)
-		if err != nil {
-			continue
-		}
+	rooms, err := uc.roomApplication.GetActiveRooms(ctx, roomIDs)
+	if err != nil {
+		log.Printf("批量查询房间资料失败：room_count=%d error=%v", len(roomIDs), err)
+	}
+	for roomID, room := range rooms {
 		roomByID[roomID] = RoomDTO{
 			RoomID:      room.RoomID,
 			RoomName:    room.RoomName,

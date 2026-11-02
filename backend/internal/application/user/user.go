@@ -9,6 +9,7 @@ import (
 
 	"IM_backend/configs"
 	authport "IM_backend/internal/application/ports/cache/auth"
+	usercache "IM_backend/internal/application/ports/cache/user"
 	idport "IM_backend/internal/application/ports/id"
 	securityport "IM_backend/internal/application/ports/security"
 	"IM_backend/internal/application/ports/transaction"
@@ -17,6 +18,7 @@ import (
 
 type UserApplication struct {
 	userRepository domainuser.UserRepository
+	profileCache   usercache.ProfileCache
 	tokenIssuer    securityport.TokenIssuer
 	config         configs.JWT
 	authCache      authport.AuthCache
@@ -26,9 +28,15 @@ type UserApplication struct {
 	txManager      transaction.Manager
 }
 
-func NewUserApplication(userRepository domainuser.UserRepository, config configs.JWT, authCache authport.AuthCache, tokenIssuer securityport.TokenIssuer, idGenerator idport.Generator, passwordHasher securityport.PasswordHasher, txManager transaction.Manager) *UserApplication {
+const (
+	userProfileCacheTTL  = 10 * time.Minute
+	userNotFoundCacheTTL = time.Minute
+)
+
+func NewUserApplication(userRepository domainuser.UserRepository, profileCache usercache.ProfileCache, config configs.JWT, authCache authport.AuthCache, tokenIssuer securityport.TokenIssuer, idGenerator idport.Generator, passwordHasher securityport.PasswordHasher, txManager transaction.Manager) *UserApplication {
 	return &UserApplication{
 		userRepository: userRepository,
+		profileCache:   profileCache,
 		config:         config,
 		authCache:      authCache,
 		tokenIssuer:    tokenIssuer,
@@ -88,7 +96,6 @@ func (ua *UserApplication) RegisterWithPhone(password string, phone string, reco
 	if err != nil {
 		return nil, err
 	}
-
 	// 生成 UserId
 	userID, err := ua.idGenerator.Generate()
 	if err != nil {
@@ -100,6 +107,10 @@ func (ua *UserApplication) RegisterWithPhone(password string, phone string, reco
 
 	if err != nil {
 		return nil, err
+	}
+	if ua.profileCache != nil {
+		_ = ua.profileCache.DeleteNotFound(context.Background(), phone)
+		_ = ua.profileCache.DeleteNotFound(context.Background(), newUser.Username)
 	}
 
 	userApp := &UserAppDTO{
@@ -175,8 +186,16 @@ func (ua *UserApplication) UpdateUserProfile(ctx context.Context, userID string,
 		return nil, errors.New("用户资料更新事务管理器未配置")
 	}
 
+	previousUser, err := ua.userRepository.FindUserByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if previousUser == nil {
+		return nil, ErrUserNotFound
+	}
+
 	var user *domainuser.User
-	err := ua.txManager.WithinTransaction(ctx, func(tx any) error {
+	err = ua.txManager.WithinTransaction(ctx, func(tx any) error {
 		var err error
 		user, err = ua.userRepository.WithTx(tx).UpdateUserProfile(ctx, userID, updates)
 		return err
@@ -184,6 +203,7 @@ func (ua *UserApplication) UpdateUserProfile(ctx context.Context, userID string,
 	if err != nil {
 		return nil, err
 	}
+	ua.invalidateProfileCache(ctx, previousUser, user)
 
 	return &UserAppDTO{
 		UserID:    user.UserID,
@@ -194,14 +214,31 @@ func (ua *UserApplication) UpdateUserProfile(ctx context.Context, userID string,
 	}, nil
 }
 
-func (ua *UserApplication) FindUserByPhoneOrUsername(keyword string) (*UserAppDTO, error) {
+func (ua *UserApplication) FindUserByPhoneOrUsername(ctx context.Context, keyword string) (*UserAppDTO, error) {
+	if ua.profileCache != nil {
+		missing, err := ua.profileCache.GetNotFound(ctx, keyword)
+		if err == nil && missing {
+			return nil, ErrUserNotFound
+		}
+		if profile, hit, err := ua.profileCache.GetByPhone(ctx, keyword); err == nil && hit {
+			return profileToDTO(profile), nil
+		}
+		if profile, hit, err := ua.profileCache.GetByUsername(ctx, keyword); err == nil && hit {
+			return profileToDTO(profile), nil
+		}
+	}
+
 	user, err := ua.userRepository.FindUserByUsernameOrPhone(keyword)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
+		if ua.profileCache != nil {
+			_ = ua.profileCache.SetNotFound(ctx, keyword, userNotFoundCacheTTL)
+		}
 		return nil, ErrUserNotFound
 	}
+	ua.cacheUserProfile(ctx, user)
 
 	return &UserAppDTO{
 		UserID:    user.UserID,
@@ -209,6 +246,57 @@ func (ua *UserApplication) FindUserByPhoneOrUsername(keyword string) (*UserAppDT
 		Nickname:  user.Nickname,
 		AvatarURL: user.Avatar,
 	}, nil
+}
+
+func profileToDTO(profile *usercache.Profile) *UserAppDTO {
+	return &UserAppDTO{
+		UserID: profile.UserID, Username: profile.Username,
+		Nickname: profile.Nickname, AvatarURL: profile.Avatar,
+	}
+}
+
+func (ua *UserApplication) cacheUserProfile(ctx context.Context, user *domainuser.User) {
+	if ua.profileCache == nil || user == nil {
+		return
+	}
+	profile := &usercache.Profile{
+		UserID: user.UserID, Username: user.Username,
+		Nickname: user.Nickname, Avatar: user.Avatar,
+	}
+	if err := ua.profileCache.SetByPhone(ctx, string(user.Phone), profile, userProfileCacheTTL); err != nil {
+		log.Printf("回填手机号用户资料缓存失败：user=%s error=%v", user.UserID, err)
+	}
+	if err := ua.profileCache.SetByUsername(ctx, user.Username, profile, userProfileCacheTTL); err != nil {
+		log.Printf("回填用户名用户资料缓存失败：user=%s error=%v", user.UserID, err)
+	}
+	if err := ua.profileCache.SetByUserID(ctx, user.UserID, profile, userProfileCacheTTL); err != nil {
+		log.Printf("回填用户 ID 资料缓存失败：user=%s error=%v", user.UserID, err)
+	}
+	_ = ua.profileCache.DeleteNotFound(ctx, string(user.Phone))
+	_ = ua.profileCache.DeleteNotFound(ctx, user.Username)
+	_ = ua.profileCache.DeleteNotFound(ctx, user.UserID)
+}
+
+func (ua *UserApplication) invalidateProfileCache(ctx context.Context, users ...*domainuser.User) {
+	if ua.profileCache == nil {
+		return
+	}
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		if err := ua.profileCache.DeleteByPhone(ctx, string(user.Phone)); err != nil {
+			log.Printf("删除手机号用户资料缓存失败：user=%s error=%v", user.UserID, err)
+		}
+		if err := ua.profileCache.DeleteByUsername(ctx, user.Username); err != nil {
+			log.Printf("删除用户名用户资料缓存失败：user=%s error=%v", user.UserID, err)
+		}
+		if err := ua.profileCache.DeleteByUserID(ctx, user.UserID); err != nil {
+			log.Printf("删除用户 ID 资料缓存失败：user=%s error=%v", user.UserID, err)
+		}
+		_ = ua.profileCache.DeleteNotFound(ctx, string(user.Phone))
+		_ = ua.profileCache.DeleteNotFound(ctx, user.Username)
+	}
 }
 
 func (ua *UserApplication) Logout(userID, sessionID string) error {

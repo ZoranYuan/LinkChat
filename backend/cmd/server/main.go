@@ -28,6 +28,7 @@ import (
 	filecache "IM_backend/internal/infra/cache/file"
 	messagecache "IM_backend/internal/infra/cache/message"
 	roomcache "IM_backend/internal/infra/cache/room"
+	usercache "IM_backend/internal/infra/cache/user"
 	"IM_backend/internal/infra/database"
 	infraconversation "IM_backend/internal/infra/database/conversation"
 	infrafile "IM_backend/internal/infra/database/file"
@@ -101,6 +102,7 @@ func main() {
 	)
 
 	authCache := authcache.NewAuthCache(redisClient)
+	userProfileCache := usercache.NewProfileCache(redisClient)
 	roomCache := roomcache.NewRoomCache(redisClient, cfg)
 	roomInfoCache := roomcache.NewRoomInfoCache(redisClient)
 	roomUnreadSnapshotCache := agentcache.NewRoomUnreadSnapshotCache(redisClient)
@@ -185,7 +187,7 @@ func main() {
 	userConversationRepository := infraconversation.NewUserConversationRepository(db)
 
 	userRepository := infrauser.NewUserRepository(db)
-	userApp := userapp.NewUserApplication(userRepository, cfg.JWT, authCache, tokenService, idGenerator, passwordHasher, txManager)
+	userApp := userapp.NewUserApplication(userRepository, userProfileCache, cfg.JWT, authCache, tokenService, idGenerator, passwordHasher, txManager)
 	userHandler := userhttp.NewHandler(
 		userApp,
 		cfg.JWT,
@@ -358,6 +360,7 @@ func main() {
 		messageRepository,
 		friendRepository,
 		userRepository,
+		userProfileCache,
 		roomApp,
 	)
 

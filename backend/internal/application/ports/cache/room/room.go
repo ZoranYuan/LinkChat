@@ -44,7 +44,9 @@ type RoomMemberCache interface {
 // RoomInfoCache 缓存房间相对稳定的基础信息；成员总数变化后由应用层主动失效。
 type RoomInfoCache interface {
 	GetRoomInfo(ctx context.Context, roomID string) (*domainroom.Room, bool, error)
+	GetRoomInfos(ctx context.Context, roomIDs []string) (map[string]*domainroom.Room, error)
 	SetRoomInfo(ctx context.Context, room *domainroom.Room, ttl time.Duration) error
+	SetRoomInfos(ctx context.Context, rooms []*domainroom.Room, ttl time.Duration) error
 	DeleteRoomInfo(ctx context.Context, roomID string) error
 }
 
