@@ -9,16 +9,16 @@ var ErrDuplicateClientMessage = errors.New("客户端消息已存在")
 var ErrClientMessageConflict = errors.New("客户端消息标识对应的内容不一致")
 
 type Message struct {
-	MessageID      string  `json:"MessageId"`
-	ConversationID string  `json:"ConversationId"`
-	SenderID       string  `json:"SenderId"`
-	ClientMsgID    *string `json:"ClientMsgId"`
-	RequestHash    string
-	Seq            int64
-	Type           MessageType
-	Content        string
-	Status         Status
-	SendTime       int64
+	MessageID      string      `json:"MessageId"`
+	ConversationID string      `json:"ConversationId"`
+	SenderID       string      `json:"SenderId"`
+	ClientMsgID    *string     `json:"ClientMsgId"`
+	RequestHash    string      `json:"RequestHash"`
+	Seq            int64       `json:"Seq"`
+	Type           MessageType `json:"Type"`
+	Content        string      `json:"Content"`
+	Status         Status      `json:"Status"`
+	SendTime       int64       `json:"SendTime"`
 }
 
 func NewMessage(
