@@ -74,8 +74,7 @@ func (a *AuthMiddleware) JWTAuthMiddleware() gin.HandlerFunc {
 
 func (a *AuthMiddleware) CookieOriginProtectionMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// 防止 CSFR 攻击，允许 GET 请求或者没有身份的请求访问
-		if !isUnsafeMethod(ctx.Request.Method) || !hasAuthCookie(ctx) {
+		if strings.EqualFold(a.config.App.Env, "development") {
 			ctx.Next()
 			return
 		}
@@ -88,25 +87,6 @@ func (a *AuthMiddleware) CookieOriginProtectionMiddleware() gin.HandlerFunc {
 		}
 
 		ctx.Next()
-	}
-}
-
-func hasAuthCookie(ctx *gin.Context) bool {
-	if _, err := ctx.Cookie("access_token"); err == nil {
-		return true
-	}
-	if _, err := ctx.Cookie("refresh_token"); err == nil {
-		return true
-	}
-	return false
-}
-
-func isUnsafeMethod(method string) bool {
-	switch method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		return true
-	default:
-		return false
 	}
 }
 
