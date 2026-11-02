@@ -1,15 +1,11 @@
 package room
 
 import (
-	"IM_backend/internal/application/ports/messaging"
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 
 	conversationapp "IM_backend/internal/application/conversation"
-	roomcache "IM_backend/internal/application/ports/cache/room"
-	outboxport "IM_backend/internal/application/ports/outbox"
 	domainconversation "IM_backend/internal/domain/conversation"
 	domainroom "IM_backend/internal/domain/room"
 )
@@ -94,9 +90,6 @@ func (ra *RoomApplication) Join(ctx context.Context, userID, inviteCode string) 
 			persistedMember = member
 		}
 		room.MemberCount++
-		if err := ra.writeMemberChangedEvent(ctx, tx, persistedMember); err != nil {
-			return err
-		}
 
 		conv, err := ra.conversationRepository.WithTx(tx).FindConversationByID(ctx, conversationID)
 		if err != nil {
@@ -124,88 +117,13 @@ func (ra *RoomApplication) Join(ctx context.Context, userID, inviteCode string) 
 	}); err != nil {
 		return nil, nil, err
 	}
-	ra.notifyProducer()
+	ra.invalidateRoomMember(ctx, roomID, userID)
 	ra.invalidateRoomInfo(ctx, roomID)
-
-	ra.cacheRoomMemberState(ctx, persistedMember)
-	if ra.roomPresence != nil {
-		ra.roomPresence.BindUserToRoom(userID, roomID)
-	}
 
 	return toRoomMemberDTO(persistedMember), toRoomAppDTO(room, ""), nil
 }
 
-func (ra *RoomApplication) writeMemberChangedEvent(ctx context.Context, tx any, member *domainroom.RoomMember) error {
-	if ra.roomMemberOutboxRepository == nil || member == nil {
-		return nil
-	}
-	payload, err := json.Marshal(messaging.RoomMemberChangedEvent{
-		RoomID: member.RoomID, UserID: member.UserID,
-		Status: int(member.Status), Role: int(member.Role),
-		MuteUntil: member.MuteUntil, Version: member.Version,
-	})
-	if err != nil {
-		return err
-	}
-	return ra.roomMemberOutboxRepository.WithTx(tx).Create(ctx, &outboxport.Entry{
-		EventType:    messaging.TypeRoomMemberChanged,
-		PartitionKey: member.RoomID + ":" + member.UserID,
-		Payload:      payload,
-	})
-}
-
-func (ra *RoomApplication) ApplyMemberChanged(ctx context.Context, event messaging.RoomMemberChangedEvent) error {
-	state := &roomcache.MemberState{
-		Status:    domainroom.RoomMemberStatus(event.Status),
-		Role:      domainroom.Role(event.Role),
-		MuteUntil: event.MuteUntil,
-		Version:   event.Version,
-	}
-	updated := true
-	if ra.roomMemberCache != nil {
-		var err error
-		updated, err = ra.roomMemberCache.SetMemberIfVersionGreater(ctx, event.RoomID, event.UserID, state)
-		if err != nil {
-			return err
-		}
-	}
-	if !updated || ra.roomPresence == nil {
-		return nil
-	}
-	if state.Status == domainroom.Active || state.Status == domainroom.Muted {
-		ra.roomPresence.BindUserToRoom(event.UserID, event.RoomID)
-	} else {
-		ra.roomPresence.UnbindUserFromRoom(event.UserID, event.RoomID)
-	}
-	return nil
-}
-
-func (ra *RoomApplication) cacheRoomMemberState(ctx context.Context, member *domainroom.RoomMember) {
-	if ra.roomMemberCache == nil || member == nil {
-		return
-	}
-	_, err := ra.roomMemberCache.SetMemberIfVersionGreater(ctx, member.RoomID, member.UserID, &roomcache.MemberState{
-		Status: member.Status, Role: member.Role, MuteUntil: member.MuteUntil, Version: member.Version,
-	})
-	if err != nil {
-		log.Printf("回填房间成员缓存失败：房间=%s 用户=%s 版本=%d 错误=%v", member.RoomID, member.UserID, member.Version, err)
-	}
-}
-
 func (ra *RoomApplication) Leave(ctx context.Context, userID, roomID string) error {
-	var memberState *roomcache.MemberState
-	var exist bool
-	var persistedMember *domainroom.RoomMember
-	if ra.roomMemberCache != nil {
-		memberState, exist, _ = ra.roomMemberCache.GetMember(ctx, roomID, userID)
-	}
-
-	if exist && (memberState == nil ||
-		(memberState.Status != domainroom.Active &&
-			memberState.Status != domainroom.Muted)) {
-		return ErrNotRoomMember
-	}
-
 	if err := ra.txManager.WithinTransaction(ctx, func(tx any) error {
 		roomMember, err := ra.roomMemberRepository.WithTx(tx).FindRoomMemberByUserIDAndRoomID(userID, roomID)
 		if err != nil {
@@ -226,7 +144,6 @@ func (ra *RoomApplication) Leave(ctx context.Context, userID, roomID string) err
 			}
 			return ErrUnknown
 		}
-		persistedMember = roomMember
 		updated, err := ra.roomRepository.WithTx(tx).DecrementMemberCount(ctx, roomID, int(domainroom.Normal))
 		if err != nil {
 			return err
@@ -234,10 +151,6 @@ func (ra *RoomApplication) Leave(ctx context.Context, userID, roomID string) err
 		if !updated {
 			return ErrConcurrentUpdate
 		}
-		if err := ra.writeMemberChangedEvent(ctx, tx, roomMember); err != nil {
-			return err
-		}
-
 		conversation, err := ra.conversationRepository.WithTx(tx).FindConversationByRoomID(ctx, roomID)
 		if err != nil {
 			return err
@@ -249,13 +162,8 @@ func (ra *RoomApplication) Leave(ctx context.Context, userID, roomID string) err
 	}); err != nil {
 		return err
 	}
-	ra.notifyProducer()
+	ra.invalidateRoomMember(ctx, roomID, userID)
 	ra.invalidateRoomInfo(ctx, roomID)
-
-	ra.cacheRoomMemberState(ctx, persistedMember)
-	if ra.roomPresence != nil {
-		ra.roomPresence.UnbindUserFromRoom(userID, roomID)
-	}
 
 	return nil
 }

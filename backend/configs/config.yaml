@@ -48,9 +48,6 @@ ws:
   close_timeout_seconds: 1
   max_message_size: 5120
   max_message_send_buffer_size: 256
-  message_sequencer_shard_count: 16 # 消息 Sequencer 分片数；同一会话固定路由到同一分片。
-  message_batch_size: 128 # 每个 Sequencer 分片 channel 的容量，后续入队遇满时触发 flush。
-  message_flush_interval_milliseconds: 10 # 周期性 flush 间隔，单位毫秒。
   send_message_rate: 10
   send_message_burst: 20
   batch_max_messages: 64
@@ -73,7 +70,6 @@ message:
   max_identifier_length: 128
   attachment_ttl_seconds: 1209600
   room_activity_window_seconds: 30
-  room_activity_hold_seconds: 120 # 最后一次判定 ACTIVE 后保持拉模式，不影响 Redis 消息缓存的 10 分钟 TTL。
   room_activity_bucket_seconds: 5
   room_activity_key_ttl_seconds: 60
   # 阈值单位为统计窗口内的消息数 × 在线 WebSocket 会话数；6000/18000 保持约 200 个在线会话时原有 30/90 条消息的切换点。
@@ -86,20 +82,20 @@ message:
   offline_page_size: 10
   max_sync_seqs: 500
   member_query_timeout_seconds: 3
-  room_activity_sweep_seconds: 60
 kafka:
   brokers:
     - "kafka:9092"
   topics:
     message: "im.message"
-    read_message_committed: "im.read"
-    friend_request_created: "im.friend"
-    room_member_changed: "im.room"
 
   consumer:
     group_id: "im-chat-consumer-group"
     version: "2.6.0"
     assignor: "range"   # range / roundrobin / sticky
+    batch_size: 500
+    input_queue_size: 500
+    worker_count: 16
+    worker_queue_size: 50
     max_attempts: 3 # 首次处理一次，最多再重试两次。
     lease_stale_after_seconds: 10
     consume_retry_interval_seconds: 1
@@ -112,12 +108,6 @@ kafka:
     batch_size: 16384
     linger_ms: 10
     compression: "snappy"
-    claim_batch_size: 100
-    poll_interval_seconds: 2
-    stale_after_seconds: 30
-    base_retry_wait_seconds: 2
-    max_retries: 10
-    max_retry_wait_seconds: 300
 
 storage:
   minio:
@@ -171,6 +161,9 @@ cache:
   conversation_info:
     ttl_seconds: 600
     negative_ttl_seconds: 120
+  friend_relation:
+    ttl_seconds: 600
+    negative_ttl_seconds: 60
   attachment_access:
     # 访问 URL 缓存时间，略短于 storage.minio.url_ttl_seconds。
     ttl_seconds: 3570

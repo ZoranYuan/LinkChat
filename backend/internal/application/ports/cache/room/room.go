@@ -27,7 +27,7 @@ const (
 )
 
 type RoomCache interface {
-	RecordActivityBatchAndGetLevel(ctx context.Context, roomID string, messageCount, onlineSessions int, at time.Time) (int, error)
+	UpdateRoomActivity(ctx context.Context, roomID string, messageCount, onlineSessions int, at time.Time) (int, error)
 	ListMessageAfterSeq(ctx context.Context, roomID string, afterSeq, latestSeq int64) (RecentMessageRange, error)
 	WarmRecentMessageEvents(ctx context.Context, roomID string, events []messaging.MessageEvent) error
 	GetRoomIDByCode(ctx context.Context, code string) (string, error)
@@ -39,6 +39,7 @@ type RoomMemberCache interface {
 	GetMember(ctx context.Context, roomID, userID string) (*MemberState, bool, error)
 	SetMemberIfVersionGreater(ctx context.Context, roomID, userID string, state *MemberState) (bool, error)
 	SetMemberNotFound(ctx context.Context, roomID, userID string) error
+	DeleteMember(ctx context.Context, roomID, userID string) error
 }
 
 // RoomInfoCache 缓存房间相对稳定的基础信息；成员总数变化后由应用层主动失效。
@@ -48,10 +49,4 @@ type RoomInfoCache interface {
 	SetRoomInfo(ctx context.Context, room *domainroom.Room, ttl time.Duration) error
 	SetRoomInfos(ctx context.Context, rooms []*domainroom.Room, ttl time.Duration) error
 	DeleteRoomInfo(ctx context.Context, roomID string) error
-}
-
-// ActivityState 提供当前节点的房间拉模式标识。
-type ActivityState interface {
-	MarkActive(roomID string, now time.Time)
-	IsActive(roomID string, now time.Time) bool
 }

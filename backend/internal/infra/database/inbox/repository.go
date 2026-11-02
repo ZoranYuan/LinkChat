@@ -41,12 +41,73 @@ func (r *InboxRepository) RenewBatch(ctx context.Context, eventIDs []string, loc
 }
 
 func (r *InboxRepository) TryClaim(ctx context.Context, eventID, eventType string, now, staleBefore time.Time) (bool, string, int, error) {
+	lockToken := uuid.NewString()
+	claimed, attempts, err := r.tryClaim(ctx, eventID, eventType, lockToken, now, staleBefore)
+	return claimed, lockToken, attempts, err
+}
+
+func (r *InboxRepository) TryClaimBatch(
+	ctx context.Context,
+	requests []inboxport.ClaimRequest,
+	lockToken string,
+	now time.Time,
+) ([]string, error) {
+	rows := make([]InboxModel, 0, len(requests))
+	eventIDs := make([]string, 0, len(requests))
+	seen := make(map[string]struct{}, len(requests))
+	for _, request := range requests {
+		if _, exists := seen[request.EventID]; exists {
+			continue
+		}
+		seen[request.EventID] = struct{}{}
+		eventIDs = append(eventIDs, request.EventID)
+		rows = append(rows, InboxModel{
+			EventID:      request.EventID,
+			EventType:    request.EventType,
+			Status:       inboxport.StatusProcessing,
+			LockedAt:     &now,
+			LockToken:    lockToken,
+			AttemptCount: 1,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+	}
+	if len(rows) == 0 {
+		return []string{}, nil
+	}
+
+	if err := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	var claimed []InboxModel
+	if err := r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("event_id").
+		Where("event_id IN ? AND status = ? AND lock_token = ?", eventIDs, inboxport.StatusProcessing, lockToken).
+		Find(&claimed).Error; err != nil {
+		return nil, err
+	}
+
+	claimedEventIDs := make([]string, len(claimed))
+	for i, row := range claimed {
+		claimedEventIDs[i] = row.EventID
+	}
+	return claimedEventIDs, nil
+}
+
+func (r *InboxRepository) tryClaim(
+	ctx context.Context,
+	eventID, eventType, lockToken string,
+	now, staleBefore time.Time,
+) (bool, int, error) {
 	if eventID == "" {
-		return false, "", 0, inboxport.ErrEventIDRequired
+		return false, 0, inboxport.ErrEventIDRequired
 	}
 
 	claimed := false
-	lockToken := uuid.NewString()
 	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&InboxModel{
 		EventID:      eventID,
 		EventType:    eventType,
@@ -58,24 +119,24 @@ func (r *InboxRepository) TryClaim(ctx context.Context, eventID, eventType strin
 		UpdatedAt:    now,
 	})
 	if result.Error != nil {
-		return false, "", 0, result.Error
+		return false, 0, result.Error
 	}
 	if result.RowsAffected == 1 {
-		return true, lockToken, 1, nil
+		return true, 1, nil
 	}
 
 	// 非第一次
 	var record InboxModel
 	if err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("event_id = ?", eventID).First(&record).Error; err != nil {
-		return false, "", 0, err
+		return false, 0, err
 	}
 	switch record.Status {
 	case inboxport.StatusCompleted, inboxport.StatusDead:
-		return false, "", record.AttemptCount, nil
+		return false, record.AttemptCount, nil
 	case inboxport.StatusProcessing:
 		// 未到过期时间
 		if record.LockedAt != nil && record.LockedAt.After(staleBefore) {
-			return false, "", record.AttemptCount, inboxport.ErrEventInProgress
+			return false, record.AttemptCount, inboxport.ErrEventInProgress
 		}
 	}
 
@@ -89,13 +150,13 @@ func (r *InboxRepository) TryClaim(ctx context.Context, eventID, eventType strin
 			"last_error":    "",
 		})
 	if result.Error != nil {
-		return false, "", 0, result.Error
+		return false, 0, result.Error
 	}
 	claimed = result.RowsAffected == 1
 	if !claimed {
-		return false, "", record.AttemptCount, inboxport.ErrLeaseLost
+		return false, record.AttemptCount, inboxport.ErrLeaseLost
 	}
-	return claimed, lockToken, record.AttemptCount + 1, nil
+	return claimed, record.AttemptCount + 1, nil
 }
 
 // MarkRetry 释放当前消费者的 Inbox 租约，让当前消息可以在本分区内重试。
@@ -144,6 +205,40 @@ func (r *InboxRepository) MarkCompleted(ctx context.Context, eventID, lockToken 
 			return nil
 		}
 		return inboxport.ErrLeaseLost
+	}
+	return nil
+}
+
+func (r *InboxRepository) MarkCompletedBatch(ctx context.Context, eventIDs []string, lockToken string, finishedAt time.Time) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	result := r.db.WithContext(ctx).
+		Model(&InboxModel{}).
+		Where("event_id IN ? AND status = ? AND lock_token = ?", eventIDs, inboxport.StatusProcessing, lockToken).
+		Updates(map[string]any{
+			"status":      inboxport.StatusCompleted,
+			"locked_at":   nil,
+			"lock_token":  "",
+			"finished_at": finishedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == int64(len(eventIDs)) {
+		return nil
+	}
+	var records []InboxModel
+	if err := r.db.WithContext(ctx).Select("event_id", "status").Where("event_id IN ?", eventIDs).Find(&records).Error; err != nil {
+		return err
+	}
+	if len(records) != len(eventIDs) {
+		return inboxport.ErrLeaseLost
+	}
+	for _, record := range records {
+		if record.Status != inboxport.StatusCompleted {
+			return inboxport.ErrLeaseLost
+		}
 	}
 	return nil
 }

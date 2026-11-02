@@ -10,9 +10,6 @@ import (
 	conversationapp "IM_backend/internal/application/conversation"
 	roomcache "IM_backend/internal/application/ports/cache/room"
 	idport "IM_backend/internal/application/ports/id"
-	"IM_backend/internal/application/ports/messaging"
-	outboxport "IM_backend/internal/application/ports/outbox"
-	"IM_backend/internal/application/ports/realtime"
 	"IM_backend/internal/application/ports/transaction"
 	domainconversation "IM_backend/internal/domain/conversation"
 	domainroom "IM_backend/internal/domain/room"
@@ -31,9 +28,6 @@ type RoomApplication struct {
 	roomInfoCacheTTL           time.Duration
 	txManager                  transaction.Manager
 	idGenerator                idport.Generator
-	roomPresence               realtime.RoomPresence
-	roomMemberOutboxRepository outboxport.OutboxRepository
-	producerNotifier           messaging.ProducerNotifier
 }
 
 func NewRoomApplication(roomRepository domainroom.RoomRepository,
@@ -44,8 +38,6 @@ func NewRoomApplication(roomRepository domainroom.RoomRepository,
 	roomMemberCache roomcache.RoomMemberCache,
 	txManager transaction.Manager,
 	idGenerator idport.Generator,
-	roomPresence realtime.RoomPresence,
-	roomMemberOutboxRepository outboxport.OutboxRepository,
 	config configs.RoomConfig,
 ) *RoomApplication {
 	return &RoomApplication{
@@ -58,17 +50,7 @@ func NewRoomApplication(roomRepository domainroom.RoomRepository,
 		roomMemberCache:            roomMemberCache,
 		txManager:                  txManager,
 		idGenerator:                idGenerator,
-		roomPresence:               roomPresence,
-		roomMemberOutboxRepository: roomMemberOutboxRepository,
 	}
-}
-
-// SetProducerNotifier 在事务提交后唤醒 Producer。
-func (ra *RoomApplication) SetProducerNotifier(notifier messaging.ProducerNotifier) {
-	if ra == nil {
-		return
-	}
-	ra.producerNotifier = notifier
 }
 
 func (ra *RoomApplication) SetRoomInfoCache(cache roomcache.RoomInfoCache, ttl time.Duration) {
@@ -80,12 +62,6 @@ func (ra *RoomApplication) SetRoomInfoCache(cache roomcache.RoomInfoCache, ttl t
 
 func (ra *RoomApplication) SetConversationApplication(application *conversationapp.ConversationApplication) {
 	ra.conversationApplication = application
-}
-
-func (ra *RoomApplication) notifyProducer() {
-	if ra != nil && ra.producerNotifier != nil {
-		ra.producerNotifier.Notify()
-	}
 }
 
 func (ra *RoomApplication) Create(ctx context.Context, userID, roomName, avatar, description string) (*RoomAppDTO, error) {
@@ -139,9 +115,6 @@ func (ra *RoomApplication) Create(ctx context.Context, userID, roomName, avatar,
 		if _, err := roomMemberRepository.JoinRoom(roomMember); err != nil {
 			return err
 		}
-		if err := ra.writeMemberChangedEvent(ctx, tx, roomMember); err != nil {
-			return err
-		}
 
 		if err := conversationRepository.CreateConversation(ctx, conversation); err != nil {
 			return err
@@ -157,14 +130,8 @@ func (ra *RoomApplication) Create(ctx context.Context, userID, roomName, avatar,
 		}
 		return nil, err
 	}
-	ra.notifyProducer()
 	ra.cacheRoomInfo(ctx, room)
 	ra.conversationApplication.CacheConversationInfo(ctx, conversation)
-
-	ra.cacheRoomMemberState(ctx, roomMember)
-	if ra.roomPresence != nil {
-		ra.roomPresence.BindUserToRoom(userID, roomID)
-	}
 
 	return toRoomAppDTO(room, inviteCode), nil
 }
@@ -302,5 +269,14 @@ func (ra *RoomApplication) invalidateRoomInfo(ctx context.Context, roomID string
 	}
 	if err := ra.roomInfoCache.DeleteRoomInfo(ctx, roomID); err != nil {
 		log.Printf("删除房间基础信息缓存失败：room=%s error=%v", roomID, err)
+	}
+}
+
+func (ra *RoomApplication) invalidateRoomMember(ctx context.Context, roomID, userID string) {
+	if ra == nil || ra.roomMemberCache == nil || roomID == "" || userID == "" {
+		return
+	}
+	if err := ra.roomMemberCache.DeleteMember(ctx, roomID, userID); err != nil {
+		log.Printf("删除房间成员缓存失败：room=%s user=%s error=%v", roomID, userID, err)
 	}
 }

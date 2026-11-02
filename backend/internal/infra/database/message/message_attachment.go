@@ -51,6 +51,17 @@ func (m *MessageAttachmentRepository) Create(ctx context.Context, item *domainme
 	return m.db.WithContext(ctx).Create(toMessageAttachmentModel(item)).Error
 }
 
+func (m *MessageAttachmentRepository) CreateBatch(ctx context.Context, items []*domainmessage.MessageAttachment) error {
+	if len(items) == 0 {
+		return nil
+	}
+	rows := make([]*MessageAttachmentModel, len(items))
+	for i, item := range items {
+		rows[i] = toMessageAttachmentModel(item)
+	}
+	return m.db.WithContext(ctx).Create(&rows).Error
+}
+
 func (m *MessageAttachmentRepository) BatchGetByMessageIDs(ctx context.Context, messageIDs []string, isActivate bool) (map[string]*domainmessage.MessageAttachment, error) {
 	if len(messageIDs) == 0 {
 		return map[string]*domainmessage.MessageAttachment{}, nil

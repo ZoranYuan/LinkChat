@@ -13,7 +13,7 @@ type Conversation struct {
 func NewRoomConversation(conversationID, roomID string) *Conversation {
 	return &Conversation{
 		ConversationID: conversationID,
-		ConvType:       Room,
+		ConvType:       RoomChat,
 		RoomID:         roomID,
 	}
 }

@@ -29,12 +29,10 @@ type Handler struct {
 	dispatcher *Dispatcher
 	gateway    *Gateway
 	limiter    ratelimitport.Limiter
-	sequencer  *messageapp.Sequencer
 }
 
 func NewHandler(
 	app *messageapp.MessageApplication,
-	sequencer *messageapp.Sequencer,
 	config configs.Config,
 	dispatcher *Dispatcher,
 	gateway *Gateway,
@@ -44,7 +42,6 @@ func NewHandler(
 		config:     config,
 		gateway:    gateway,
 		dispatcher: dispatcher,
-		sequencer:  sequencer,
 	}
 	wh.upgrader.CheckOrigin = wh.checkOrigin
 
@@ -147,19 +144,39 @@ func (wh *Handler) handleSendMessage(ctx context.Context, connection *Connection
 	if conversationID == "" || len(conversationID) > wh.config.Message.MaxIdentifierLength {
 		return wh.replyFailedAck(connection, request.GetClientMsgId(), "会话标识无效")
 	}
-	dto := messageapp.SendMessageDTO{SenderID: connection.UserID(), ClientMessageID: request.GetClientMsgId(), ConversationID: conversationID, Type: int(request.GetCType()), Content: request.GetContent(), FileID: request.GetFileId(), StickerID: request.GetStickerId(), PackID: request.GetPackId()}
-	if err := wh.sequencer.Submit(ctx, dto, func(ack *messageapp.MessageAckDTO) {
-		payload, err := json.Marshal(messaging.MessageAckEvent{ClientMsgID: ack.ClientMessageID, MessageID: ack.MessageID, ConversationID: ack.ConversationID, Seq: ack.Seq, AttachmentID: ack.AttachmentID, SendTime: ack.SendTime, Status: messaging.AckStatus(ack.Status), Extra: ack.Error})
-		if err == nil {
-			err = connection.PushEvent(messaging.TypeMessageAck, payload)
-		}
-		if err != nil {
-			log.Printf("发送消息 ACK 失败：clientMsgId=%s err=%v", ack.ClientMessageID, err)
-		}
-	}); err != nil {
-		return wh.replyFailedAck(connection, request.GetClientMsgId(), "消息服务暂不可用")
+
+	dto := messaging.SendMessageDTO{
+		SenderID:        connection.UserID(),
+		ClientMessageID: request.GetClientMsgId(),
+		ConversationID:  conversationID,
+		Type:            int(request.GetCType()),
+		Content:         request.GetContent(),
+		FileID:          request.GetFileId(),
+		StickerID:       request.GetStickerId(),
+		PackID:          request.GetPackId(),
 	}
-	return nil
+	messageID, err := wh.app.HandleSendMessage(ctx, conversationID, dto)
+	if err != nil {
+		reason := "消息服务暂不可用"
+		switch {
+		case errors.Is(err, messageapp.ErrNotRoomMember), errors.Is(err, messageapp.ErrNotFriends), errors.Is(err, messageapp.ErrForbidden):
+			reason = "无权在该会话发送消息"
+		case errors.Is(err, messageapp.ErrConversationNotFound):
+			reason = "会话不存在"
+		}
+		return wh.replyFailedAck(connection, request.GetClientMsgId(), reason)
+	}
+	payload, err := json.Marshal(messaging.MessageAckEvent{
+		ClientMsgID:    request.GetClientMsgId(),
+		MessageID:      messageID,
+		ConversationID: conversationID,
+		Status:         messaging.AckStatusSent,
+		SendTime:       time.Now().UnixMilli(),
+	})
+	if err != nil {
+		return err
+	}
+	return connection.PushEvent(messaging.TypeMessageAck, payload)
 }
 
 func (wh *Handler) replyFailedAck(connection *Connection, clientMsgID, reason string) error {

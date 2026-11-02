@@ -14,9 +14,9 @@ func (MessageAttachmentModel) TableName() string { return "message_attachments" 
 
 type MessageModel struct {
 	MessageID      string  `gorm:"size:32;primaryKey" json:"messageId"`
-	ConversationID string  `gorm:"size:64;not null;uniqueIndex:uk_message_conv_seq,priority:1" json:"conversationId"`
-	SenderID       string  `gorm:"size:32;not null;uniqueIndex:uq_sender_client_msg,priority:1" json:"senderId"`
-	ClientMsgID    *string `gorm:"size:64;uniqueIndex:uq_sender_client_msg,priority:2" json:"clientMsgId,omitempty"`
+	ConversationID string  `gorm:"size:64;not null;uniqueIndex:uk_message_conv_seq,priority:1;uniqueIndex:uq_sender_conversation_client_msg,priority:2" json:"conversationId"`
+	SenderID       string  `gorm:"size:32;not null;uniqueIndex:uq_sender_conversation_client_msg,priority:1" json:"senderId"`
+	ClientMsgID    *string `gorm:"size:64;uniqueIndex:uq_sender_conversation_client_msg,priority:3" json:"clientMsgId,omitempty"`
 	RequestHash    string  `gorm:"size:64;default:''" json:"-"`
 
 	Seq      int64  `gorm:"not null;uniqueIndex:uk_message_conv_seq,priority:2" json:"seq"`

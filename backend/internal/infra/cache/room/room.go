@@ -39,7 +39,6 @@ func NewRoomCache(rb *redis.Client, config configs.Config) *RoomCache {
 type activitySettings struct {
 	bucketSeconds    int64
 	windowBuckets    int
-	cleanupBuckets   int
 	keyTTLSeconds    int64
 	warnFanoutWork   int64
 	activeFanoutWork int64
@@ -47,33 +46,13 @@ type activitySettings struct {
 
 func (rc *RoomCache) activitySettings() (activitySettings, error) {
 	config := rc.config.Message
-	if config.RoomActivityWindowSeconds <= 0 {
-		return activitySettings{}, errors.New("活跃度窗口必须大于 0")
-	}
-	if config.RoomActivityBucketSeconds <= 0 {
-		return activitySettings{}, errors.New("活跃度时间桶必须大于 0")
-	}
-	if config.RoomActivityBucketSeconds > config.RoomActivityWindowSeconds {
-		return activitySettings{}, errors.New("活跃度时间桶不能大于统计窗口")
-	}
-	if config.RoomActivityKeyTTLSeconds <= 0 {
-		return activitySettings{}, errors.New("活跃度 key TTL 必须大于 0")
-	}
-	if config.RoomActivityWarnFanoutWork <= 0 {
-		return activitySettings{}, errors.New("活跃度 WARN 扇出工作量阈值必须大于 0")
-	}
-	if config.RoomActivityActiveFanoutWork <= config.RoomActivityWarnFanoutWork {
-		return activitySettings{}, errors.New("活跃度 ACTIVE 扇出工作量阈值必须大于 WARN 阈值")
-	}
-
+	// 向上取整
 	windowBuckets := (config.RoomActivityWindowSeconds + config.RoomActivityBucketSeconds - 1) /
 		config.RoomActivityBucketSeconds
-	cleanupBuckets := config.RoomActivityKeyTTLSeconds/config.RoomActivityBucketSeconds + windowBuckets + 1
 
 	return activitySettings{
 		bucketSeconds:    int64(config.RoomActivityBucketSeconds),
 		windowBuckets:    windowBuckets,
-		cleanupBuckets:   cleanupBuckets,
 		keyTTLSeconds:    int64(config.RoomActivityKeyTTLSeconds),
 		warnFanoutWork:   int64(config.RoomActivityWarnFanoutWork),
 		activeFanoutWork: int64(config.RoomActivityActiveFanoutWork),
@@ -98,75 +77,53 @@ func (rc *RoomCache) randCode(count int) (string, error) {
 	return string(b), nil
 }
 
-// RecordActivityBatchAndGetLevel 按同一时间桶批量记录消息，并计算房间活跃等级。
-func (rc *RoomCache) RecordActivityBatchAndGetLevel(ctx context.Context, roomID string, messageCount, onlineSessions int, at time.Time) (int, error) {
-	if roomID == "" {
-		return roomcache.RoomActivityNormal, errors.New("roomID 不能为空")
-	}
-	if rc == nil || rc.store == nil || rc.store.Client() == nil {
-		return roomcache.RoomActivityNormal, errors.New("房间活跃度缓存未配置")
-	}
-	return rc.recordActivityAndGetLevelAt(ctx, roomID, messageCount, at, onlineSessions)
-}
-
-func (rc *RoomCache) recordActivityAndGetLevelAt(ctx context.Context, roomID string, messageCount int, at time.Time, onlineSessions int) (int, error) {
-	if messageCount <= 0 {
-		return roomcache.RoomActivityNormal, errors.New("消息数量必须大于 0")
-	}
+// UpdateRoomActivity 累计本批消息，按窗口内消息数与在线连接数返回活跃等级。
+func (rc *RoomCache) UpdateRoomActivity(ctx context.Context, roomID string, messageCount, onlineSessions int, at time.Time) (int, error) {
 	settings, err := rc.activitySettings()
 	if err != nil {
 		return roomcache.RoomActivityNormal, err
 	}
-	if onlineSessions < 0 {
-		onlineSessions = 0
-	}
 	currentBucket := at.Unix() / settings.bucketSeconds
 	const script = `
-		redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[5])
+		redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[4])
+		redis.call('HEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])
 		local current = tonumber(ARGV[1])
 		local windowBuckets = tonumber(ARGV[2])
-		local cleanupBuckets = tonumber(ARGV[3])
-		for offset = windowBuckets, cleanupBuckets do
-			redis.call('HDEL', KEYS[1], tostring(current - offset))
-		end
+
 		local fields = {}
 		for offset = 0, windowBuckets - 1 do
 			fields[#fields + 1] = tostring(current - offset)
 		end
+
 		local values = redis.call('HMGET', KEYS[1], unpack(fields))
 		local total = 0
 		for _, value in ipairs(values) do
 			if value then total = total + tonumber(value) end
 		end
-		redis.call('EXPIRE', KEYS[1], ARGV[4])
-		return total
+		redis.call('EXPIRE', KEYS[1], ARGV[3])
+		local fanoutWork = total * tonumber(ARGV[5])
+		local warmThreshold = tonumber(ARGV[6])
+		local activateThreshold = tonumber(ARGV[7])
+		if fanoutWork > activateThreshold then
+			return 2
+		end
+		if fanoutWork > warmThreshold then
+			return 1
+		end
+		return 0
 	`
-	totalMessages, err := rc.store.Client().Eval(
+	return rc.store.Client().Eval(
 		ctx,
 		script,
 		[]string{ActivateLevelKey(roomID)},
 		currentBucket,
 		settings.windowBuckets,
-		settings.cleanupBuckets,
 		settings.keyTTLSeconds,
 		messageCount,
-	).Int64()
-	if err != nil {
-		return roomcache.RoomActivityNormal, err
-	}
-	return classifyActivityLevel(totalMessages, int64(onlineSessions), settings), nil
-}
-
-func classifyActivityLevel(totalMessages, onlineSessions int64, settings activitySettings) int {
-	fanoutWork := totalMessages * onlineSessions
-	switch {
-	case fanoutWork >= settings.activeFanoutWork:
-		return roomcache.RoomActivityActive
-	case fanoutWork >= settings.warnFanoutWork:
-		return roomcache.RoomActivityWarn
-	default:
-		return roomcache.RoomActivityNormal
-	}
+		onlineSessions,
+		settings.warnFanoutWork,
+		settings.activeFanoutWork,
+	).Int()
 }
 
 // WarmRecentMessageEvents 批量回填近期消息缓存。

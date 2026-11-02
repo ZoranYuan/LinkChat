@@ -26,6 +26,7 @@ import (
 	authcache "IM_backend/internal/infra/cache/auth"
 	conversationcache "IM_backend/internal/infra/cache/conversation"
 	filecache "IM_backend/internal/infra/cache/file"
+	friendrelationcache "IM_backend/internal/infra/cache/friend"
 	messagecache "IM_backend/internal/infra/cache/message"
 	roomcache "IM_backend/internal/infra/cache/room"
 	usercache "IM_backend/internal/infra/cache/user"
@@ -35,7 +36,6 @@ import (
 	infrafriend "IM_backend/internal/infra/database/friend"
 	infrainbox "IM_backend/internal/infra/database/inbox"
 	inframessage "IM_backend/internal/infra/database/message"
-	infraoutbox "IM_backend/internal/infra/database/outbox"
 	infraroom "IM_backend/internal/infra/database/room"
 	infrauser "IM_backend/internal/infra/database/user"
 	"IM_backend/internal/infra/id/snowflake"
@@ -179,7 +179,6 @@ func main() {
 
 	messageRepository := inframessage.NewMessageRepository(db)
 	messageStickerRepository := inframessage.NewMessageStickerRepository(db)
-	outboxRepository := infraoutbox.NewOutboxRepository(db, idGenerator)
 	inboxRepository := infrainbox.NewInboxRepository(db)
 	conversationRepository := infraconversation.NewConversationRepository(db)
 	conversationInfoCache := conversationcache.NewConversationCache(redisClient, cfg.Cache.ConversationInfo)
@@ -196,6 +195,7 @@ func main() {
 
 	friendRepository := infrafriend.NewFriendRepository(db)
 	friendRequestRepository := infrafriend.NewFriendRequestRepository(db)
+	friendRelationCache := friendrelationcache.NewRelationCache(redisClient)
 	friendRequestApp := friendapp.NewFriendRequestApplication(
 		friendRequestRepository,
 		userRepository,
@@ -205,11 +205,13 @@ func main() {
 		friendRepository,
 		txManager,
 		idGenerator,
-		outboxRepository,
+		friendRelationCache,
 		cfg.Friend,
+		time.Duration(cfg.Cache.FriendRelation.TTLSeconds)*time.Second,
 	)
 	friendRequestHandler := friendrequesthttp.NewHandler(friendRequestApp)
 	friendRequestApp.SetConversationApplication(conversationApplication)
+	friendRequestApp.SetUserDelivery(realtimeGateway)
 
 	friendApp := friendapp.NewFriendApplication(friendRepository, userRepository)
 	friendHandler := friendhttp.NewHandler(friendApp)
@@ -246,52 +248,63 @@ func main() {
 		roomMemberCache,
 		txManager,
 		idGenerator,
-		realtimeGateway,
-		outboxRepository,
 		cfg.Room,
 	)
 	roomApp.SetRoomInfoCache(roomInfoCache, time.Duration(cfg.Cache.RoomInfo.TTLSeconds)*time.Second)
 	roomApp.SetConversationApplication(conversationApplication)
 	roomHandler := roomhttp.NewHandler(roomApp, conversationApplication)
 
-	roomActivityState := roomcache.NewActivityState(cfg.Message)
-	activityStateDone := make(chan struct{})
-	go func() {
-		defer close(activityStateDone)
-		roomActivityState.Run(ctx)
-	}()
-	messageDelivery := messageapp.NewMessageDelivery(
+	messageDelivery := mqhandler.NewMessageDelivery(
 		realtimeGateway,
 		roomApp,
-		roomActivityState,
 		cfg.Message,
 	)
 	defer messageDelivery.Close(context.Background())
-	messageSendHandler := mqhandler.NewMessageHandler(messageDelivery)
-	readNotifyHandler := mqhandler.NewReadHandler(realtimeGateway)
-	friendRequestEventHandler := mqhandler.NewFriendRequestHandler(realtimeGateway)
-	roomMemberChangedHandler := mqhandler.NewRoomMemberChangedHandler(roomApp)
 	topicRouter, routerErr := kafka.NewTopicRouter(map[string]string{
-		string(messaging.TypeMessage):              cfg.Kafka.Topics.Message,
-		string(messaging.TypeReadCommitted):        cfg.Kafka.Topics.ReadMessageCommitted,
-		string(messaging.TypeFriendRequestCreated): cfg.Kafka.Topics.FriendRequestCreated,
-		string(messaging.TypeRoomMemberChanged):    cfg.Kafka.Topics.RoomMemberChanged,
+		string(messaging.TypeMessage): cfg.Kafka.Topics.Message,
 	}, cfg.Kafka.Consumer.DeadLetterSuffix)
 	if routerErr != nil {
 		log.Fatal("创建 Kafka Topic 路由失败：", routerErr)
 	}
-	messageProducer := kafka.NewProducer(kafkaClient, topicRouter, txManager, outboxRepository, cfg.Kafka.Producer)
-	messageConsumer, err := kafka.NewConsumer(kafkaClient, topicRouter.Topics(), topicRouter,
-		map[string]messaging.Handler{
-			messaging.TypeMessage:              messageSendHandler,
-			messaging.TypeReadCommitted:        readNotifyHandler,
-			messaging.TypeFriendRequestCreated: friendRequestEventHandler,
-			messaging.TypeRoomMemberChanged:    roomMemberChangedHandler,
-		},
-		inboxRepository,
+	messageProducer := kafka.NewProducer(kafkaClient, topicRouter)
+	dispatcher := ws.NewDispatcher()
+
+	messageApplication := messageapp.NewMessageApplication(
+		messageCache,
+		roomMemberCache,
+		roomCache,
 		txManager,
-		cfg.Kafka.Consumer,
+		userConversationRepository,
+		conversationRepository,
+		friendRepository,
+		friendRelationCache,
+		fileRepository,
+		fileCache,
+		messageStickerRepository,
+		messageRepository,
+		roomMemberRepository,
+		roomApp,
+		idGenerator,
+		cfg,
+		roomUnreadSnapshotCache,
+		messageAttachmentsRepository,
 		messageProducer,
+	)
+	messageApplication.SetConversationApplication(conversationApplication)
+	messageApplication.SetUserDelivery(realtimeGateway)
+	messageSendHandler := mqhandler.NewMessageHandler(
+		inboxRepository, txManager, cfg, conversationApplication, conversationRepository,
+		messageRepository, userConversationRepository, fileRepository, fileCache,
+		messageAttachmentsRepository, messageStickerRepository, idGenerator,
+		roomCache, roomApp, messageDelivery,
+	)
+
+	messageConsumer, err := kafka.NewConsumer(
+		kafkaClient,
+		[]string{cfg.Kafka.Topics.Message},
+		topicRouter,
+		messageSendHandler,
+		cfg.Kafka.Consumer,
 	)
 
 	if err != nil {
@@ -307,48 +320,10 @@ func main() {
 		}
 	}()
 
-	dispatcher := ws.NewDispatcher()
-	friendRequestApp.SetProducerNotifier(messageProducer)
-	roomApp.SetProducerNotifier(messageProducer)
-
-	messageApplication := messageapp.NewMessageApplication(
-		messageCache,
-		roomMemberCache,
-		roomCache,
-		roomActivityState,
-		txManager,
-		userConversationRepository,
-		conversationRepository,
-		outboxRepository,
-		friendRepository,
-		fileRepository,
-		fileCache,
-		messageStickerRepository,
-		messageRepository,
-		roomMemberRepository,
-		roomApp,
-		idGenerator,
-		cfg,
-		roomUnreadSnapshotCache,
-		messageAttachmentsRepository,
-	)
-	messageApplication.SetConversationApplication(conversationApplication)
-	messageApplication.SetProducerNotifier(messageProducer)
-	messageApplication.SetRoomOnlineConnectionCounter(realtimeGateway)
-
-	// Producer 使用事务提交后的唤醒信号降低正常投递延迟，
-	// 同时保留定时扫描作为最终兜底。
-	producerDone := make(chan struct{})
-	go func() {
-		defer close(producerDone)
-		messageProducer.Start(ctx)
-	}()
 	messageHandler := messagehttp.NewHandler(messageApplication, cfg.Message)
 
-	messageSequencer := messageapp.NewSequencer(ctx, messageApplication, cfg.WebSocket)
 	wsHandler := ws.NewHandler(
 		messageApplication,
-		messageSequencer,
 		cfg,
 		dispatcher,
 		realtimeGateway,
@@ -447,10 +422,9 @@ func main() {
 		log.Printf("等待 WebSocket 入站分发结束失败：%v", err)
 		cancel()
 	}
-	messageSequencer.Flush(shutdownCtx)
 	messageDelivery.Close(shutdownCtx)
 	cancel()
-	for _, done := range []<-chan struct{}{cleanupDone, consumerDone, producerDone, activityStateDone} {
+	for _, done := range []<-chan struct{}{cleanupDone, consumerDone} {
 		select {
 		case <-done:
 		case <-shutdownCtx.Done():

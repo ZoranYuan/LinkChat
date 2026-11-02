@@ -8,16 +8,27 @@ import (
 	infrafriend "IM_backend/internal/infra/database/friend"
 	infrainbox "IM_backend/internal/infra/database/inbox"
 	inframessage "IM_backend/internal/infra/database/message"
-	infraoutbox "IM_backend/internal/infra/database/outbox"
 	infraroom "IM_backend/internal/infra/database/room"
 	infrauser "IM_backend/internal/infra/database/user"
 )
 
 // Migrate 按当前模型创建或更新表结构。
 func Migrate(db *gorm.DB) error {
+	if db.Migrator().HasTable("outboxes") {
+		if err := db.Migrator().DropTable("outboxes"); err != nil {
+			return err
+		}
+	}
+
+	messageModel := &inframessage.MessageModel{}
+	if db.Migrator().HasIndex(messageModel, "uq_sender_client_msg") {
+		if err := db.Migrator().DropIndex(messageModel, "uq_sender_client_msg"); err != nil {
+			return err
+		}
+	}
+
 	return db.AutoMigrate(
 		&infrauser.UserModel{},
-		&infraoutbox.OutboxModel{},
 		&infrainbox.InboxModel{},
 		&infrafriend.FriendRequestModel{},
 		&infrafriend.FriendModel{},

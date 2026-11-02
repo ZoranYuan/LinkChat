@@ -398,12 +398,11 @@ const catchUpAllOfflineConversations = async (session = captureSession()) => {
 };
 
 /**
- * 处理一条带完整内容的实时消息：连续则直接提交，存在缺口则从本地边界同步。
- * WebSocket 消息和发送 ACK 都复用这条路径。
+ * 处理一条带完整内容和服务端 seq 的实时消息：连续则直接提交，存在缺口则从本地边界同步。
  */
 const processRealtimeMessage = async (rawMessage) => {
   const session = captureSession();
-  const message = normalizeMessage(rawMessage);
+  let message = normalizeMessage(rawMessage);
   const conversationId = message.conversationId || "";
   const conversation = findConversation(state.conversations, conversationId);
   if (
@@ -415,12 +414,16 @@ const processRealtimeMessage = async (rawMessage) => {
     return;
   }
 
+  const pending = message.clientMsgId
+    ? findPendingMessage(message.clientMsgId, conversationId)
+    : null;
+  if (pending) message = normalizeMessage({ ...pending, ...message });
+
   return enqueueConversationMessage(conversationId, async () => {
     if (!isSessionActive(session)) return;
 
     const localBoundary = Number(conversation.lastContinuousSeq) || 0;
     const messageSeq = Number(message.seq);
-    if (messageSeq <= localBoundary) return;
 
     let messagesToPersist = [message];
     let nextBoundary = messageSeq;
@@ -475,7 +478,7 @@ const upsertIncomingMessage = (payload) => {
   processRealtimeMessage(payload).catch(() => {});
 };
 
-/** 将消息 ACK 应用到发送中的本地消息，并用服务端 seq 完成确认。 */
+/** ACK 只更新发送状态；带 seq 的消息推送负责持久化确认消息。 */
 const handleMessageAck = (ack) => {
   const session = captureSession();
   const pending = pendingMessages.get(ack?.clientMsgId);
@@ -487,10 +490,11 @@ const handleMessageAck = (ack) => {
     ...pending,
     messageId: ack.messageId || pending.messageId || "",
     conversationId,
-    seq: Number(ack.seq) || pending.seq || 0,
+    seq: pending.seq || 0,
     attachmentId: ack.attachmentId || pending.attachmentId || "",
     sendTime: Number(ack.sendTime) || pending.sendTime,
     status: Number(pending.status) || 1,
+    accepted: !failed,
     error: failed ? ack.extra || "消息发送失败" : "",
   });
 
@@ -498,9 +502,7 @@ const handleMessageAck = (ack) => {
     updated,
   ]);
   const storedMessage = state.messages[conversationId].find(
-    (item) =>
-      (updated.seq > 0 && Number(item.seq) === updated.seq) ||
-      (updated.clientMsgId && item.clientMsgId === updated.clientMsgId),
+    (item) => item.clientMsgId === updated.clientMsgId,
   );
   if (failed) {
     // 失败消息必须继续保留在待处理表中，点击重试时复用原 clientMsgId。
@@ -521,9 +523,6 @@ const handleMessageAck = (ack) => {
       .catch(() => {});
   } else if (!failed) {
     pendingUploadTasks.delete(ack.clientMsgId);
-  }
-  if (!failed && updated.seq > 0) {
-    processRealtimeMessage(updated).catch(() => {});
   }
 };
 

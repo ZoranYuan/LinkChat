@@ -36,12 +36,10 @@ func NewClient(cfg configs.KafkaConfig) (*Client, error) {
 
 	ccfg := sarama.NewConfig()
 	ccfg.Version = version
-	// 没有已提交 offset 的消费组从最早消息开始，避免服务重启期间产生的
-	// Outbox 事件被默认的 newest 策略跳过。
 	ccfg.Consumer.Offsets.Initial = sarama.OffsetOldest
 	ccfg.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{map[string]sarama.BalanceStrategy{"range": sarama.NewBalanceStrategyRange(), "roundrobin": sarama.NewBalanceStrategyRoundRobin(), "sticky": sarama.NewBalanceStrategySticky()}[cfg.Consumer.Assignor]}
 
-	consumer, err := sarama.NewConsumerGroup(cfg.Brokers, cfg.Consumer.GroupID, ccfg)
+	consumerGroup, err := sarama.NewConsumerGroup(cfg.Brokers, cfg.Consumer.GroupID, ccfg)
 	if err != nil {
 		_ = producer.Close()
 		return nil, err
@@ -49,7 +47,7 @@ func NewClient(cfg configs.KafkaConfig) (*Client, error) {
 
 	return &Client{
 		Producer:      producer,
-		ConsumerGroup: consumer,
+		ConsumerGroup: consumerGroup,
 	}, nil
 }
 

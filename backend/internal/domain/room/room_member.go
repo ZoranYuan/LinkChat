@@ -45,7 +45,7 @@ func (member *RoomMember) Join() {
 }
 
 func (member *RoomMember) ReJoin() error {
-	if member.Status != Kicked && member.Status != Left {
+	if member.Status != Left {
 		return ErrDuplicateJoin
 	}
 

@@ -103,6 +103,10 @@ func (c *RoomMemberCache) SetMemberNotFound(ctx context.Context, roomID, userID 
 	return err
 }
 
+func (c *RoomMemberCache) DeleteMember(ctx context.Context, roomID, userID string) error {
+	return c.store.Client().HDel(ctx, RoomMembersKey(roomID), userID).Err()
+}
+
 const deleteMemberFieldIfUnchangedScript = `
 	if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
 		return redis.call('HDEL', KEYS[1], ARGV[1])

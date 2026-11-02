@@ -54,6 +54,7 @@ type MessageRepository interface {
 
 type MessageStickerRepository interface {
 	Create(ctx context.Context, item *MessageSticker) error
+	CreateBatch(ctx context.Context, items []*MessageSticker) error
 	BatchGetByMessageIDs(ctx context.Context, messageIDs []string) (map[string]*MessageSticker, error)
 	WithTx(tx any) MessageStickerRepository
 }

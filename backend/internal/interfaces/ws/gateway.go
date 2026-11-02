@@ -308,16 +308,10 @@ func (g *Gateway) DeliverToOnlineRoomMembers(eventType, roomID string, payload [
 }
 
 // OnlineRoomConnectionCount 直接读取当前节点的房间连接索引。
-func (g *Gateway) OnlineRoomConnectionCount(ctx context.Context, roomID string) (int, error) {
-	if g == nil || roomID == "" {
-		return 0, errors.New("房间在线连接查询参数无效")
-	}
-	if ctx != nil && ctx.Err() != nil {
-		return 0, ctx.Err()
-	}
+func (g *Gateway) OnlineRoomConnectionCount(roomID string) int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return len(g.roomConnections[roomID]), nil
+	return len(g.roomConnections[roomID])
 }
 
 func (g *Gateway) connectionsForUser(userID string) []*Connection {

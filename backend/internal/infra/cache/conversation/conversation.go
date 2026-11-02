@@ -33,7 +33,7 @@ func validInfo(info *conversationcache.ConversationInfo) bool {
 	switch domainconversation.ConvType(info.ConversationType) {
 	case domainconversation.PrivateChat:
 		return info.UserID1 != "" && info.UserID2 != "" && info.UserID1 != info.UserID2 && info.RoomID == ""
-	case domainconversation.Room:
+	case domainconversation.RoomChat:
 		return info.RoomID != "" && info.UserID1 == "" && info.UserID2 == ""
 	default:
 		return false

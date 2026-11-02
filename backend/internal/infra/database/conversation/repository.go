@@ -64,7 +64,7 @@ func (r *ConversationRepository) FindConversationByUserIDs(ctx context.Context, 
 
 func (r *ConversationRepository) FindConversationByRoomID(ctx context.Context, roomID string) (*domainconversation.Conversation, error) {
 	var row ConversationModel
-	err := r.db.WithContext(ctx).Where("convtype = ? AND room_id = ?", domainconversation.Room, roomID).Take(&row).Error
+	err := r.db.WithContext(ctx).Where("convtype = ? AND room_id = ?", domainconversation.RoomChat, roomID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

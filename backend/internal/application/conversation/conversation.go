@@ -62,7 +62,7 @@ func (ca *ConversationApplication) GetConversationInfo(ctx context.Context, id s
 		}
 		return nil, ErrConversationNotFound
 	}
-	if record.ConvType != domainconversation.PrivateChat && record.ConvType != domainconversation.Room {
+	if record.ConvType != domainconversation.PrivateChat && record.ConvType != domainconversation.RoomChat {
 		return nil, ErrUnknownConversationType
 	}
 	ca.CacheConversationInfo(ctx, record)
@@ -163,7 +163,7 @@ func (uc *UserConversationApplication) GetUserConversationsByUserID(ctx context.
 					privatePeerIDs = append(privatePeerIDs, peerID)
 				}
 			}
-		case domainconversation.Room:
+		case domainconversation.RoomChat:
 			if conv.RoomID == "" {
 				continue
 			}
@@ -316,7 +316,7 @@ func (uc *UserConversationApplication) GetUserConversationsByUserID(ctx context.
 				item.DisplayName = "好友 " + peerUser.Username
 			}
 
-		case domainconversation.Room:
+		case domainconversation.RoomChat:
 			item.TargetID = conv.RoomID
 			if room, ok := roomByID[conv.RoomID]; ok {
 				roomCopy := room

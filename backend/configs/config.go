@@ -50,13 +50,14 @@ type FriendConfig struct {
 }
 
 type CacheConfig struct {
-	MessageDedup       MessageDedupConfig       `yaml:"message_dedup"`
-	RoomMessages       RoomMessagesConfig       `yaml:"room_messages"`
-	AttachmentAccess   AttachmentAccessConfig   `yaml:"attachment_access"`
-	AttachmentFileCard AttachmentFileCardConfig `yaml:"attachment_file_card"`
-	RoomUnreadSnapshot RoomUnreadSnapshotConfig `yaml:"room_unread_snapshot"`
-	RoomInfo           RoomInfoConfig           `yaml:"room_info"`
-	ConversationInfo   ConversationInfoConfig   `yaml:"conversation_info"`
+	MessageDedup       MessageDedupConfig        `yaml:"message_dedup"`
+	RoomMessages       RoomMessagesConfig        `yaml:"room_messages"`
+	AttachmentAccess   AttachmentAccessConfig    `yaml:"attachment_access"`
+	AttachmentFileCard AttachmentFileCardConfig  `yaml:"attachment_file_card"`
+	RoomUnreadSnapshot RoomUnreadSnapshotConfig  `yaml:"room_unread_snapshot"`
+	RoomInfo           RoomInfoConfig            `yaml:"room_info"`
+	ConversationInfo   ConversationInfoConfig    `yaml:"conversation_info"`
+	FriendRelation     FriendRelationCacheConfig `yaml:"friend_relation"`
 }
 
 type MessageDedupConfig struct {
@@ -73,6 +74,11 @@ type RoomInfoConfig struct {
 }
 
 type ConversationInfoConfig struct {
+	TTLSeconds         int `yaml:"ttl_seconds"`
+	NegativeTTLSeconds int `yaml:"negative_ttl_seconds"`
+}
+
+type FriendRelationCacheConfig struct {
 	TTLSeconds         int `yaml:"ttl_seconds"`
 	NegativeTTLSeconds int `yaml:"negative_ttl_seconds"`
 }
@@ -100,16 +106,17 @@ type KafkaConfig struct {
 }
 
 type KafkaTopics struct {
-	Message              string `yaml:"message"`
-	ReadMessageCommitted string `yaml:"read_message_committed"`
-	FriendRequestCreated string `yaml:"friend_request_created"`
-	RoomMemberChanged    string `yaml:"room_member_changed"`
+	Message string `yaml:"message"`
 }
 
 type KafkaConsumerConfig struct {
 	GroupID                       string `yaml:"group_id"`
 	Version                       string `yaml:"version"`
 	Assignor                      string `yaml:"assignor"` // range / roundrobin / sticky
+	BatchSize                     int    `yaml:"batch_size"`
+	InputQueueSize                int    `yaml:"input_queue_size"`
+	WorkerCount                   int    `yaml:"worker_count"`
+	WorkerQueueSize               int    `yaml:"worker_queue_size"`
 	MaxAttempts                   int    `yaml:"max_attempts"`
 	LeaseStaleAfterSecs           int    `yaml:"lease_stale_after_seconds"`
 	ConsumeRetryIntervalSecs      int    `yaml:"consume_retry_interval_seconds"`
@@ -119,16 +126,10 @@ type KafkaConsumerConfig struct {
 }
 
 type KafkaProducerConfig struct {
-	Retries              int    `yaml:"retries"`
-	BatchSize            int    `yaml:"batch_size"`
-	LingerMs             int    `yaml:"linger_ms"`
-	Compression          string `yaml:"compression"`
-	ClaimBatchSize       int    `yaml:"claim_batch_size"`
-	PollIntervalSeconds  int    `yaml:"poll_interval_seconds"`
-	StaleAfterSeconds    int    `yaml:"stale_after_seconds"`
-	BaseRetryWaitSeconds int    `yaml:"base_retry_wait_seconds"`
-	MaxRetries           int    `yaml:"max_retries"`
-	MaxRetryWaitSeconds  int    `yaml:"max_retry_wait_seconds"`
+	Retries     int    `yaml:"retries"`
+	BatchSize   int    `yaml:"batch_size"`
+	LingerMs    int    `yaml:"linger_ms"`
+	Compression string `yaml:"compression"`
 }
 
 type StorageConfig struct {
@@ -179,23 +180,20 @@ type App struct {
 }
 
 type WebSocketConfig struct {
-	WriteWaitSeconds           int `yaml:"write_wait_seconds"`
-	PongWaitSeconds            int `yaml:"pong_wait_seconds"`
-	PingPeriodSeconds          int `yaml:"ping_period_seconds"`
-	TimerInterval              int `yaml:"timer_interval_seconds"`
-	PageHiddenTimeoutSeconds   int `yaml:"page_hidden_timeout_seconds"`
-	CloseTimeoutSeconds        int `yaml:"close_timeout_seconds"`
-	MaxMessageSize             int `yaml:"max_message_size"`
-	MaxMessageSendBufferSize   int `yaml:"max_message_send_buffer_size"`
-	MessageSequencerShardCount int `yaml:"message_sequencer_shard_count"`
-	MessageBatchSize           int `yaml:"message_batch_size"`
-	MessageFlushIntervalMs     int `yaml:"message_flush_interval_milliseconds"`
-	SendMessageRate            int `yaml:"send_message_rate"`
-	SendMessageBurst           int `yaml:"send_message_burst"`
-	BatchMaxMessages           int `yaml:"batch_max_messages"`
-	BatchMaxBytes              int `yaml:"batch_max_bytes"`
-	BatchLingerMilliseconds    int `yaml:"batch_linger_milliseconds"`
-	BatchReadyQueueSize        int `yaml:"batch_ready_queue_size"`
+	WriteWaitSeconds         int `yaml:"write_wait_seconds"`
+	PongWaitSeconds          int `yaml:"pong_wait_seconds"`
+	PingPeriodSeconds        int `yaml:"ping_period_seconds"`
+	TimerInterval            int `yaml:"timer_interval_seconds"`
+	PageHiddenTimeoutSeconds int `yaml:"page_hidden_timeout_seconds"`
+	CloseTimeoutSeconds      int `yaml:"close_timeout_seconds"`
+	MaxMessageSize           int `yaml:"max_message_size"`
+	MaxMessageSendBufferSize int `yaml:"max_message_send_buffer_size"`
+	SendMessageRate          int `yaml:"send_message_rate"`
+	SendMessageBurst         int `yaml:"send_message_burst"`
+	BatchMaxMessages         int `yaml:"batch_max_messages"`
+	BatchMaxBytes            int `yaml:"batch_max_bytes"`
+	BatchLingerMilliseconds  int `yaml:"batch_linger_milliseconds"`
+	BatchReadyQueueSize      int `yaml:"batch_ready_queue_size"`
 }
 
 type MessageConfig struct {
@@ -203,8 +201,6 @@ type MessageConfig struct {
 	LargeRoomNoticeLingerMilliseconds int   `yaml:"large_room_notice_linger_milliseconds"`
 	LargeRoomNoticeShardCount         int   `yaml:"large_room_notice_shard_count"`
 	RoomActivityWindowSeconds         int   `yaml:"room_activity_window_seconds"`
-	RoomActivityHoldSeconds           int   `yaml:"room_activity_hold_seconds"`
-	RoomActivitySweepSeconds          int   `yaml:"room_activity_sweep_seconds"`
 	RoomActivityBucketSeconds         int   `yaml:"room_activity_bucket_seconds"`
 	RoomActivityKeyTTLSeconds         int   `yaml:"room_activity_key_ttl_seconds"`
 	RoomActivityWarnFanoutWork        int   `yaml:"room_activity_warn_fanout_work"`

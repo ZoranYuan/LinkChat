@@ -32,6 +32,17 @@ func (r *MessageStickerRepository) Create(ctx context.Context, item *domainmessa
 	return r.db.WithContext(ctx).Create(toMessageStickerModel(item)).Error
 }
 
+func (r *MessageStickerRepository) CreateBatch(ctx context.Context, items []*domainmessage.MessageSticker) error {
+	if len(items) == 0 {
+		return nil
+	}
+	rows := make([]*MessageStickerModel, len(items))
+	for i, item := range items {
+		rows[i] = toMessageStickerModel(item)
+	}
+	return r.db.WithContext(ctx).Create(&rows).Error
+}
+
 func (r *MessageStickerRepository) BatchGetByMessageIDs(ctx context.Context, messageIDs []string) (map[string]*domainmessage.MessageSticker, error) {
 	if len(messageIDs) == 0 {
 		return map[string]*domainmessage.MessageSticker{}, nil

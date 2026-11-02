@@ -168,7 +168,8 @@ const messageStatusText = (message) => {
   }
   if (message.error) return "发送失败";
 
-  if (!message.messageId || Number(message.seq) <= 0) return "发送中";
+  if (!message.messageId) return "发送中";
+  if (Number(message.seq) <= 0) return message.accepted ? "已发送" : "发送中";
   return isLastMineMessageRead(message) ? "已读" : "已发送";
 };
 const shortFileName = (name) => {

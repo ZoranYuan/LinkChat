@@ -13,7 +13,6 @@ import (
 
 	roomunreadcache "IM_backend/internal/application/ports/cache/agent"
 	conversationcache "IM_backend/internal/application/ports/cache/conversation"
-	outboxport "IM_backend/internal/application/ports/outbox"
 	domainconversation "IM_backend/internal/domain/conversation"
 	domainmessage "IM_backend/internal/domain/message"
 )
@@ -219,7 +218,7 @@ func (ma *MessageApplication) SyncMessages(
 	}
 
 	// 房间新消息提交后按策略写入 Redis 的 seq ZSET，优先从缓存同步。缓存未覆盖完整区间或读取失败时回源 MySQL。
-	if domainconversation.ConvType(conversation.ConversationType) == domainconversation.Room && ma.roomCache != nil {
+	if domainconversation.ConvType(conversation.ConversationType) == domainconversation.RoomChat && ma.roomCache != nil {
 		page, cacheErr := ma.roomCache.ListMessageAfterSeq(
 			ctx,
 			conversation.RoomID,
@@ -272,7 +271,7 @@ func (ma *MessageApplication) SyncMessages(
 			return msgsApp[i].Seq < msgsApp[j].Seq
 		})
 
-		if domainconversation.ConvType(conversation.ConversationType) == domainconversation.Room && ma.roomCache != nil {
+		if domainconversation.ConvType(conversation.ConversationType) == domainconversation.RoomChat && ma.roomCache != nil {
 			events := messageAppDTOsToEvents(msgsApp, conversationID, conversation.RoomID)
 			if err := ma.roomCache.WarmRecentMessageEvents(ctx, conversation.RoomID, events); err != nil {
 				log.Printf(
@@ -370,7 +369,7 @@ func (ma *MessageApplication) HandleReadMessage(
 	}
 
 	uconv.UpdateReadSeq(lastReadSeq)
-	outboxCreated := false
+	var notify *messaging.MessageReadAckEvent
 
 	if lastReadSeq > latestSeq {
 		return ErrMessageSeq
@@ -386,33 +385,25 @@ func (ma *MessageApplication) HandleReadMessage(
 		}
 
 		if message.SenderID != "" && message.SenderID != userID {
-			readEvent := messaging.MessageReadCommittedEvent{
-				ReaderID:        userID,
-				RecipientUserID: message.SenderID,
-				ConversationID:  conversationID,
-				LastReadSeq:     lastReadSeq,
-				ConvType:        messaging.ConvType(info.ConversationType),
+			notify = &messaging.MessageReadAckEvent{
+				UserID:         userID,
+				ConversationID: conversationID,
+				LastReadSeq:    lastReadSeq,
+				ConvType:       messaging.ConvType(info.ConversationType),
 			}
-
-			payload, err := json.Marshal(readEvent)
-			if err != nil {
-				return err
-			}
-
-			outbox := &outboxport.Entry{
-				EventType:    string(messaging.TypeReadCommitted),
-				PartitionKey: userID + ":" + conversationID,
-				Payload:      payload,
-			}
-			outboxCreated = true
-			return ma.messageOutboxRepository.WithTx(tx).Create(ctx, outbox)
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
-	if outboxCreated {
-		ma.notifyProducer()
+	if notify != nil && ma.userDelivery != nil {
+		payload, err := json.Marshal(notify)
+		if err == nil {
+			err = ma.userDelivery.DeliverToUser(messaging.TypeReadNotify, message.SenderID, payload)
+		}
+		if err != nil {
+			log.Printf("已读通知推送失败：recipient=%s conversation=%s seq=%d error=%v", message.SenderID, conversationID, lastReadSeq, err)
+		}
 	}
 
 	return nil
@@ -427,7 +418,7 @@ func (ma *MessageApplication) HandleRoomEntry(ctx context.Context, userID, roomI
 	if err != nil {
 		return err
 	}
-	if conv == nil || conv.ConvType != domainconversation.Room {
+	if conv == nil || conv.ConvType != domainconversation.RoomChat {
 		return ErrConversationNotFound
 	}
 	if err := ma.checkConversationAccess(ctx, conversationcache.FromConversation(conv), userID); err != nil {

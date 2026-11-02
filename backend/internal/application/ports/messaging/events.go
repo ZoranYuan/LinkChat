@@ -16,9 +16,6 @@ type Publisher interface {
 	Publish(ctx context.Context, event IntegrationEvent) error
 }
 
-// Producer 表示可向消息队列投递集成事件的生产者。
-type ProducerNotifier interface{ Notify() }
-
 type IncomingEvent struct {
 	EventID string
 	Name    string
@@ -52,8 +49,8 @@ func IsNonRetryable(err error) bool {
 type AckStatus string
 
 const (
-	AckStatusSent   AckStatus = "sent"   // 服务端事务已提交
-	AckStatusFailed AckStatus = "failed" // 服务端未提交
+	AckStatusSent   AckStatus = "sent"   // 消息已成功投递到 Kafka
+	AckStatusFailed AckStatus = "failed" // 消息未成功投递到 Kafka
 )
 
 type EventType string
@@ -62,7 +59,7 @@ type ConvType int
 
 const (
 	PrivateChat ConvType = 1
-	Room        ConvType = 2
+	RoomChat    ConvType = 2
 )
 
 const (
@@ -70,13 +67,11 @@ const (
 	TypeReadAck              = "msg_read_ack"           // 前端 -> 后端
 	TypeRoomEntry            = "room_entry"             // 前端进入房间时请求固定个人未读快照
 	TypeConnectionVisibility = "connection_visibility"  // 前端上报当前页面可见状态
-	TypeReadCommitted        = "msg_read_committed"     // 后端内部 outbox/MQ
 	TypeReadNotify           = "msg_read_notify"        // 发送给前端，表示已经有用户读取消息
 	TypeMessageAck           = "msg_ack"                // 发送给前端，表示已经接收到消息
 	TypeMessage              = "msg"                    // 后端发送给前端，表示新的消息
 	TypeRoomMessageNotice    = "room_msg_notice"        // 大型房间轻量新消息提醒，客户端按 seq 拉取详情
-	TypeRoomMemberChanged    = "room_member_changed"
-	TypeMessageBatch         = "msg_batch" // 服务端一次性发送多个数据
+	TypeMessageBatch         = "msg_batch"              // 服务端一次性发送多个数据
 	TypeWebSocketError       = "ws_error"
 )
 
@@ -86,15 +81,6 @@ type MessageReadAckEvent struct {
 	LastReadSeq    int64    `json:"lastReadSeq"`
 	ConvType       ConvType `json:"convType"`
 	Avatar         string   `json:"avatar,omitempty"`
-}
-
-type MessageReadCommittedEvent struct {
-	ReaderID        string   `json:"readerId"`
-	RecipientUserID string   `json:"recipientUserId"`
-	ConversationID  string   `json:"conversationId"`
-	LastReadSeq     int64    `json:"lastReadSeq"`
-	ConvType        ConvType `json:"convType"`
-	Avatar          string   `json:"avatar,omitempty"`
 }
 
 type FriendRequestCreatedEvent struct {
@@ -122,15 +108,6 @@ type MessageNotifyEvent struct {
 	Seq            int64  `json:"seq"`
 }
 
-type RoomMemberChangedEvent struct {
-	RoomID    string `json:"roomId"`
-	UserID    string `json:"userId"`
-	Status    int    `json:"status"`
-	Role      int    `json:"role"`
-	MuteUntil *int64 `json:"muteUntil,omitempty"`
-	Version   int64  `json:"version"`
-}
-
 type MessageEvent struct {
 	MessageID      string   `json:"messageId"`
 	ConversationID string   `json:"conversationId"`
@@ -155,4 +132,21 @@ type WSErrorEvent struct {
 	RequestOp string `json:"requestOp"`
 	Code      string `json:"code"`
 	Message   string `json:"message"`
+}
+
+type SendMessageDTO struct {
+	ClientMessageID  string
+	SenderID         string
+	ReceiverID       string
+	ConversationID   string
+	ConversationType int
+	Type             int
+	Content          string
+	AttachmentID     string
+	FileID           string
+	Width            int
+	Height           int
+	DurationMs       *int64
+	StickerID        string
+	PackID           string
 }
