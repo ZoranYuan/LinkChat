@@ -1,8 +1,8 @@
 # LinkChat
 
-LinkChat 是独立开发的即时聊天系统，采用 Go 后端与 Vue 3 Web 客户端，支持好友管理、私聊、房间通信、离线消息同步和文件传输。消息链路采用事务化写入、Kafka 异步分发及按广播成本切换的推拉策略。
+LinkChat 是独立开发的即时聊天系统，采用 Go 后端与 Vue 3 Web 客户端，支持好友管理、私聊、房间通信、离线消息同步和文件传输。普通聊天消息由 WebSocket 入口校验后同步发布到 Kafka，再由 Consumer 批量持久化并推送；大房间按广播成本切换为轻量通知与增量补拉。
 
-项目同时提供 Room Agent 的 gRPC 对接入口，目前已接入身份与房间访问权限校验；未读消息分页接口仍在开发中，尚未形成完整的摘要链路。
+项目同时提供 Room Agent 的 gRPC 对接入口，支持身份与房间访问校验、固定未读范围读取、按序号增量同步和区间消息搜索。未读消息接口在一次 gRPC 流调用中按批次返回，不提供客户端游标分页。
 
 ## 技术栈
 
@@ -20,7 +20,7 @@ backend/
   configs/                     # 统一 Config 定义与 YAML 配置
   internal/
     domain/
-      user/                    # entity.go、repository.go、valueobject.go、errors.go
+      user/                    # 领域实体、仓储接口、值对象与业务错误
       friend/
       room/
       conversation/
@@ -31,7 +31,7 @@ backend/
       friend/
       room/
       conversation/
-      message/                 # 发送、已读、同步、Sequencer、消息投递
+      message/                 # 发送校验、已读与同步
       file/                    # 上传、完成校验、附件访问、GC
       agent/                   # 房间权限与未读消息查询
       ports/                   # 跨模块共用的缓存、事务、消息和鉴权端口；消息契约统一放在 messaging/
@@ -44,9 +44,8 @@ backend/
         message/
         file/
         inbox/
-        outbox/
         migration/             # GORM 模型迁移
-      cache/                   # Redis 连接与业务缓存；房间本地状态位于 room/activity_memory.go
+      cache/                   # Redis 连接与业务缓存
       mq/
         kafka/                 # Producer、Consumer、Topic 路由
         handlers/              # 消费事件解码、调用应用用例
@@ -67,7 +66,7 @@ backend/
 
 数据库模型与仓储实现放在同一业务目录，模型使用 `Model` 后缀并显式指定原表名；表字段、索引与接口 JSON 契约沿用现有定义。数据库迁移只由 `cmd/migrate` 调用。
 
-消息 Sequencer 和文件 GC 位于应用层。房间 ACTIVE 标识是节点内存缓存，集中在 `infra/cache/room/activity_memory.go`，通过应用端口访问。Kafka 的消费 Handler 位于 `infra/mq/handlers`，与 Producer/Consumer 一起归属消息基础设施。
+文件 GC 位于应用层。Kafka Consumer 在 `infra/mq/kafka` 按会话键聚合消息批次，消费 Handler 位于 `infra/mq/handlers`；Producer、Consumer 与事件处理一起归属消息基础设施。
 
 前端采用视图、组件、业务状态与服务分层：HTTP 客户端位于 `services/http`，WebSocket 客户端与协议位于 `services/websocket`，IndexedDB 连接和仓储位于 `db`，聊天业务编排位于 `modules/chat`。
 
@@ -75,22 +74,24 @@ Go 源码使用 gofmt 与统一导入分组；前端使用根目录 `.prettierrc
 
 ## 消息链路
 
+普通聊天消息采用 Kafka 前置、Consumer 批量持久化的链路：
+
 ```text
 WebSocket MessageReq
-  → 鉴权、关系校验和客户端重试检查
-  → MySQL 事务：分配会话 seq、持久化消息与附件、写入 Outbox
-  → 返回 msg_ack（sent 表示事务提交，不代表对方已接收）
-  → Kafka Producer 批量领取 Outbox，以 PartitionKey 为 Kafka Key 直接批量投递
-  → Kafka Consumer 分区内串行处理，使用 Inbox 管理幂等与处理租约
-  → MessageDelivery / 本地 Gateway
+  → 校验会话及发送权限，生成稳定事件 ID
+  → 同步发送 Kafka（会话 ID 作为分区键）
+  → Kafka 确认后返回 msg_ack（仅表示 Kafka 已接收）
+  → Consumer 按会话聚合消息，批量抢占 Inbox
+  → MySQL 事务：预留连续 seq、批量写入消息/附件、推进发送者已读水位、完成 Inbox
+  → WebSocket 投递完整消息或合并后的轻量通知
   → Connection 出站聚合队列 → WebSocket 批量帧
 ```
 
-发送请求进入按会话哈希的 Sequencer 分片，定时或容量触发批量处理；按会话分组后，在一个事务中预留连续 seq、批量写入消息、发送者已读水位和 Outbox。成功 ACK 在事务提交后返回。Kafka 分区键使相同会话进入同一分区，但不能单独保证多实例 Outbox 投递时的 seq 顺序；客户端仍需按 seq 去重、排序和补齐缺口。
+WebSocket 入口不等待 MySQL 消息事务；ACK 不代表消息已写入 MySQL 或已到达接收端。客户端使用稳定的请求标识重试，服务端以确定性事件 ID、Inbox 状态和消息表唯一约束处理重复投递。Consumer 按 Kafka 分区键哈希到固定 worker，同一会话在同一 worker 内按批次处理；批次达到配置条数或 100ms 定时窗口时提交。序号范围、消息数据、附件数据、发送者已读水位和 Inbox 完成状态在同一 MySQL 事务中提交。
 
-普通房间推送完整消息；大型房间或活跃房间使用 `room_msg_notice` 合并通知，客户端通过 `/messages/sync` 补拉。房间新消息事务提交后记录 Redis 活跃度，达到 ACTIVE 时立即更新发送端与 Consumer 共享的本地标识；最后一次 ACTIVE 后保持 120 秒，Consumer 读取不续期，也不再查询 Redis 活跃度。大型房间、WARN/ACTIVE 房间及本地 ACTIVE 保持期间的新增消息继续预热，Redis 近期消息 TTL 仍为 10 分钟；缓存失败不改变成功 ACK。该标识仅在当前节点有效，重启后丢失，不是多实例共享状态。通知合并器每房间只保留最大 seq 对应的轻量通知，定时向所有在线成员推送，不保存完整消息或预热缓存。待通知房间数不设固定上限。房间判断和通知聚合参数位于 [config.yaml](backend/configs/config.yaml)。
+Kafka 分区键使同一会话进入同一分区，但消费端会把不同会话分配给不同 worker 并行处理；当前没有跨 worker 的连续完成 offset 前缀跟踪，因此不能描述为严格按分区顺序提交。消息序号仍在数据库会话行锁下分配，客户端按 seq 去重、排序并通过同步接口补齐缺口。
 
-聊天事件的 PartitionKey 使用会话 ID；已读事件使用用户 ID 与会话 ID，好友申请使用接收用户 ID，成员变更使用房间 ID 与用户 ID。Consumer 在每个 ConsumeClaim 中串行处理该分区；当前事件完成或转入死信并写入 Inbox 终态后，才标记对应 offset，再处理下一条。不同分区仍并行消费。投递目标取自业务事件字段，不从 Kafka Key 推断。WebSocket 推送与 Inbox 完成标记不是同一个事务，客户端仍需去重和同步补偿。
+普通房间推送完整消息；成员规模较大或活跃度达到阈值的房间合并推送最新 seq 通知，客户端通过 `/messages/sync` 补拉。活跃度根据 Redis 中的近期消息量和在线连接数计算；近期消息缓存可用于补拉，缺失时回源 MySQL。通知合并器按会话保留最新 seq，定时批量触发通知。WebSocket 推送与 Inbox 完成标记不是同一个事务，客户端仍需去重和同步补偿。
 
 ## WebSocket 协议
 
@@ -98,7 +99,7 @@ WebSocket MessageReq
 
 入口：`GET /api/v1/ws`，需要有效 JWT。Connection 绑定用户及登录会话，用户可以有多个连接。服务端维护 Ping/Pong、读写截止时间和慢客户端隔离。
 
-每条 Connection 的入站分发按接收顺序执行；消息发送处理器将任务提交至实例级 Sequencer，由分片统一凑批与持久化。批次使用服务生命周期上下文，单条连接断开不会取消其他连接的消息。客户端按 `clientMsgId` 关联 ACK、按 seq 排列消息；已提交但未收到 ACK 的消息使用原 clientMsgId 重试。入站队列满时关闭连接。
+每条 Connection 的入站分发按接收顺序执行；消息处理器校验会话和发送权限后同步发布 Kafka，收到成功结果才返回 `msg_ack`。该 ACK 表示 Kafka 已接收，不表示 MySQL 已持久化或接收端已收到。客户端以相同请求标识重试，消费者批量持久化并按 seq 推送；入站队列满时关闭连接。
 
 | Op | 方向 | Payload |
 |---|---|---|
@@ -131,7 +132,7 @@ message WsBatch {
 
 ### 已读水位
 
-客户端发送 `MessageReadAckReq.message_id`。后端查询消息并校验会话权限，单调推进用户的 `lastReadSeq`；推进成功时在同一事务中写入已读 Outbox 事件，消费后通知对应消息发送方。重复或倒退的已读确认不重复推进水位。
+客户端发送 `MessageReadAckReq.message_id`。后端查询消息并校验会话权限，在事务中单调推进用户的 `lastReadSeq`；推进成功后通过本地 Gateway 通知对应消息发送方。重复或倒退的已读确认不重复推进水位。
 
 私聊与房间共用已读确认。实时消息或补拉结果写入 IndexedDB 后，前端仅在目标会话正在打开、连续水位对应的消息不是本人发送时尝试发送回执；连接未建立或找不到边界消息时不发送。
 
@@ -158,15 +159,10 @@ message WsBatch {
 | 事件 | 默认 Topic |
 |---|---|
 | 新消息 | `im.message` |
-| 已读提交 | `im.read` |
-| 好友申请 | `im.friend` |
-| 房间成员变更 | `im.room` |
 
-Producer 每次在短事务内领取一批 Outbox，提交领取事务后直接调用 SendMessages；Sarama 根据 PartitionKey 选择分区并组织发送。整批结果返回后，分类为 sent、retry 和 dead，分别执行批量更新：成功标记 sent，重试回到 pending 并保存各自的错误与重试时间，达到上限标记 dead；所有更新均校验每条记录的 event_id 与 lock_token。不使用本地 Producer worker pool 或二次凑批。Consumer 内部负责 Inbox 抢占、处理、重试和死信。
+WebSocket 聊天事件由入口同步发布 Kafka。Consumer 通过 Inbox 管理事件处理状态，按会话归并批次，并在 MySQL 事务内完成消息写入与 Inbox 完成标记；不同会话可以并发处理。Kafka 确认、数据库提交、WebSocket 写入和客户端已读是不同阶段，任何一个阶段的成功都不代表后续阶段已经完成。
 
-Outbox/Inbox 表保留，它们不是独立的应用层调度入口。具体批量粒度和失败处理以 [producer.go](backend/internal/infra/mq/kafka/producer.go) 与 [consumer.go](backend/internal/infra/mq/kafka/consumer.go) 为准。
-
-Outbox 保存 `event_id`、`event_type`、`partition_key` 和完整业务 JSON `payload`，不再嵌套 Envelope。Inbox 保存处理状态，`attempt_count` 在首次抢占时为 1；Consumer 的 `max_attempts: 3` 表示首次尝试加最多两次重试。Inbox 的 `finished_at` 仅在 completed/dead 时填写，created_at/updated_at 分别记录创建和更新。Outbox 的 sent 表示 Kafka 确认，Inbox 的 completed 表示 Handler 成功返回，都不是客户端已收到的证明。
+已读回执和好友申请通知在业务处理成功后通过本地 Gateway 直接推送。好友关系、会话和初始消息仍在同一数据库事务中创建，提交后向在线双方推送初始消息；离线用户通过会话同步读取。
 
 
 ## 统一媒体上传
@@ -213,10 +209,12 @@ Outbox 保存 `event_id`、`event_type`、`partition_key` 和完整业务 JSON `
 
 ## Room Agent 对接
 
-gRPC 监听地址由 `grpc.room_agent_address` 配置，协议以 [room_agent.proto](backend/internal/interfaces/grpc/pb/room_agent.proto) 为准。调用方通过 metadata 的 `authorization: Bearer <access_token>` 传递身份，用户标识由服务端解析，并校验登录会话是否仍有效。
+gRPC 监听地址由 `grpc.room_agent_address` 配置，协议以 [room_agent.proto](backend/internal/interfaces/grpc/pb/room_agent.proto) 为准。调用方通过 metadata 的 `authorization: Bearer <access_token>` 传递身份；服务端验证 access token 和登录会话后，从令牌中取得用户 ID。
 
-- `VerifyRoomAccess`：校验房间成员状态，正常及禁言成员允许访问，退出或被踢成员拒绝访问；成功时返回按用户和房间稳定生成的 `thread_id`。
-- `GetRoomUnreadMessages`：协议已定义分页大小和游标，当前尚未实现 RPC Handler；应用层方法也保留明确的未实现返回。
+- `VerifyRoomAccess`：校验房间成员状态。正常及禁言成员允许访问，退出或被踢成员拒绝访问；成功时返回按用户和房间稳定生成的 `thread_id`。
+- `GetRoomUnreadMessages`：读取用户进入房间时保存的未读序号范围。调用前需由客户端通过 WebSocket `room_entry` 触发未读快照；接口读取该固定范围，不重新计算或修改它。服务端按请求中的 `limit` 分批查询，并在同一次 gRPC server stream 中发送；没有快照时返回空结果。当前只返回未撤回的文本消息，接口不支持客户端传入分页 cursor。
+- `SyncRoomMessages`：从 `after_seq` 之后同步至请求开始时的会话最新序号，按批次通过 gRPC stream 返回。
+- `SearchRoomMessages`：按请求提供的序号区间查询房间消息，并通过 gRPC stream 分批返回。
 
 ## 本地启动
 
