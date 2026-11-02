@@ -1182,8 +1182,37 @@ export const useChatStore = defineStore("chat", () => {
   };
 
   const joinRoom = async (inviteCode) => {
+    const session = captureSession();
     const room = await joinRoomRequest(inviteCode);
-    await loadWorkspace();
+    if (!isSessionActive(session)) return room;
+
+    const conversation = {
+      ...findConversation(state.conversations, room.conversationId),
+      conversationId: room.conversationId,
+      convType: ConversationType.ROOM,
+      targetId: room.roomId,
+      displayName: room.roomName,
+      avatar: room.avatar,
+      unread: 0,
+      latestSeq: Number(room.latestSeq) || 0,
+      lastContinuousSeq: Number(room.latestSeq) || 0,
+      room: {
+        roomId: room.roomId,
+        roomName: room.roomName,
+        avatar: room.avatar,
+        description: room.description,
+        memberCount: room.memberCount,
+      },
+    };
+    // 入房水位是同步起点，不代表入房前的消息已下载到本地。
+    await insertConversations(session.userId, [conversation]);
+    if (!isSessionActive(session)) return room;
+
+    state.conversations = sortConversations([
+      ...state.conversations.filter((item) => item.conversationId !== room.conversationId),
+      conversation,
+    ]);
+    await syncConversationFromLocal(room.conversationId, { session });
     return room;
   };
 
