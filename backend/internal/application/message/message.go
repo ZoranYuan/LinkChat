@@ -136,7 +136,7 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, conversatio
 	}
 	err = ma.messageProducer.Publish(ctx, messaging.IntegrationEvent{
 		EventID:      eventID,
-		Name:         messaging.TypeMessage,
+		Name:         messaging.TypeMessageSend,
 		PartitionKey: conversationID,
 		Payload:      payload,
 	})
@@ -412,7 +412,7 @@ func (ma *MessageApplication) fillAttachmentIDs(ctx context.Context, messages []
 	return nil
 }
 
-func messageEventsToAppDTO(events []messaging.MessageEvent, conversationID string) []MessageDTO {
+func messageEventsToAppDTO(events []messaging.MessagePushEvent, conversationID string) []MessageDTO {
 	if len(events) == 0 {
 		return []MessageDTO{}
 	}
@@ -459,12 +459,12 @@ func messageEventsToAppDTO(events []messaging.MessageEvent, conversationID strin
 
 // messageAppDTOsToEvents 将应用层消息 DTO 转换为内部事件，用于回填房间近期消息缓存。
 // 内部事件可以携带后端投递所需的路由信息，但这些字段会在 WebSocket 编码时被过滤。
-func messageAppDTOsToEvents(messages []MessageDTO, conversationID, roomID string) []messaging.MessageEvent {
+func messageAppDTOsToEvents(messages []MessageDTO, conversationID, roomID string) []messaging.MessagePushEvent {
 	if len(messages) == 0 {
-		return []messaging.MessageEvent{}
+		return []messaging.MessagePushEvent{}
 	}
 
-	events := make([]messaging.MessageEvent, 0, len(messages))
+	events := make([]messaging.MessagePushEvent, 0, len(messages))
 	for _, message := range messages {
 		if message.MessageID == "" || message.Seq <= 0 {
 			continue
@@ -480,7 +480,7 @@ func messageAppDTOsToEvents(messages []MessageDTO, conversationID, roomID string
 			clientMsgID = *message.ClientMessageID
 		}
 
-		events = append(events, messaging.MessageEvent{
+		events = append(events, messaging.MessagePushEvent{
 			MessageID:      message.MessageID,
 			ConversationID: resolvedID,
 			SenderID:       message.SenderID,

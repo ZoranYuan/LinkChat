@@ -73,27 +73,28 @@ func (x *WsFrame) GetData() []byte {
 	return nil
 }
 
-type WsBatch struct {
+type EventBatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Frames        []*WsFrame             `protobuf:"bytes,1,rep,name=frames,proto3" json:"frames,omitempty"`
+	BatchId       string                 `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *WsBatch) Reset() {
-	*x = WsBatch{}
+func (x *EventBatch) Reset() {
+	*x = EventBatch{}
 	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WsBatch) String() string {
+func (x *EventBatch) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WsBatch) ProtoMessage() {}
+func (*EventBatch) ProtoMessage() {}
 
-func (x *WsBatch) ProtoReflect() protoreflect.Message {
+func (x *EventBatch) ProtoReflect() protoreflect.Message {
 	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -105,40 +106,91 @@ func (x *WsBatch) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WsBatch.ProtoReflect.Descriptor instead.
-func (*WsBatch) Descriptor() ([]byte, []int) {
+// Deprecated: Use EventBatch.ProtoReflect.Descriptor instead.
+func (*EventBatch) Descriptor() ([]byte, []int) {
 	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *WsBatch) GetFrames() []*WsFrame {
+func (x *EventBatch) GetFrames() []*WsFrame {
 	if x != nil {
 		return x.Frames
 	}
 	return nil
 }
 
-type MessageReadAckReq struct {
+func (x *EventBatch) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+type EventBatchAck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BatchId       string                 `protobuf:"bytes,1,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EventBatchAck) Reset() {
+	*x = EventBatchAck{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EventBatchAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventBatchAck) ProtoMessage() {}
+
+func (x *EventBatchAck) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EventBatchAck.ProtoReflect.Descriptor instead.
+func (*EventBatchAck) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *EventBatchAck) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+type MessageReadRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *MessageReadAckReq) Reset() {
-	*x = MessageReadAckReq{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[2]
+func (x *MessageReadRequest) Reset() {
+	*x = MessageReadRequest{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MessageReadAckReq) String() string {
+func (x *MessageReadRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MessageReadAckReq) ProtoMessage() {}
+func (*MessageReadRequest) ProtoMessage() {}
 
-func (x *MessageReadAckReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[2]
+func (x *MessageReadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -149,40 +201,40 @@ func (x *MessageReadAckReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MessageReadAckReq.ProtoReflect.Descriptor instead.
-func (*MessageReadAckReq) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{2}
+// Deprecated: Use MessageReadRequest.ProtoReflect.Descriptor instead.
+func (*MessageReadRequest) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *MessageReadAckReq) GetMessageId() string {
+func (x *MessageReadRequest) GetMessageId() string {
 	if x != nil {
 		return x.MessageId
 	}
 	return ""
 }
 
-type RoomEntryReq struct {
+type RoomEnterRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RoomId        string                 `protobuf:"bytes,1,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RoomEntryReq) Reset() {
-	*x = RoomEntryReq{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[3]
+func (x *RoomEnterRequest) Reset() {
+	*x = RoomEnterRequest{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RoomEntryReq) String() string {
+func (x *RoomEnterRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RoomEntryReq) ProtoMessage() {}
+func (*RoomEnterRequest) ProtoMessage() {}
 
-func (x *RoomEntryReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[3]
+func (x *RoomEnterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -193,40 +245,40 @@ func (x *RoomEntryReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RoomEntryReq.ProtoReflect.Descriptor instead.
-func (*RoomEntryReq) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{3}
+// Deprecated: Use RoomEnterRequest.ProtoReflect.Descriptor instead.
+func (*RoomEnterRequest) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *RoomEntryReq) GetRoomId() string {
+func (x *RoomEnterRequest) GetRoomId() string {
 	if x != nil {
 		return x.RoomId
 	}
 	return ""
 }
 
-type ConnectionVisibilityReq struct {
+type ConnectionVisibilityRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Hidden        *bool                  `protobuf:"varint,1,opt,name=hidden,proto3,oneof" json:"hidden,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ConnectionVisibilityReq) Reset() {
-	*x = ConnectionVisibilityReq{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[4]
+func (x *ConnectionVisibilityRequest) Reset() {
+	*x = ConnectionVisibilityRequest{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ConnectionVisibilityReq) String() string {
+func (x *ConnectionVisibilityRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ConnectionVisibilityReq) ProtoMessage() {}
+func (*ConnectionVisibilityRequest) ProtoMessage() {}
 
-func (x *ConnectionVisibilityReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[4]
+func (x *ConnectionVisibilityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -237,19 +289,19 @@ func (x *ConnectionVisibilityReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ConnectionVisibilityReq.ProtoReflect.Descriptor instead.
-func (*ConnectionVisibilityReq) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{4}
+// Deprecated: Use ConnectionVisibilityRequest.ProtoReflect.Descriptor instead.
+func (*ConnectionVisibilityRequest) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *ConnectionVisibilityReq) GetHidden() bool {
+func (x *ConnectionVisibilityRequest) GetHidden() bool {
 	if x != nil && x.Hidden != nil {
 		return *x.Hidden
 	}
 	return false
 }
 
-type MessageReq struct {
+type MessageSendRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	ClientMsgId    string                 `protobuf:"bytes,1,opt,name=client_msg_id,json=clientMsgId,proto3" json:"client_msg_id,omitempty"`
 	CType          int32                  `protobuf:"varint,4,opt,name=c_type,json=cType,proto3" json:"c_type,omitempty"`
@@ -262,21 +314,21 @@ type MessageReq struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *MessageReq) Reset() {
-	*x = MessageReq{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[5]
+func (x *MessageSendRequest) Reset() {
+	*x = MessageSendRequest{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MessageReq) String() string {
+func (x *MessageSendRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MessageReq) ProtoMessage() {}
+func (*MessageSendRequest) ProtoMessage() {}
 
-func (x *MessageReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[5]
+func (x *MessageSendRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -287,61 +339,61 @@ func (x *MessageReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MessageReq.ProtoReflect.Descriptor instead.
-func (*MessageReq) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{5}
+// Deprecated: Use MessageSendRequest.ProtoReflect.Descriptor instead.
+func (*MessageSendRequest) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *MessageReq) GetClientMsgId() string {
+func (x *MessageSendRequest) GetClientMsgId() string {
 	if x != nil {
 		return x.ClientMsgId
 	}
 	return ""
 }
 
-func (x *MessageReq) GetCType() int32 {
+func (x *MessageSendRequest) GetCType() int32 {
 	if x != nil {
 		return x.CType
 	}
 	return 0
 }
 
-func (x *MessageReq) GetContent() string {
+func (x *MessageSendRequest) GetContent() string {
 	if x != nil {
 		return x.Content
 	}
 	return ""
 }
 
-func (x *MessageReq) GetFileId() string {
+func (x *MessageSendRequest) GetFileId() string {
 	if x != nil {
 		return x.FileId
 	}
 	return ""
 }
 
-func (x *MessageReq) GetStickerId() string {
+func (x *MessageSendRequest) GetStickerId() string {
 	if x != nil {
 		return x.StickerId
 	}
 	return ""
 }
 
-func (x *MessageReq) GetPackId() string {
+func (x *MessageSendRequest) GetPackId() string {
 	if x != nil {
 		return x.PackId
 	}
 	return ""
 }
 
-func (x *MessageReq) GetConversationId() string {
+func (x *MessageSendRequest) GetConversationId() string {
 	if x != nil {
 		return x.ConversationId
 	}
 	return ""
 }
 
-type MessageAck struct {
+type MessageSendResult struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	ClientMsgId    string                 `protobuf:"bytes,1,opt,name=client_msg_id,json=clientMsgId,proto3" json:"client_msg_id,omitempty"`
 	MessageId      string                 `protobuf:"bytes,2,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
@@ -355,21 +407,21 @@ type MessageAck struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *MessageAck) Reset() {
-	*x = MessageAck{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[6]
+func (x *MessageSendResult) Reset() {
+	*x = MessageSendResult{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MessageAck) String() string {
+func (x *MessageSendResult) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MessageAck) ProtoMessage() {}
+func (*MessageSendResult) ProtoMessage() {}
 
-func (x *MessageAck) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[6]
+func (x *MessageSendResult) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -380,61 +432,61 @@ func (x *MessageAck) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MessageAck.ProtoReflect.Descriptor instead.
-func (*MessageAck) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{6}
+// Deprecated: Use MessageSendResult.ProtoReflect.Descriptor instead.
+func (*MessageSendResult) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *MessageAck) GetClientMsgId() string {
+func (x *MessageSendResult) GetClientMsgId() string {
 	if x != nil {
 		return x.ClientMsgId
 	}
 	return ""
 }
 
-func (x *MessageAck) GetMessageId() string {
+func (x *MessageSendResult) GetMessageId() string {
 	if x != nil {
 		return x.MessageId
 	}
 	return ""
 }
 
-func (x *MessageAck) GetStatus() string {
+func (x *MessageSendResult) GetStatus() string {
 	if x != nil {
 		return x.Status
 	}
 	return ""
 }
 
-func (x *MessageAck) GetExtra() string {
+func (x *MessageSendResult) GetExtra() string {
 	if x != nil {
 		return x.Extra
 	}
 	return ""
 }
 
-func (x *MessageAck) GetSendTime() int64 {
+func (x *MessageSendResult) GetSendTime() int64 {
 	if x != nil {
 		return x.SendTime
 	}
 	return 0
 }
 
-func (x *MessageAck) GetConversationId() string {
+func (x *MessageSendResult) GetConversationId() string {
 	if x != nil {
 		return x.ConversationId
 	}
 	return ""
 }
 
-func (x *MessageAck) GetSeq() int64 {
+func (x *MessageSendResult) GetSeq() int64 {
 	if x != nil {
 		return x.Seq
 	}
 	return 0
 }
 
-func (x *MessageAck) GetAttachmentId() string {
+func (x *MessageSendResult) GetAttachmentId() string {
 	if x != nil {
 		return x.AttachmentId
 	}
@@ -452,7 +504,7 @@ type RoomMessageNotice struct {
 
 func (x *RoomMessageNotice) Reset() {
 	*x = RoomMessageNotice{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[7]
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -464,7 +516,7 @@ func (x *RoomMessageNotice) String() string {
 func (*RoomMessageNotice) ProtoMessage() {}
 
 func (x *RoomMessageNotice) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[7]
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -477,7 +529,7 @@ func (x *RoomMessageNotice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomMessageNotice.ProtoReflect.Descriptor instead.
 func (*RoomMessageNotice) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{7}
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *RoomMessageNotice) GetConversationId() string {
@@ -501,7 +553,7 @@ func (x *RoomMessageNotice) GetSeq() int64 {
 	return 0
 }
 
-type MessageReadAckEvent struct {
+type MessageReadNotice struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	UserId         string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	ConversationId string                 `protobuf:"bytes,2,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
@@ -512,21 +564,21 @@ type MessageReadAckEvent struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *MessageReadAckEvent) Reset() {
-	*x = MessageReadAckEvent{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[8]
+func (x *MessageReadNotice) Reset() {
+	*x = MessageReadNotice{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MessageReadAckEvent) String() string {
+func (x *MessageReadNotice) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MessageReadAckEvent) ProtoMessage() {}
+func (*MessageReadNotice) ProtoMessage() {}
 
-func (x *MessageReadAckEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[8]
+func (x *MessageReadNotice) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -537,47 +589,183 @@ func (x *MessageReadAckEvent) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MessageReadAckEvent.ProtoReflect.Descriptor instead.
-func (*MessageReadAckEvent) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{8}
+// Deprecated: Use MessageReadNotice.ProtoReflect.Descriptor instead.
+func (*MessageReadNotice) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *MessageReadAckEvent) GetUserId() string {
+func (x *MessageReadNotice) GetUserId() string {
 	if x != nil {
 		return x.UserId
 	}
 	return ""
 }
 
-func (x *MessageReadAckEvent) GetConversationId() string {
+func (x *MessageReadNotice) GetConversationId() string {
 	if x != nil {
 		return x.ConversationId
 	}
 	return ""
 }
 
-func (x *MessageReadAckEvent) GetLastReadSeq() int64 {
+func (x *MessageReadNotice) GetLastReadSeq() int64 {
 	if x != nil {
 		return x.LastReadSeq
 	}
 	return 0
 }
 
-func (x *MessageReadAckEvent) GetConvType() int32 {
+func (x *MessageReadNotice) GetConvType() int32 {
 	if x != nil {
 		return x.ConvType
 	}
 	return 0
 }
 
-func (x *MessageReadAckEvent) GetAvatar() string {
+func (x *MessageReadNotice) GetAvatar() string {
 	if x != nil {
 		return x.Avatar
 	}
 	return ""
 }
 
-type MessageEvent struct {
+type FriendRequestNotice struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RequestId       string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	ApplicantUserId string                 `protobuf:"bytes,2,opt,name=applicant_user_id,json=applicantUserId,proto3" json:"applicant_user_id,omitempty"`
+	PeerUserId      string                 `protobuf:"bytes,3,opt,name=peer_user_id,json=peerUserId,proto3" json:"peer_user_id,omitempty"`
+	Message         string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	ApplyTime       int64                  `protobuf:"varint,5,opt,name=apply_time,json=applyTime,proto3" json:"apply_time,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *FriendRequestNotice) Reset() {
+	*x = FriendRequestNotice{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FriendRequestNotice) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FriendRequestNotice) ProtoMessage() {}
+
+func (x *FriendRequestNotice) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FriendRequestNotice.ProtoReflect.Descriptor instead.
+func (*FriendRequestNotice) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *FriendRequestNotice) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FriendRequestNotice) GetApplicantUserId() string {
+	if x != nil {
+		return x.ApplicantUserId
+	}
+	return ""
+}
+
+func (x *FriendRequestNotice) GetPeerUserId() string {
+	if x != nil {
+		return x.PeerUserId
+	}
+	return ""
+}
+
+func (x *FriendRequestNotice) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *FriendRequestNotice) GetApplyTime() int64 {
+	if x != nil {
+		return x.ApplyTime
+	}
+	return 0
+}
+
+type ErrorNotice struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestOp     string                 `protobuf:"bytes,1,opt,name=request_op,json=requestOp,proto3" json:"request_op,omitempty"`
+	Code          string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ErrorNotice) Reset() {
+	*x = ErrorNotice{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ErrorNotice) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ErrorNotice) ProtoMessage() {}
+
+func (x *ErrorNotice) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ErrorNotice.ProtoReflect.Descriptor instead.
+func (*ErrorNotice) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ErrorNotice) GetRequestOp() string {
+	if x != nil {
+		return x.RequestOp
+	}
+	return ""
+}
+
+func (x *ErrorNotice) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *ErrorNotice) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type MessagePush struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	MessageId      string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
 	ConversationId string                 `protobuf:"bytes,2,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
@@ -593,21 +781,21 @@ type MessageEvent struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *MessageEvent) Reset() {
-	*x = MessageEvent{}
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[9]
+func (x *MessagePush) Reset() {
+	*x = MessagePush{}
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MessageEvent) String() string {
+func (x *MessagePush) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MessageEvent) ProtoMessage() {}
+func (*MessagePush) ProtoMessage() {}
 
-func (x *MessageEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[9]
+func (x *MessagePush) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -618,75 +806,75 @@ func (x *MessageEvent) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MessageEvent.ProtoReflect.Descriptor instead.
-func (*MessageEvent) Descriptor() ([]byte, []int) {
-	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{9}
+// Deprecated: Use MessagePush.ProtoReflect.Descriptor instead.
+func (*MessagePush) Descriptor() ([]byte, []int) {
+	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *MessageEvent) GetMessageId() string {
+func (x *MessagePush) GetMessageId() string {
 	if x != nil {
 		return x.MessageId
 	}
 	return ""
 }
 
-func (x *MessageEvent) GetConversationId() string {
+func (x *MessagePush) GetConversationId() string {
 	if x != nil {
 		return x.ConversationId
 	}
 	return ""
 }
 
-func (x *MessageEvent) GetSenderId() string {
+func (x *MessagePush) GetSenderId() string {
 	if x != nil {
 		return x.SenderId
 	}
 	return ""
 }
 
-func (x *MessageEvent) GetSeq() int64 {
+func (x *MessagePush) GetSeq() int64 {
 	if x != nil {
 		return x.Seq
 	}
 	return 0
 }
 
-func (x *MessageEvent) GetCType() int32 {
+func (x *MessagePush) GetCType() int32 {
 	if x != nil {
 		return x.CType
 	}
 	return 0
 }
 
-func (x *MessageEvent) GetContent() string {
+func (x *MessagePush) GetContent() string {
 	if x != nil {
 		return x.Content
 	}
 	return ""
 }
 
-func (x *MessageEvent) GetSendTime() int64 {
+func (x *MessagePush) GetSendTime() int64 {
 	if x != nil {
 		return x.SendTime
 	}
 	return 0
 }
 
-func (x *MessageEvent) GetClientMsgId() string {
+func (x *MessagePush) GetClientMsgId() string {
 	if x != nil {
 		return x.ClientMsgId
 	}
 	return ""
 }
 
-func (x *MessageEvent) GetStatus() int32 {
+func (x *MessagePush) GetStatus() int32 {
 	if x != nil {
 		return x.Status
 	}
 	return 0
 }
 
-func (x *MessageEvent) GetAttachmentId() string {
+func (x *MessagePush) GetAttachmentId() string {
 	if x != nil {
 		return x.AttachmentId
 	}
@@ -700,19 +888,22 @@ const file_internal_interfaces_ws_ws_proto_rawDesc = "" +
 	"\x1finternal/interfaces/ws/ws.proto\x12\x05im.ws\"-\n" +
 	"\aWsFrame\x12\x0e\n" +
 	"\x02op\x18\x01 \x01(\tR\x02op\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"1\n" +
-	"\aWsBatch\x12&\n" +
-	"\x06frames\x18\x01 \x03(\v2\x0e.im.ws.WsFrameR\x06frames\"8\n" +
-	"\x11MessageReadAckReq\x12\x1d\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"O\n" +
 	"\n" +
-	"message_id\x18\x01 \x01(\tR\tmessageIdJ\x04\b\x02\x10\x03\"'\n" +
-	"\fRoomEntryReq\x12\x17\n" +
-	"\aroom_id\x18\x01 \x01(\tR\x06roomId\"A\n" +
-	"\x17ConnectionVisibilityReq\x12\x1b\n" +
+	"EventBatch\x12&\n" +
+	"\x06frames\x18\x01 \x03(\v2\x0e.im.ws.WsFrameR\x06frames\x12\x19\n" +
+	"\bbatch_id\x18\x02 \x01(\tR\abatchId\"*\n" +
+	"\rEventBatchAck\x12\x19\n" +
+	"\bbatch_id\x18\x01 \x01(\tR\abatchId\"9\n" +
+	"\x12MessageReadRequest\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageIdJ\x04\b\x02\x10\x03\"+\n" +
+	"\x10RoomEnterRequest\x12\x17\n" +
+	"\aroom_id\x18\x01 \x01(\tR\x06roomId\"E\n" +
+	"\x1bConnectionVisibilityRequest\x12\x1b\n" +
 	"\x06hidden\x18\x01 \x01(\bH\x00R\x06hidden\x88\x01\x01B\t\n" +
-	"\a_hidden\"\xe7\x01\n" +
-	"\n" +
-	"MessageReq\x12\"\n" +
+	"\a_hidden\"\xef\x01\n" +
+	"\x12MessageSendRequest\x12\"\n" +
 	"\rclient_msg_id\x18\x01 \x01(\tR\vclientMsgId\x12\x15\n" +
 	"\x06c_type\x18\x04 \x01(\x05R\x05cType\x12\x18\n" +
 	"\acontent\x18\x05 \x01(\tR\acontent\x12\x17\n" +
@@ -721,9 +912,8 @@ const file_internal_interfaces_ws_ws_proto_rawDesc = "" +
 	"\n" +
 	"sticker_id\x18\x11 \x01(\tR\tstickerId\x12\x17\n" +
 	"\apack_id\x18\x12 \x01(\tR\x06packId\x12'\n" +
-	"\x0fconversation_id\x18\x13 \x01(\tR\x0econversationIdJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xfa\x01\n" +
-	"\n" +
-	"MessageAck\x12\"\n" +
+	"\x0fconversation_id\x18\x13 \x01(\tR\x0econversationIdJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\x81\x02\n" +
+	"\x11MessageSendResult\x12\"\n" +
 	"\rclient_msg_id\x18\x01 \x01(\tR\vclientMsgId\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x02 \x01(\tR\tmessageId\x12\x16\n" +
@@ -737,14 +927,28 @@ const file_internal_interfaces_ws_ws_proto_rawDesc = "" +
 	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x02 \x01(\tR\tmessageId\x12\x10\n" +
-	"\x03seq\x18\x03 \x01(\x03R\x03seq\"\xb6\x01\n" +
-	"\x13MessageReadAckEvent\x12\x17\n" +
+	"\x03seq\x18\x03 \x01(\x03R\x03seq\"\xb4\x01\n" +
+	"\x11MessageReadNotice\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12'\n" +
 	"\x0fconversation_id\x18\x02 \x01(\tR\x0econversationId\x12\"\n" +
 	"\rlast_read_seq\x18\x03 \x01(\x03R\vlastReadSeq\x12\x1b\n" +
 	"\tconv_type\x18\x04 \x01(\x05R\bconvType\x12\x16\n" +
-	"\x06avatar\x18\x06 \x01(\tR\x06avatarJ\x04\b\x05\x10\x06\"\xd8\x02\n" +
-	"\fMessageEvent\x12\x1d\n" +
+	"\x06avatar\x18\x06 \x01(\tR\x06avatarJ\x04\b\x05\x10\x06\"\xbb\x01\n" +
+	"\x13FriendRequestNotice\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12*\n" +
+	"\x11applicant_user_id\x18\x02 \x01(\tR\x0fapplicantUserId\x12 \n" +
+	"\fpeer_user_id\x18\x03 \x01(\tR\n" +
+	"peerUserId\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12\x1d\n" +
+	"\n" +
+	"apply_time\x18\x05 \x01(\x03R\tapplyTime\"Z\n" +
+	"\vErrorNotice\x12\x1d\n" +
+	"\n" +
+	"request_op\x18\x01 \x01(\tR\trequestOp\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xd7\x02\n" +
+	"\vMessagePush\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12'\n" +
 	"\x0fconversation_id\x18\x02 \x01(\tR\x0econversationId\x12\x1b\n" +
@@ -770,21 +974,24 @@ func file_internal_interfaces_ws_ws_proto_rawDescGZIP() []byte {
 	return file_internal_interfaces_ws_ws_proto_rawDescData
 }
 
-var file_internal_interfaces_ws_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_internal_interfaces_ws_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_internal_interfaces_ws_ws_proto_goTypes = []any{
-	(*WsFrame)(nil),                 // 0: im.ws.WsFrame
-	(*WsBatch)(nil),                 // 1: im.ws.WsBatch
-	(*MessageReadAckReq)(nil),       // 2: im.ws.MessageReadAckReq
-	(*RoomEntryReq)(nil),            // 3: im.ws.RoomEntryReq
-	(*ConnectionVisibilityReq)(nil), // 4: im.ws.ConnectionVisibilityReq
-	(*MessageReq)(nil),              // 5: im.ws.MessageReq
-	(*MessageAck)(nil),              // 6: im.ws.MessageAck
-	(*RoomMessageNotice)(nil),       // 7: im.ws.RoomMessageNotice
-	(*MessageReadAckEvent)(nil),     // 8: im.ws.MessageReadAckEvent
-	(*MessageEvent)(nil),            // 9: im.ws.MessageEvent
+	(*WsFrame)(nil),                     // 0: im.ws.WsFrame
+	(*EventBatch)(nil),                  // 1: im.ws.EventBatch
+	(*EventBatchAck)(nil),               // 2: im.ws.EventBatchAck
+	(*MessageReadRequest)(nil),          // 3: im.ws.MessageReadRequest
+	(*RoomEnterRequest)(nil),            // 4: im.ws.RoomEnterRequest
+	(*ConnectionVisibilityRequest)(nil), // 5: im.ws.ConnectionVisibilityRequest
+	(*MessageSendRequest)(nil),          // 6: im.ws.MessageSendRequest
+	(*MessageSendResult)(nil),           // 7: im.ws.MessageSendResult
+	(*RoomMessageNotice)(nil),           // 8: im.ws.RoomMessageNotice
+	(*MessageReadNotice)(nil),           // 9: im.ws.MessageReadNotice
+	(*FriendRequestNotice)(nil),         // 10: im.ws.FriendRequestNotice
+	(*ErrorNotice)(nil),                 // 11: im.ws.ErrorNotice
+	(*MessagePush)(nil),                 // 12: im.ws.MessagePush
 }
 var file_internal_interfaces_ws_ws_proto_depIdxs = []int32{
-	0, // 0: im.ws.WsBatch.frames:type_name -> im.ws.WsFrame
+	0, // 0: im.ws.EventBatch.frames:type_name -> im.ws.WsFrame
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
@@ -797,14 +1004,14 @@ func file_internal_interfaces_ws_ws_proto_init() {
 	if File_internal_interfaces_ws_ws_proto != nil {
 		return
 	}
-	file_internal_interfaces_ws_ws_proto_msgTypes[4].OneofWrappers = []any{}
+	file_internal_interfaces_ws_ws_proto_msgTypes[5].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_interfaces_ws_ws_proto_rawDesc), len(file_internal_interfaces_ws_ws_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

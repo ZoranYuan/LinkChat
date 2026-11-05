@@ -1,10 +1,10 @@
 import { decodeFrame, decodePayload, encodeFrame } from "./protocol.js";
 
 const payloadTypes = {
-  msg: "messageEvent",
-  msg_ack: "messageAck",
-  msg_read_notify: "readAckEvent",
-  room_msg_notice: "roomMessageNotice",
+  message_push: "messagePush",
+  message_send_result: "messageSendResult",
+  message_read_notice: "messageReadNotice",
+  room_message_notice: "roomMessageNotice",
 };
 
 const DEVICE_ID_KEY = "im_device_id";
@@ -89,18 +89,18 @@ export function createWsClient(callbacks = {}) {
       return;
     }
     const payload = decodePayload(payloadType, frame.data);
-    if (frame.op === "msg") callbacks.onMessage?.(payload);
-    if (frame.op === "msg_ack") callbacks.onAck?.(payload);
-    if (frame.op === "msg_read_notify") callbacks.onReadNotify?.(payload);
-    if (frame.op === "room_msg_notice") callbacks.onRoomMessageNotice?.(payload);
+    if (frame.op === "message_push") callbacks.onMessagePush?.(payload);
+    if (frame.op === "message_send_result") callbacks.onMessageSendResult?.(payload);
+    if (frame.op === "message_read_notice") callbacks.onMessageReadNotice?.(payload);
+    if (frame.op === "room_message_notice") callbacks.onRoomMessageNotice?.(payload);
   };
 
   /** 解码服务端批量帧，并按帧内顺序分发业务事件。 */
   const dispatchFrame = (event) => {
     try {
       const frame = decodeFrame(event.data);
-      if (frame.op !== "msg_batch") throw new Error(`unexpected websocket frame: ${frame.op}`);
-      const batch = decodePayload("batch", frame.data);
+      if (frame.op !== "event_batch") throw new Error(`unexpected websocket frame: ${frame.op}`);
+      const batch = decodePayload("eventBatch", frame.data);
       batch.frames.forEach(dispatchApplicationFrame);
     } catch (error) {
       notifyState("error");
@@ -139,7 +139,7 @@ export function createWsClient(callbacks = {}) {
   };
 
   const reportPageVisibility = () =>
-    send("connection_visibility", "connectionVisibility", { hidden: !isPageVisible() });
+    send("connection_visibility", "connectionVisibilityRequest", { hidden: !isPageVisible() });
 
   const handleVisibilityChange = () => {
     if (!isPageVisible()) {
@@ -235,8 +235,8 @@ export function createWsClient(callbacks = {}) {
     reconnect,
     isConnected: () => socket?.readyState === WebSocket.OPEN,
     isConnecting: () => socket?.readyState === WebSocket.CONNECTING,
-    sendMessage: (payload) => send("msg", "messageReq", payload),
-    sendReadAck: (payload) => send("msg_read_ack", "readAck", payload),
-    sendRoomEntry: (payload) => send("room_entry", "roomEntry", payload),
+    sendMessage: (payload) => send("message_send", "messageSendRequest", payload),
+    sendMessageRead: (payload) => send("message_read", "messageReadRequest", payload),
+    sendRoomEnter: (payload) => send("room_enter", "roomEnterRequest", payload),
   };
 }

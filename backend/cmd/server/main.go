@@ -261,7 +261,7 @@ func main() {
 	)
 	defer messageDelivery.Close(context.Background())
 	topicRouter, routerErr := kafka.NewTopicRouter(map[string]string{
-		string(messaging.TypeMessage): cfg.Kafka.Topics.Message,
+		string(messaging.TypeMessageSend): cfg.Kafka.Topics.Message,
 	}, cfg.Kafka.Consumer.DeadLetterSuffix)
 	if routerErr != nil {
 		log.Fatal("创建 Kafka Topic 路由失败：", routerErr)

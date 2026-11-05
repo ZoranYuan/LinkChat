@@ -45,9 +45,9 @@ func NewHandler(
 	}
 	wh.upgrader.CheckOrigin = wh.checkOrigin
 
-	dispatcher.RegisterHandler(messaging.TypeMessage, wh.handleSendMessage)
-	dispatcher.RegisterHandler(messaging.TypeReadAck, wh.handleReadMessageAck)
-	dispatcher.RegisterHandler(messaging.TypeRoomEntry, wh.handleRoomEntry)
+	dispatcher.RegisterHandler(messaging.TypeMessageSend, wh.handleMessageSend)
+	dispatcher.RegisterHandler(messaging.TypeMessageRead, wh.handleReadMessageAck)
+	dispatcher.RegisterHandler(messaging.TypeRoomEnter, wh.handleRoomEnter)
 	dispatcher.RegisterHandler(messaging.TypeConnectionVisibility, wh.handleConnectionVisibility)
 
 	return wh
@@ -87,7 +87,7 @@ func (wh *Handler) allowEvent(ctx context.Context, op string, userID string, pol
 }
 
 func (wh *Handler) handleReadMessageAck(ctx context.Context, connection *Connection, data []byte) error {
-	var pb wspb.MessageReadAckReq
+	var pb wspb.MessageReadRequest
 
 	if err := proto.Unmarshal(data, &pb); err != nil {
 		return err
@@ -96,8 +96,8 @@ func (wh *Handler) handleReadMessageAck(ctx context.Context, connection *Connect
 	return wh.app.HandleReadMessage(ctx, connection.UserID(), pb.GetMessageId())
 }
 
-func (wh *Handler) handleRoomEntry(ctx context.Context, connection *Connection, data []byte) error {
-	var pb wspb.RoomEntryReq
+func (wh *Handler) handleRoomEnter(ctx context.Context, connection *Connection, data []byte) error {
+	var pb wspb.RoomEnterRequest
 	if err := proto.Unmarshal(data, &pb); err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (wh *Handler) handleRoomEntry(ctx context.Context, connection *Connection, 
 }
 
 func (wh *Handler) handleConnectionVisibility(_ context.Context, connection *Connection, data []byte) error {
-	var pb wspb.ConnectionVisibilityReq
+	var pb wspb.ConnectionVisibilityRequest
 	if err := proto.Unmarshal(data, &pb); err != nil {
 		return err
 	}
@@ -116,8 +116,8 @@ func (wh *Handler) handleConnectionVisibility(_ context.Context, connection *Con
 	return nil
 }
 
-func (wh *Handler) handleSendMessage(ctx context.Context, connection *Connection, data []byte) error {
-	var request wspb.MessageReq
+func (wh *Handler) handleMessageSend(ctx context.Context, connection *Connection, data []byte) error {
+	var request wspb.MessageSendRequest
 	if err := proto.Unmarshal(data, &request); err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (wh *Handler) handleSendMessage(ctx context.Context, connection *Connection
 	// 用户发消息频率限制
 	allowed, limitErr := wh.allowEvent(
 		ctx,
-		messaging.TypeMessage,
+		messaging.TypeMessageSend,
 		connection.UserID(),
 		ratelimitport.Policy{
 			Rate:  float64(wh.config.WebSocket.SendMessageRate),
@@ -133,16 +133,16 @@ func (wh *Handler) handleSendMessage(ctx context.Context, connection *Connection
 		},
 	)
 	if limitErr != nil {
-		return wh.replyFailedAck(connection, request.GetClientMsgId(), "限流服务暂不可用")
+		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), "限流服务暂不可用")
 	}
 
 	if !allowed {
-		return wh.replyFailedAck(connection, request.GetClientMsgId(), "消息发送过于频繁")
+		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), "消息发送过于频繁")
 	}
 
 	conversationID := request.GetConversationId()
 	if conversationID == "" || len(conversationID) > wh.config.Message.MaxIdentifierLength {
-		return wh.replyFailedAck(connection, request.GetClientMsgId(), "会话标识无效")
+		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), "会话标识无效")
 	}
 
 	dto := messaging.SendMessageDTO{
@@ -164,9 +164,9 @@ func (wh *Handler) handleSendMessage(ctx context.Context, connection *Connection
 		case errors.Is(err, messageapp.ErrConversationNotFound):
 			reason = "会话不存在"
 		}
-		return wh.replyFailedAck(connection, request.GetClientMsgId(), reason)
+		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), reason)
 	}
-	payload, err := json.Marshal(messaging.MessageAckEvent{
+	payload, err := json.Marshal(messaging.MessageSendResultEvent{
 		ClientMsgID:    request.GetClientMsgId(),
 		MessageID:      messageID,
 		ConversationID: conversationID,
@@ -176,11 +176,11 @@ func (wh *Handler) handleSendMessage(ctx context.Context, connection *Connection
 	if err != nil {
 		return err
 	}
-	return connection.PushEvent(messaging.TypeMessageAck, payload)
+	return connection.PushEvent(messaging.TypeMessageSendResult, payload)
 }
 
-func (wh *Handler) replyFailedAck(connection *Connection, clientMsgID, reason string) error {
-	payload, err := json.Marshal(messaging.MessageAckEvent{
+func (wh *Handler) replyFailedSendResult(connection *Connection, clientMsgID, reason string) error {
+	payload, err := json.Marshal(messaging.MessageSendResultEvent{
 		ClientMsgID: clientMsgID,
 		Status:      messaging.AckStatusFailed,
 		Extra:       reason,
@@ -189,7 +189,7 @@ func (wh *Handler) replyFailedAck(connection *Connection, clientMsgID, reason st
 	if err != nil {
 		return err
 	}
-	return connection.PushEvent(messaging.TypeMessageAck, payload)
+	return connection.PushEvent(messaging.TypeMessageSendResult, payload)
 }
 
 func (wh *Handler) checkOrigin(r *http.Request) bool {

@@ -63,19 +63,21 @@ const (
 )
 
 const (
-	TypeFriendRequestCreated = "friend_request_created" // 好友申请提醒
-	TypeReadAck              = "msg_read_ack"           // 前端 -> 后端
-	TypeRoomEntry            = "room_entry"             // 前端进入房间时请求固定个人未读快照
-	TypeConnectionVisibility = "connection_visibility"  // 前端上报当前页面可见状态
-	TypeReadNotify           = "msg_read_notify"        // 发送给前端，表示已经有用户读取消息
-	TypeMessageAck           = "msg_ack"                // 发送给前端，表示已经接收到消息
-	TypeMessage              = "msg"                    // 后端发送给前端，表示新的消息
-	TypeRoomMessageNotice    = "room_msg_notice"        // 大型房间轻量新消息提醒，客户端按 seq 拉取详情
-	TypeMessageBatch         = "msg_batch"              // 服务端一次性发送多个数据
-	TypeWebSocketError       = "ws_error"
+	TypeFriendRequestNotice  = "friend_request_notice" // 好友申请提醒
+	TypeMessageRead          = "message_read"          // 前端 -> 后端
+	TypeRoomEnter            = "room_enter"            // 前端进入房间时请求固定个人未读快照
+	TypeConnectionVisibility = "connection_visibility" // 前端上报当前页面可见状态
+	TypeMessageReadNotice    = "message_read_notice"   // 发送给前端，表示已经有用户读取消息
+	TypeMessageSendResult    = "message_send_result"   // 发送给前端，表示已经接收到消息
+	TypeMessageSend          = "message_send"
+	TypeEventBatchAck        = "event_batch_ack"
+	TypeMessagePush          = "message_push"        // 后端发送给前端，表示新的消息
+	TypeRoomMessageNotice    = "room_message_notice" // 大型房间轻量新消息提醒，客户端按 seq 拉取详情
+	TypeEventBatch           = "event_batch"         // 服务端一次性发送多个数据
+	TypeErrorNotice          = "error_notice"
 )
 
-type MessageReadAckEvent struct {
+type MessageReadNotice struct {
 	UserID         string   `json:"userId"`
 	ConversationID string   `json:"conversationId"`
 	LastReadSeq    int64    `json:"lastReadSeq"`
@@ -83,7 +85,7 @@ type MessageReadAckEvent struct {
 	Avatar         string   `json:"avatar,omitempty"`
 }
 
-type FriendRequestCreatedEvent struct {
+type FriendRequestNoticeEvent struct {
 	RequestID       string `json:"requestId"`
 	ApplicantUserID string `json:"applicantUserId"`
 	PeerUserID      string `json:"peerUserId"`
@@ -91,7 +93,7 @@ type FriendRequestCreatedEvent struct {
 	ApplyTime       int64  `json:"applyTime"`
 }
 
-type MessageAckEvent struct {
+type MessageSendResultEvent struct {
 	ClientMsgID    string    `json:"clientMsgId"`
 	MessageID      string    `json:"messageId"`
 	ConversationID string    `json:"conversationId,omitempty"`
@@ -102,13 +104,13 @@ type MessageAckEvent struct {
 	SendTime       int64     `json:"sendTime"`
 }
 
-type MessageNotifyEvent struct {
+type RoomMessageNoticeEvent struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
 	Seq            int64  `json:"seq"`
 }
 
-type MessageEvent struct {
+type MessagePushEvent struct {
 	MessageID      string   `json:"messageId"`
 	ConversationID string   `json:"conversationId"`
 	SenderID       string   `json:"senderId"`
@@ -128,7 +130,7 @@ type MessageEvent struct {
 	PackID         string   `json:"packId,omitempty"`
 }
 
-type WSErrorEvent struct {
+type ErrorNoticeEvent struct {
 	RequestOp string `json:"requestOp"`
 	Code      string `json:"code"`
 	Message   string `json:"message"`

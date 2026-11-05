@@ -369,7 +369,7 @@ func (ma *MessageApplication) HandleReadMessage(
 	}
 
 	uconv.UpdateReadSeq(lastReadSeq)
-	var notify *messaging.MessageReadAckEvent
+	var notify *messaging.MessageReadNotice
 
 	if lastReadSeq > latestSeq {
 		return ErrMessageSeq
@@ -385,7 +385,7 @@ func (ma *MessageApplication) HandleReadMessage(
 		}
 
 		if message.SenderID != "" && message.SenderID != userID {
-			notify = &messaging.MessageReadAckEvent{
+			notify = &messaging.MessageReadNotice{
 				UserID:         userID,
 				ConversationID: conversationID,
 				LastReadSeq:    lastReadSeq,
@@ -399,7 +399,7 @@ func (ma *MessageApplication) HandleReadMessage(
 	if notify != nil && ma.userDelivery != nil {
 		payload, err := json.Marshal(notify)
 		if err == nil {
-			err = ma.userDelivery.DeliverToUser(messaging.TypeReadNotify, message.SenderID, payload)
+			err = ma.userDelivery.DeliverToUser(messaging.TypeMessageReadNotice, message.SenderID, payload)
 		}
 		if err != nil {
 			log.Printf("已读通知推送失败：recipient=%s conversation=%s seq=%d error=%v", message.SenderID, conversationID, lastReadSeq, err)

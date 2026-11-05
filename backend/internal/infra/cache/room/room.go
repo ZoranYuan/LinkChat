@@ -127,7 +127,7 @@ func (rc *RoomCache) UpdateRoomActivity(ctx context.Context, roomID string, mess
 }
 
 // WarmRecentMessageEvents 批量回填近期消息缓存。
-func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, roomID string, events []messaging.MessageEvent) error {
+func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, roomID string, events []messaging.MessagePushEvent) error {
 	if roomID == "" {
 		return errors.New("roomID 不能为空")
 	}
@@ -138,7 +138,7 @@ func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, roomID string,
 		return nil
 	}
 
-	orderedEvents := append([]messaging.MessageEvent(nil), events...)
+	orderedEvents := append([]messaging.MessagePushEvent(nil), events...)
 	sort.SliceStable(orderedEvents, func(i, j int) bool {
 		return orderedEvents[i].Seq < orderedEvents[j].Seq
 	})
@@ -235,9 +235,9 @@ func (rc *RoomCache) ListMessageAfterSeq(ctx context.Context, roomID string, aft
 		return page, err
 	}
 
-	events := make([]messaging.MessageEvent, 0, len(members))
+	events := make([]messaging.MessagePushEvent, 0, len(members))
 	for _, member := range members {
-		var event messaging.MessageEvent
+		var event messaging.MessagePushEvent
 		if err := json.Unmarshal([]byte(member), &event); err != nil {
 			return page, fmt.Errorf("解析缓存消息失败: %w", err)
 		}

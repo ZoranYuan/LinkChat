@@ -103,7 +103,7 @@ func (s *Connection) marshalBatch(batch *MessageBatch) ([]byte, error) {
 		})
 	}
 
-	batchData, err := proto.Marshal(&wspb.WsBatch{
+	batchData, err := proto.Marshal(&wspb.EventBatch{
 		Frames: frames,
 	})
 
@@ -112,7 +112,7 @@ func (s *Connection) marshalBatch(batch *MessageBatch) ([]byte, error) {
 	}
 
 	payload, err := proto.Marshal(&wspb.WsFrame{
-		Op:   messaging.TypeMessageBatch,
+		Op:   messaging.TypeEventBatch,
 		Data: batchData,
 	})
 

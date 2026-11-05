@@ -469,7 +469,7 @@ const processRealtimeMessage = async (rawMessage) => {
     updateConversationList();
     await persistConversation(conversation, session);
 
-    sendReadAck(conversationId);
+    sendMessageRead(conversationId);
   });
 };
 
@@ -527,7 +527,7 @@ const handleMessageAck = (ack) => {
 };
 
 /** 以最大值推进私聊对端最高已读水位；该水位决定最后一条本人消息的展示状态。 */
-const handleReadNotify = (receipt) => {
+const handleMessageReadNotice = (receipt) => {
   const conversationId = receipt?.conversationId || "";
   const lastReadSeq = Number(receipt?.lastReadSeq) || 0;
   const conversation = findConversation(state.conversations, conversationId);
@@ -611,7 +611,7 @@ const syncConversationFromLocal = async (
     );
     updateConversationList();
     await persistConversation(conversation, session);
-    sendReadAck(conversationId);
+    sendMessageRead(conversationId);
   });
 };
 
@@ -639,7 +639,7 @@ const wsClient = createWsClient({
   },
   onOpen: () => {
     if (pendingRoomEntryConversationID === state.activeConversationId) {
-      sendRoomEntry(pendingRoomEntryConversationID);
+      sendRoomEnter(pendingRoomEntryConversationID);
     }
     const session = captureSession();
     syncAllConversationGaps(session).catch((error) => {
@@ -655,15 +655,15 @@ const wsClient = createWsClient({
   onReconnectPreparationError: (error) => {
     console.error("WebSocket 重连前离线补齐失败", error);
   },
-  onMessage: upsertIncomingMessage,
-  onAck: handleMessageAck,
-  onReadNotify: handleReadNotify,
+  onMessagePush: upsertIncomingMessage,
+  onMessageSendResult: handleMessageAck,
+  onMessageReadNotice: handleMessageReadNotice,
   onRoomMessageNotice: (notice) => {
     syncRoomMessageNotice(notice).catch(() => {});
   },
 });
 
-const sendRoomEntry = (conversationId) => {
+const sendRoomEnter = (conversationId) => {
   const conversation = findConversation(state.conversations, conversationId);
   if (
     !conversation ||
@@ -673,7 +673,7 @@ const sendRoomEntry = (conversationId) => {
   )
     return false;
 
-  const sent = wsClient.sendRoomEntry({ roomId: conversation.targetId });
+  const sent = wsClient.sendRoomEnter({ roomId: conversation.targetId });
   if (sent && pendingRoomEntryConversationID === conversationId) {
     pendingRoomEntryConversationID = "";
   }
@@ -681,7 +681,7 @@ const sendRoomEntry = (conversationId) => {
 };
 
 /** 发送当前会话的已读回执；实时消息和点击会话共用此方法。 */
-const sendReadAck = (conversationId = state.activeConversationId) => {
+const sendMessageRead = (conversationId = state.activeConversationId) => {
   const conversation = findConversation(state.conversations, conversationId);
   const lastContinuousSeq = Number(conversation?.lastContinuousSeq) || 0;
   if (
@@ -697,7 +697,7 @@ const sendReadAck = (conversationId = state.activeConversationId) => {
   );
   if (!boundaryMessage?.messageId || boundaryMessage.senderId === currentUserId()) return;
 
-  const sent = wsClient.sendReadAck({
+  const sent = wsClient.sendMessageRead({
     messageId: boundaryMessage.messageId,
   });
   if (sent) conversation.unread = 0;
@@ -932,7 +932,7 @@ export const useChatStore = defineStore("chat", () => {
     if (conversation) conversation.unread = 0;
     if (conversation?.convType === ConversationType.ROOM) {
       pendingRoomEntryConversationID = conversationId;
-      sendRoomEntry(conversationId);
+      sendRoomEnter(conversationId);
     } else {
       pendingRoomEntryConversationID = "";
     }
@@ -1238,7 +1238,7 @@ export const useChatStore = defineStore("chat", () => {
     sendMessage,
     sendAttachment,
     retryMessage,
-    sendReadAck,
+    sendMessageRead,
     clearConversation,
     handleFriendRequest,
     addFriendRequest: createFriendRequest,

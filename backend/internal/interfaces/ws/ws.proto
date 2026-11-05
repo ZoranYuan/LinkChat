@@ -9,24 +9,29 @@ message WsFrame {
   bytes  data = 2;
 }
 
-message WsBatch {
+message EventBatch {
   repeated WsFrame frames = 1;
+  string batch_id = 2;
 }
 
-message MessageReadAckReq {
+message EventBatchAck {
+  string batch_id = 1;
+}
+
+message MessageReadRequest {
   string message_id = 1;
   reserved 2;
 }
 
-message RoomEntryReq {
+message RoomEnterRequest {
   string room_id = 1;
 }
 
-message ConnectionVisibilityReq {
+message ConnectionVisibilityRequest {
   optional bool hidden = 1;
 }
 
-message MessageReq {
+message MessageSendRequest {
   string client_msg_id  = 1;
   int32  c_type         = 4;
   string content        = 5;
@@ -37,7 +42,7 @@ message MessageReq {
   string conversation_id = 19;
 }
 
-message MessageAck {
+message MessageSendResult {
   string client_msg_id = 1;
   string message_id    = 2;
   string status        = 3;
@@ -54,7 +59,7 @@ message RoomMessageNotice {
   int64  seq             = 3;
 }
 
-message MessageReadAckEvent {
+message MessageReadNotice {
   string user_id         = 1;
   string conversation_id = 2;
   int64  last_read_seq   = 3;
@@ -63,7 +68,21 @@ message MessageReadAckEvent {
   string avatar          = 6;
 }
 
-message MessageEvent {
+message FriendRequestNotice {
+  string request_id        = 1;
+  string applicant_user_id = 2;
+  string peer_user_id      = 3;
+  string message           = 4;
+  int64  apply_time        = 5;
+}
+
+message ErrorNotice {
+  string request_op = 1;
+  string code       = 2;
+  string message    = 3;
+}
+
+message MessagePush {
   string message_id      = 1;
   string conversation_id = 2;
   string sender_id       = 3;

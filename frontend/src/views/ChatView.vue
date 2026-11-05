@@ -28,7 +28,7 @@ const {
   sendMessage,
   sendAttachment,
   retryMessage,
-  sendReadAck,
+  sendMessageRead,
   clearConversation,
   handleFriendRequest,
   addFriendRequest,
@@ -74,7 +74,7 @@ const chooseConversation = async (id) => {
   try {
     await selectConversation(id);
     detailsOpen.value = false;
-    sendReadAck();
+    sendMessageRead();
   } catch (error) {
     messageTips.error({ title: "消息加载失败", message: error.message });
   }

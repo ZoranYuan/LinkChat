@@ -139,7 +139,7 @@ func (m *MessageHandler) HandleSendMessages(
 		failedMessages = append(failedMessages, successMessages...)
 		return nil, failedMessages, err
 	}
-	pushEvents := make([]messaging.MessageEvent, len(successMessages))
+	pushEvents := make([]messaging.MessagePushEvent, len(successMessages))
 
 	err = m.txManager.WithinTransaction(ctx, func(tx any) error {
 		messages := make([]*domainmessage.Message, len(successMessages))
@@ -198,7 +198,7 @@ func (m *MessageHandler) HandleSendMessages(
 					receiverID = info.UserID2
 				}
 			}
-			pushEvents[i] = messaging.MessageEvent{
+			pushEvents[i] = messaging.MessagePushEvent{
 				MessageID:      message.MessageID,
 				ConversationID: conversationID,
 				SenderID:       message.SenderID,
@@ -285,7 +285,7 @@ func (m *MessageHandler) HandleSendMessages(
 	for _, event := range pushEvents {
 		payload, err := json.Marshal(event)
 		if err == nil {
-			err = m.delivery.Deliver(ctx, messaging.TypeMessage, event, payload, active)
+			err = m.delivery.Deliver(ctx, messaging.TypeMessagePush, event, payload, active)
 		}
 		if err != nil {
 			log.Printf("消息推送失败：message=%s conversation=%s error=%v", event.MessageID, conversationID, err)

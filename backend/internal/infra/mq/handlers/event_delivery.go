@@ -43,7 +43,7 @@ func (m *MessageDelivery) OnlineRoomConnectionCount(roomID string) int {
 func (m *MessageDelivery) Deliver(
 	ctx context.Context,
 	eventType string,
-	event messaging.MessageEvent,
+	event messaging.MessagePushEvent,
 	payload []byte,
 	active bool,
 ) error {
@@ -71,7 +71,7 @@ func (m *MessageDelivery) Deliver(
 func (m *MessageDelivery) deliverRoomMessage(
 	ctx context.Context,
 	eventType string,
-	event messaging.MessageEvent,
+	event messaging.MessagePushEvent,
 	payload []byte,
 	active bool,
 ) error {
@@ -83,7 +83,7 @@ func (m *MessageDelivery) deliverRoomMessage(
 
 	large := room.MemberCount > m.config.RoomRealtimeFanoutLimit
 	if large || active {
-		return m.noticeBatcher.enqueue(roomID, messaging.MessageNotifyEvent{
+		return m.noticeBatcher.enqueue(roomID, messaging.RoomMessageNoticeEvent{
 			ConversationID: event.ConversationID,
 			MessageID:      event.MessageID,
 			Seq:            event.Seq,
@@ -99,7 +99,7 @@ func (m *MessageDelivery) Close(ctx context.Context) {
 
 type pendingRoomNotice struct {
 	roomID string
-	notice messaging.MessageNotifyEvent
+	notice messaging.RoomMessageNoticeEvent
 }
 
 type roomNoticeBatcher struct {
@@ -153,7 +153,7 @@ func newRoomNoticeBatcher(delivery *ws.Gateway, config configs.MessageConfig) *r
 	return batcher
 }
 
-func (b *roomNoticeBatcher) enqueue(roomID string, notice messaging.MessageNotifyEvent) error {
+func (b *roomNoticeBatcher) enqueue(roomID string, notice messaging.RoomMessageNoticeEvent) error {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(notice.ConversationID))
 	shard := b.shards[int(hash.Sum32())%len(b.shards)]

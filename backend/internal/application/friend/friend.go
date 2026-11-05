@@ -323,7 +323,7 @@ func (fa *FriendRequestApplication) notifyFriendRequest(peerUserID string, reque
 	if fa == nil || fa.userDelivery == nil || request == nil {
 		return
 	}
-	payload, err := json.Marshal(messaging.FriendRequestCreatedEvent{
+	payload, err := json.Marshal(messaging.FriendRequestNoticeEvent{
 		RequestID:       request.RequestID,
 		ApplicantUserID: request.ApplicantUserID,
 		PeerUserID:      peerUserID,
@@ -331,7 +331,7 @@ func (fa *FriendRequestApplication) notifyFriendRequest(peerUserID string, reque
 		ApplyTime:       request.ApplyTime,
 	})
 	if err == nil {
-		err = fa.userDelivery.DeliverToUser(messaging.TypeFriendRequestCreated, peerUserID, payload)
+		err = fa.userDelivery.DeliverToUser(messaging.TypeFriendRequestNotice, peerUserID, payload)
 	}
 	if err != nil {
 		log.Printf("好友申请通知推送失败：request=%s recipient=%s error=%v", request.RequestID, peerUserID, err)
@@ -542,7 +542,7 @@ func (fa *FriendRequestApplication) acceptFriendRequest(
 			if message.SenderID == record.ApplicantUserID {
 				receiverID = record.PeerUserID
 			}
-			payload, err := json.Marshal(messaging.MessageEvent{
+			payload, err := json.Marshal(messaging.MessagePushEvent{
 				MessageID: message.MessageID, ConversationID: conv.ConversationID,
 				SenderID: message.SenderID, RecvID: receiverID, Seq: message.Seq,
 				ConvType: messaging.PrivateChat, MessageType: int(message.Type),
@@ -553,7 +553,7 @@ func (fa *FriendRequestApplication) acceptFriendRequest(
 				continue
 			}
 			for _, userID := range []string{record.ApplicantUserID, record.PeerUserID} {
-				if err := fa.userDelivery.DeliverToUser(messaging.TypeMessage, userID, payload); err != nil {
+				if err := fa.userDelivery.DeliverToUser(messaging.TypeMessagePush, userID, payload); err != nil {
 					log.Printf("推送好友初始消息失败：message=%s user=%s error=%v", message.MessageID, userID, err)
 				}
 			}
