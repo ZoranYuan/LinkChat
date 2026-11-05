@@ -46,7 +46,6 @@ import (
 	minioobj "IM_backend/internal/infra/storage/minio"
 	grpcserver "IM_backend/internal/interfaces/grpc"
 	roomagentgrpc "IM_backend/internal/interfaces/grpc/agent"
-	httpapi "IM_backend/internal/interfaces/http"
 	userconversationhttp "IM_backend/internal/interfaces/http/conversation"
 	filehttp "IM_backend/internal/interfaces/http/file"
 	friendhttp "IM_backend/internal/interfaces/http/friend"
@@ -343,17 +342,17 @@ func main() {
 
 	apiGroup := r.Group("/api/v1")
 	apiGroup.Use(authMiddle.CookieOriginProtectionMiddleware())
-	httpapi.RegisterFriendRequestRouter(apiGroup, friendRequestHandler, authMiddle)
+	friendrequesthttp.RegisterRoutes(apiGroup, friendRequestHandler, authMiddle)
 	userAPIRateLimit := ratelimitport.Policy{
 		Rate:  cfg.HTTP.UserAPIRateLimit.RatePerSecond,
 		Burst: cfg.HTTP.UserAPIRateLimit.Burst,
 	}
-	httpapi.RegisterUserRouter(apiGroup, userHandler, authMiddle, limiterMiddleware, userAPIRateLimit)
-	httpapi.RegisterConversationRouter(apiGroup, userConversationHandler, authMiddle)
-	httpapi.RegisterFriendRouter(apiGroup, friendHandler, authMiddle)
-	httpapi.RegisterRoomRouter(apiGroup, roomHandler, authMiddle)
-	httpapi.RegisterMessagesRouter(apiGroup, messageHandler, authMiddle)
-	httpapi.RegisterFileRouter(apiGroup, fileHandler, authMiddle, limiterMiddleware, ratelimitport.Policy{
+	userhttp.RegisterRoutes(apiGroup, userHandler, authMiddle, limiterMiddleware, userAPIRateLimit)
+	userconversationhttp.RegisterRoutes(apiGroup, userConversationHandler, authMiddle)
+	friendhttp.RegisterRoutes(apiGroup, friendHandler, authMiddle)
+	roomhttp.RegisterRoutes(apiGroup, roomHandler, authMiddle)
+	messagehttp.RegisterRoutes(apiGroup, messageHandler, authMiddle)
+	filehttp.RegisterRoutes(apiGroup, fileHandler, authMiddle, limiterMiddleware, ratelimitport.Policy{
 		Rate:  cfg.Storage.MinIO.UploadRate,
 		Burst: cfg.Storage.MinIO.UploadBurst,
 	})

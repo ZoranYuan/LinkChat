@@ -8,13 +8,13 @@ import (
 )
 
 func RegisterRoutes(
-	ug *gin.RouterGroup,
+	r *gin.RouterGroup,
 	uh *Handler,
 	auth *middleware.AuthMiddleware,
 	limiter *middleware.RateLimitMiddleware,
 	userAPIPolicy ratelimitport.Policy,
 ) {
-
+	ug := r.Group("/users")
 	ug.POST("/login", limiter.ByIP("login", userAPIPolicy), uh.Login)
 	ug.POST("/register", limiter.ByIP("register", userAPIPolicy), uh.Register)
 	ug.POST("/refresh", limiter.ByIP("refresh", userAPIPolicy), uh.Refresh)
