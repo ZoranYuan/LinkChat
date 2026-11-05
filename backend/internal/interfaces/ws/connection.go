@@ -2,6 +2,7 @@ package ws
 
 import (
 	"IM_backend/internal/application/ports/messaging"
+	"IM_backend/internal/infra/metrics"
 	"context"
 	"errors"
 	"fmt"
@@ -60,8 +61,9 @@ func NewConnectionIdentity(userID, deviceID, platform, authSessionID string) (Co
 }
 
 type Message struct {
-	Op   string
-	Data []byte
+	Op                 string
+	Data               []byte
+	outboundEnqueuedAt time.Time
 }
 
 type MessageHandler func(context.Context, *Connection, string, []byte)
@@ -182,6 +184,8 @@ func (s *Connection) Close() {
 }
 
 func (s *Connection) Enqueue(message Message) error {
+	// 记录时间埋点
+	message.outboundEnqueuedAt = time.Now()
 	select {
 	case <-s.ctx.Done():
 		return ErrConnectionClosed
@@ -333,6 +337,17 @@ func (s *Connection) accumulateLoop(
 
 		select {
 		case batchQueue <- batch:
+			readyAt := time.Now()
+
+			for _, message := range batch.Messages {
+				if message.outboundEnqueuedAt.IsZero() {
+					continue
+				}
+
+				metrics.WSOutboundToReadyDuration.Observe(
+					readyAt.Sub(message.outboundEnqueuedAt).Seconds(),
+				)
+			}
 
 			return nil
 

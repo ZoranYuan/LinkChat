@@ -27,6 +27,7 @@ import (
 	domainfile "IM_backend/internal/domain/file"
 	domainmessage "IM_backend/internal/domain/message"
 	messagecache "IM_backend/internal/infra/cache/message"
+	"IM_backend/internal/infra/metrics"
 )
 
 type MessageHandler struct {
@@ -85,7 +86,7 @@ func (m *MessageHandler) claimBatch(
 	lockToken := uuid.NewString()
 	now := time.Now()
 	var claimedEventIDs []string
-
+	transactionStartedAt := time.Now()
 	err := m.txManager.WithinTransaction(ctx, func(tx any) error {
 		var err error
 		claimedEventIDs, err = m.inbox.WithTx(tx).TryClaimBatch(
@@ -97,7 +98,7 @@ func (m *MessageHandler) claimBatch(
 		)
 		return err
 	})
-
+	metrics.ObserveKafkaDBTransaction("inbox_claim", len(requests), transactionStartedAt, err)
 	if err != nil {
 		return "", nil, err
 	}
@@ -188,7 +189,7 @@ func (m *MessageHandler) HandleSendMessages(
 		persistedCount = 0
 		skippedCount = 0
 		dedupEntries = make(map[string]messagecache.DedupEntry, len(requests))
-
+		transactionStartedAt := time.Now()
 		err = m.txManager.WithinTransaction(ctx, func(tx any) error {
 			messages := make([]*domainmessage.Message, 0, len(claimedEventIDs))
 			attachments := make([]*domainmessage.MessageAttachment, 0)
@@ -298,7 +299,7 @@ func (m *MessageHandler) HandleSendMessages(
 			}
 			return nil
 		})
-
+		metrics.ObserveKafkaDBTransaction("message_persist", persistedCount, transactionStartedAt, err)
 		if !errors.Is(err, domainmessage.ErrDuplicateClientMessage) {
 			break
 		}

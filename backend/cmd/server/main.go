@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"IM_backend/configs"
 	roomagentapp "IM_backend/internal/application/agent"
@@ -38,6 +39,7 @@ import (
 	infraroom "IM_backend/internal/infra/database/room"
 	infrauser "IM_backend/internal/infra/database/user"
 	"IM_backend/internal/infra/id/snowflake"
+	"IM_backend/internal/infra/metrics"
 	mqhandler "IM_backend/internal/infra/mq/handlers"
 	"IM_backend/internal/infra/mq/kafka"
 	"IM_backend/internal/infra/ratelimit"
@@ -52,6 +54,7 @@ import (
 	friendrequesthttp "IM_backend/internal/interfaces/http/friendrequest"
 	messagehttp "IM_backend/internal/interfaces/http/message"
 	"IM_backend/internal/interfaces/http/middleware"
+	monitoringhttp "IM_backend/internal/interfaces/http/monitoring"
 	roomhttp "IM_backend/internal/interfaces/http/room"
 	userhttp "IM_backend/internal/interfaces/http/user"
 	"IM_backend/internal/interfaces/ws"
@@ -84,6 +87,7 @@ func main() {
 		log.Fatal("获取数据库连接失败：", err)
 	}
 	defer dbSQL.Close()
+	prometheus.MustRegister(metrics.NewMySQLCollector(dbSQL, time.Duration(cfg.Server.HealthTimeoutSeconds)*time.Second))
 
 	txManager := database.NewTransactionManager(db)
 	idGenerator, err := snowflake.NewGenerator(int(cfg.App.MachineID))
@@ -339,6 +343,7 @@ func main() {
 	wsHandler.SetLimiter(limiter)
 
 	// 注册路由
+	monitoringhttp.RegisterRoutes(r)
 
 	apiGroup := r.Group("/api/v1")
 	apiGroup.Use(authMiddle.CookieOriginProtectionMiddleware())
