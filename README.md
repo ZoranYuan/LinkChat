@@ -77,19 +77,22 @@ Go 源码使用 gofmt 与统一导入分组；前端使用根目录 `.prettierrc
 普通聊天消息采用 Kafka 前置、Consumer 批量持久化的链路：
 
 ```text
-WebSocket MessageReq
-  → 校验会话及发送权限，生成稳定事件 ID
+WebSocket message_send / MessageSendRequest
+  → 校验会话及发送权限，Redis 原子登记请求指纹与消息 ID
   → 同步发送 Kafka（会话 ID 作为分区键）
-  → Kafka 确认后返回 msg_ack（仅表示 Kafka 已接收）
+  → Kafka 确认后返回 processing 状态的 message_send_result
   → Consumer 按会话聚合消息，批量抢占 Inbox
   → MySQL 事务：预留连续 seq、批量写入消息/附件、推进发送者已读水位、完成 Inbox
-  → WebSocket 投递完整消息或合并后的轻量通知
+  → Redis Pipeline 回写 completed、seq 与附件 ID
+  → WebSocket 向接收方投递完整消息，或广播合并后的房间轻量通知
   → Connection 出站聚合队列 → WebSocket 批量帧
 ```
 
-WebSocket 入口不等待 MySQL 消息事务；ACK 不代表消息已写入 MySQL 或已到达接收端。客户端使用稳定的请求标识重试，服务端以确定性事件 ID、Inbox 状态和消息表唯一约束处理重复投递。Consumer 按 Kafka 分区键哈希到固定 worker，同一会话在同一 worker 内按批次处理；批次达到配置条数或 100ms 定时窗口时提交。序号范围、消息数据、附件数据、发送者已读水位和 Inbox 完成状态在同一 MySQL 事务中提交。
+WebSocket 入口不等待 MySQL 消息事务。Redis 用请求指纹识别冲突，处理中重试复用原消息 ID，完成或失败后直接返回缓存结果；处理态与终态 TTL 分别由配置控制。消息 ID 在发布 Kafka 前生成，并同时作为 Inbox 事件 ID。缓存失效后的重复请求由消息表唯一约束兜底，消费者恢复原消息及附件结果，不重复分配序号。Consumer 按 Kafka 分区键哈希到固定 worker，同一会话在同一 worker 内按批次处理；批次达到配置条数或定时窗口时提交。序号范围、消息数据、附件数据、发送者已读水位和 Inbox 完成状态在同一 MySQL 事务中提交。
 
-Kafka 分区键使同一会话进入同一分区，但消费端会把不同会话分配给不同 worker 并行处理；当前没有跨 worker 的连续完成 offset 前缀跟踪，因此不能描述为严格按分区顺序提交。消息序号仍在数据库会话行锁下分配，客户端按 seq 去重、排序并通过同步接口补齐缺口。
+应用层直接向 Publisher 传入事件 ID、事件类型、分区键和正文；Producer 使用配置的 Topic，并将 `event_id`、`event_type` 原样写入 Kafka Headers。Consumer 直接把 Sarama 消息交给消息处理器，处理器读取 Header 后将原始事件类型写入 Inbox，不再进行 Topic 与事件类型的双向映射。切换前需消费完不含 `event_type` Header 的旧积压消息。
+
+Kafka 分区键使同一会话进入同一分区，消费端把不同会话分配给不同 worker 并行处理；每个分区按实际接收顺序跟踪完成状态，只标记连续完成的 offset 前缀。抢占冲突与事务错误退避重试，失败批次不会被后续完成的 offset 越过。消息序号在数据库会话行锁下分配，客户端按 seq 去重、排序并通过同步接口补齐缺口。
 
 普通房间推送完整消息；成员规模较大或活跃度达到阈值的房间合并推送最新 seq 通知，客户端通过 `/messages/sync` 补拉。活跃度根据 Redis 中的近期消息量和在线连接数计算；近期消息缓存可用于补拉，缺失时回源 MySQL。通知合并器按会话保留最新 seq，定时批量触发通知。WebSocket 推送与 Inbox 完成标记不是同一个事务，客户端仍需去重和同步补偿。
 
@@ -99,18 +102,22 @@ Kafka 分区键使同一会话进入同一分区，但消费端会把不同会�
 
 入口：`GET /api/v1/ws`，需要有效 JWT。Connection 绑定用户及登录会话，用户可以有多个连接。服务端维护 Ping/Pong、读写截止时间和慢客户端隔离。
 
-每条 Connection 的入站分发按接收顺序执行；消息处理器校验会话和发送权限后同步发布 Kafka，收到成功结果才返回 `msg_ack`。该 ACK 表示 Kafka 已接收，不表示 MySQL 已持久化或接收端已收到。客户端以相同请求标识重试，消费者批量持久化并按 seq 推送；入站队列满时关闭连接。
+每条 Connection 的入站分发按接收顺序执行。`message_send_result` 的 `processing` 表示 Kafka 已接收；`completed` 表示已持久化，携带原消息序号与附件 ID；`failed` 携带失败原因。消费者将处理结果写入 Redis，不再单独向发送者推送完整消息或失败结果；完成后的重复请求仍可直接取得 `completed` 结果。投递 Kafka 失败时返回失败结果，Redis 保留原 ID 的处理态供重试。发送状态查询接口及前端轮询作为待办，尚未接入；入站队列满时关闭连接。
 
 | Op | 方向 | Payload |
 |---|---|---|
-| `msg` | 客户端 → 服务端 | `MessageReq` |
-| `msg` | 服务端 → 接收方 | `MessageEvent` |
-| `msg_ack` | 服务端 → 发送方 | `MessageAck` |
-| `msg_read_ack` | 客户端 → 服务端 | `MessageReadAckReq` |
-| `msg_read_notify` | 服务端 → 消息发送方 | `MessageReadAckEvent` |
-| `room_msg_notice` | 服务端 → 房间成员 | `RoomMessageNotice` |
-| `room_entry` | 客户端 → 服务端 | `RoomEntryReq` |
-| `connection_visibility` | 客户端 → 服务端 | `ConnectionVisibilityReq` |
+| `message_send` | 客户端 → 服务端 | `MessageSendRequest` |
+| `message_push` | 服务端 → 接收方 | `MessagePush` |
+| `message_send_result` | 服务端 → 发送方 | `MessageSendResult` |
+| `message_read` | 客户端 → 服务端 | `MessageReadRequest` |
+| `message_read_notice` | 服务端 → 消息发送方 | `MessageReadNotice` |
+| `room_message_notice` | 服务端 → 房间成员 | `RoomMessageNotice` |
+| `room_enter` | 客户端 → 服务端 | `RoomEnterRequest` |
+| `connection_visibility` | 客户端 → 服务端 | `ConnectionVisibilityRequest` |
+| `friend_request_notice` | 服务端 → 客户端 | `FriendRequestNotice` |
+| `error_notice` | 服务端 → 客户端 | `ErrorNotice` |
+| `event_batch` | 服务端 → 客户端 | `EventBatch` |
+| `event_batch_ack` | 客户端 → 服务端 | `EventBatchAck`，确认整个批次处理成功 |
 
 帧定义以 [ws.proto](backend/internal/interfaces/ws/ws.proto) 为准：
 
@@ -119,20 +126,26 @@ message WsFrame {
   string op = 1;
   bytes data = 2;
 }
-message WsBatch {
+message EventBatch {
   repeated WsFrame frames = 1;
+  string batch_id = 2;
+}
+message EventBatchAck {
+  string batch_id = 1;
 }
 ```
 
-批量下发的外层 `WsFrame.op = "msg_batch"`，`data` 为 `WsBatch`，客户端按内部帧顺序分发。媒体消息发送请求携带 `file_id`，服务端读取已验证文件信息；消息事件携带 `attachment_id`，客户端另外查询媒体卡片和访问 URL。
+批量下发的外层 `WsFrame.op = "event_batch"`，`data` 为 `EventBatch`。每个批次携带独立 `batch_id`，Connection 保存编码后的待确认批次，并在发送循环中每秒检查一次；超过 3 秒未确认时复用原 ID 和字节重发，最多额外重试 3 次，之后仍超时则删除该重试记录，连接继续运行。实际参数由 `ws.batch_retry_interval_seconds`、`ws.batch_ack_timeout_seconds` 和 `ws.batch_max_retries` 配置。重试耗尽后需要后续消息同步恢复，不能据此承诺客户端必达。
 
-会话创建时生成独立 Snowflake ID，房间 ID 与会话 ID 不再等同。客户端使用 `/conversations` 返回的 ID，并在 `MessageReq.conversation_id` 中传递；请求不再携带 `recv_id`、`conv_type`，接收者和类型由后端会话信息确定，发送权限仍单独校验。前后端需一起更新，不支持旧发送请求。
+客户端按帧顺序触发业务回调，同一会话沿用串行队列；完整消息入库、房间通知补拉及其余回调全部成功后发送 `event_batch_ack`，任一失败则不确认。处理中收到同一批次会复用任务，已保存消息按本地水位跳过，避免重复增加未读数；确认仅发往接收该批次的当前连接，不代表用户已读。Kafka 内部发送事件名统一为 `message_send`，Topic 为 `im.messages`。媒体消息发送请求携带 `file_id`，服务端读取已验证文件信息；消息事件携带 `attachment_id`，客户端另外查询媒体卡片和访问 URL。
+
+会话创建时生成独立 Snowflake ID，房间 ID 与会话 ID 不再等同。客户端使用 `/conversations` 返回的 ID，并在 `MessageSendRequest.conversation_id` 中传递；请求不再携带 `recv_id`、`conv_type`，接收者和类型由后端会话信息确定，发送权限仍单独校验。前后端需一起更新，不支持旧事件名称及发送请求。
 
 会话基本信息使用 Redis Key `im:conversation:info:{conversationId}`，只保存类型、私聊双方或房间 ID，正常 TTL 由 `cache.conversation_info.ttl_seconds` 配置。未命中或缓存异常时按主键查 MySQL，确认不存在才缓存 `null` 两分钟；创建提交后写入正常信息覆盖空缓存。`latestSeq` 和用户已读水位不放入该缓存，已有会话 ID 继续按数据库记录使用，无需修改表结构或历史关联数据。
 
 ### 已读水位
 
-客户端发送 `MessageReadAckReq.message_id`。后端查询消息并校验会话权限，在事务中单调推进用户的 `lastReadSeq`；推进成功后通过本地 Gateway 通知对应消息发送方。重复或倒退的已读确认不重复推进水位。
+客户端发送 `MessageReadRequest.message_id`。后端查询消息并校验会话权限，在事务中单调推进用户的 `lastReadSeq`；推进成功后通过本地 Gateway 通知对应消息发送方。重复或倒退的已读确认不重复推进水位。
 
 私聊与房间共用已读确认。实时消息或补拉结果写入 IndexedDB 后，前端仅在目标会话正在打开、连续水位对应的消息不是本人发送时尝试发送回执；连接未建立或找不到边界消息时不发送。
 
@@ -140,9 +153,9 @@ message WsBatch {
 
 一个房间对应一个公共会话，两名用户共享一个私聊会话。房间会话只填写房间标识，私聊会话填写双方用户标识；`user_conversations` 保存每个用户在公共会话中的已读水位、未读摘要范围和免打扰设置。
 
-加入房间后，接口返回房间信息、成员角色、加入时间，以及 `conversationId` 和查询时的 `latestSeq`。目前前端加入后仍刷新工作区，尚未使用新增响应直接初始化本地同步水位。
+加入房间后，接口返回房间信息、成员角色、加入时间，以及 `conversationId` 和查询时的 `latestSeq`。前端仅更新目标会话，以返回的 `latestSeq` 初始化本地同步水位，再同步加入期间的新消息。
 
-用户打开房间时发送 `room_entry`，后端在同一事务中固定从旧已读水位之后到当前最新序号的未读范围，并推进已读水位；没有未读时范围记为零。事务提交后将范围缓存到 Redis，数据库中的边界不随缓存过期而丢失。普通已读回执只推进已读水位，不修改快照；再次进入房间会覆盖上一次范围。快照保存的是序号边界，不是消息正文副本。
+用户打开房间时发送 `room_enter`，后端在同一事务中固定从旧已读水位之后到当前最新序号的未读范围，并推进已读水位；没有未读时范围记为零。事务提交后将范围缓存到 Redis，数据库中的边界不随缓存过期而丢失。普通已读回执只推进已读水位，不修改快照；再次进入房间会覆盖上一次范围。快照保存的是序号边界，不是消息正文副本。
 
 ### 离线补齐与实时同步
 
@@ -212,7 +225,7 @@ WebSocket 聊天事件由入口同步发布 Kafka。Consumer 通过 Inbox 管理
 gRPC 监听地址由 `grpc.room_agent_address` 配置，协议以 [room_agent.proto](backend/internal/interfaces/grpc/pb/room_agent.proto) 为准。调用方通过 metadata 的 `authorization: Bearer <access_token>` 传递身份；服务端验证 access token 和登录会话后，从令牌中取得用户 ID。
 
 - `VerifyRoomAccess`：校验房间成员状态。正常及禁言成员允许访问，退出或被踢成员拒绝访问；成功时返回按用户和房间稳定生成的 `thread_id`。
-- `GetRoomUnreadMessages`：读取用户进入房间时保存的未读序号范围。调用前需由客户端通过 WebSocket `room_entry` 触发未读快照；接口读取该固定范围，不重新计算或修改它。服务端按请求中的 `limit` 分批查询，并在同一次 gRPC server stream 中发送；没有快照时返回空结果。当前只返回未撤回的文本消息，接口不支持客户端传入分页 cursor。
+- `GetRoomUnreadMessages`：读取用户进入房间时保存的未读序号范围。调用前需由客户端通过 WebSocket `room_enter` 触发未读快照；接口读取该固定范围，不重新计算或修改它。服务端按请求中的 `limit` 分批查询，并在同一次 gRPC server stream 中发送；没有快照时返回空结果。当前只返回未撤回的文本消息，接口不支持客户端传入分页 cursor。
 - `SyncRoomMessages`：从 `after_seq` 之后同步至请求开始时的会话最新序号，按批次通过 gRPC stream 返回。
 - `SearchRoomMessages`：按请求提供的序号区间查询房间消息，并通过 gRPC stream 分批返回。
 
@@ -291,6 +304,18 @@ docker compose -p linkchat ps
 Room Agent 的 gRPC 服务默认在容器内监听 `50051`，同一网络中的调用方可访问 `backend:50051`；当前 Compose 未发布该端口到宿主机，如需从宿主机调用，应在后端服务的 `ports` 中添加 `"50051:50051"`。
 
 MySQL 和 MinIO 分别使用命名数据卷保存数据；当前 Compose 没有为 Redis、Kafka 配置数据卷。Room Agent 的 Python 服务由独立项目运行，不包含在本 Compose 中。
+
+### 监控与压测
+
+```bash
+docker compose -p linkchat up -d kafka-exporter prometheus grafana
+```
+
+Prometheus 访问 `http://localhost:9090`，Grafana 访问 `http://localhost:3001`，初始账号和密码为 `admin / admin`。Grafana 已配置 Prometheus 数据源，将 [linkchat-overview.json](monitoring/grafana/dashboards/linkchat-overview.json) 导入即可查看出站等待、Kafka 积压、消费事务、Go 运行时和 MySQL Buffer Pool 指标。
+
+[Prometheus 配置](monitoring/prometheus.yml) 默认抓取开发容器的 `linux:8081/metrics`；使用 Compose 后端时改为 `backend:8081`。k6 通过 Remote Write 将客户端 ACK、消息获取和补拉延迟写入 Prometheus，后端 `/metrics` 提供服务端指标，Kafka Exporter 提供消费组积压。
+
+[房间负载脚本](benchmarks/room-load/k6-room-load.js) 使用独立账号定时发送，收到房间通知后异步补拉，覆盖通知目标后确认批次；[运行入口](benchmarks/room-load/run-k6.sh) 默认 300 人、每人每秒 1 条、持续 5 分钟。先使用 [账号准备脚本](benchmarks/room-load/prepare-fixture.mjs) 生成账号和房间数据，再运行入口脚本。账号令牌、fixture 和压测结果不提交到仓库。[帧聚合脚本](benchmarks/ws-outbound/k6-frame-aggregation.js) 用于比较不同聚合配置下的完整消息推送帧数与批量大小。
 
 ### 日志与停止
 
