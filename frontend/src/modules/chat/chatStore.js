@@ -166,7 +166,7 @@ const persistConfirmedMessages = async (
 /** 将会话快照写入当前用户的本地会话表。 */
 const persistConversation = (conversation, session = captureSession()) => {
   if (!conversation || !isSessionActive(session)) return Promise.resolve();
-  return insertConversations(session.userId, [conversation]).catch(() => {});
+  return insertConversations(session.userId, [conversation]);
 };
 
 /** 合并已持久化的消息并解析附件展示信息。 */
@@ -433,13 +433,9 @@ const processRealtimeMessage = async (rawMessage) => {
   let message = normalizeMessage(rawMessage);
   const conversationId = message.conversationId || "";
   const conversation = findConversation(state.conversations, conversationId);
-  if (
-    !isSessionActive(session) ||
-    !conversation ||
-    !message.messageId ||
-    Number(message.seq) <= 0
-  ) {
-    return;
+  if (!isSessionActive(session)) return;
+  if (!conversation || !message.messageId || Number(message.seq) <= 0) {
+    throw new Error("实时消息缺少有效会话或消息信息");
   }
 
   const pending = message.clientMsgId
@@ -452,6 +448,7 @@ const processRealtimeMessage = async (rawMessage) => {
 
     const localBoundary = Number(conversation.lastContinuousSeq) || 0;
     const messageSeq = Number(message.seq);
+    if (messageSeq <= localBoundary) return;
 
     let messagesToPersist = [message];
     let nextBoundary = Math.max(localBoundary, messageSeq);
@@ -503,7 +500,7 @@ const processRealtimeMessage = async (rawMessage) => {
 
 /** WebSocket 完整消息是本地消息库的唯一实时更新入口。 */
 const upsertIncomingMessage = (payload) => {
-  processRealtimeMessage(payload).catch(() => {});
+  return processRealtimeMessage(payload);
 };
 
 /** processing 发送结果 更新发送状态，completed 发送结果 复用完整消息的持久化流程。 */
@@ -516,7 +513,7 @@ const handleMessageSendResult = (ack) => {
 
   const conversationId = ack.conversationId || pending.conversationId;
   if (ack.status === "completed" && Number(ack.seq) > 0) {
-    processRealtimeMessage({
+    return processRealtimeMessage({
       ...pending,
       messageId: ack.messageId,
       conversationId,
@@ -525,8 +522,7 @@ const handleMessageSendResult = (ack) => {
       sendStatus: "completed",
       accepted: true,
       error: "",
-    }).catch(() => {});
-    return;
+    });
   }
   const failed = ack.status === "failed";
   const updated = normalizeMessage({
@@ -560,10 +556,11 @@ const handleMessageReadNotice = (receipt) => {
   if (!conversation || conversation.convType !== ConversationType.PRIVATE_CHAT || lastReadSeq <= 0)
     return;
 
-  const previous = Number(conversation.readWatermark) || 0;
-  if (lastReadSeq <= previous) return;
-  conversation.readWatermark = lastReadSeq;
-  persistConversation(conversation);
+  conversation.readWatermark = Math.max(
+    Number(conversation.readWatermark) || 0,
+    lastReadSeq,
+  );
+  return persistConversation(conversation);
 };
 
 /** 从服务端刷新会话快照，并保留内存中的本地连续序号。 */
@@ -605,7 +602,9 @@ const syncConversationFromLocal = async (
 ) => {
   if (!conversationId || !isSessionActive(session)) return;
   const conversation = findConversation(state.conversations, conversationId);
-  if (!conversation) return;
+  if (!conversation) {
+    throw new Error(`房间消息对应的会话不存在：${conversationId}`);
+  }
   return enqueueConversationMessage(conversationId, async () => {
     const localBoundary = Number(conversation.lastContinuousSeq) || 0;
     if (targetSeq > 0 && targetSeq <= localBoundary) return;
@@ -618,6 +617,9 @@ const syncConversationFromLocal = async (
     }
 
     const nextBoundary = Number(messages.at(-1)?.seq) || localBoundary;
+    if (nextBoundary < targetSeq) {
+      throw new Error("房间消息尚未补齐到通知位置");
+    }
     if (nextBoundary <= localBoundary) return;
 
     const persisted = await persistConfirmedMessages(messages, {
@@ -659,6 +661,23 @@ const syncAllConversationGaps = async (session = captureSession()) => {
   );
 };
 
+const handleFriendRequestNotice = async () => {
+  const session = captureSession();
+  const requests = await getFriendRequests();
+  if (!isSessionActive(session)) return;
+
+  state.friendRequests = (requests || [])
+    .filter((item) => item.status === 1)
+    .map((item) => ({
+      id: item.requestId,
+      applicantUserId: item.applicantUserId || "",
+      name: item.applicantNickName || "新联系人",
+      note: item.message,
+      time: formatTime(item.applyTime),
+      avatarColor: "#8069a8",
+    }));
+};
+
 const wsClient = createWsClient({
   onStateChange: (connection) => {
     state.connection = connection;
@@ -684,8 +703,13 @@ const wsClient = createWsClient({
   onMessagePush: upsertIncomingMessage,
   onMessageSendResult: handleMessageSendResult,
   onMessageReadNotice: handleMessageReadNotice,
-  onRoomMessageNotice: (notice) => {
-    syncRoomMessageNotice(notice).catch(() => {});
+  onRoomMessageNotice: syncRoomMessageNotice,
+  onFriendRequestNotice: handleFriendRequestNotice,
+  onErrorNotice: (notice) => {
+    console.error("服务端错误通知", notice);
+  },
+  onProtocolError: (error) => {
+    console.error("WebSocket 批次处理失败", error);
   },
 });
 
@@ -993,7 +1017,9 @@ export const useChatStore = defineStore("chat", () => {
       state.currentUser,
     );
     updateConversationList();
-    persistConversation(conversation);
+    persistConversation(conversation).catch((error) => {
+      console.error("保存待发送消息的会话失败", error);
+    });
     return storedMessage;
   };
 

@@ -1,16 +1,17 @@
 package ws
 
 import (
-	"IM_backend/internal/application/ports/messaging"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"IM_backend/configs"
+	"IM_backend/internal/application/ports/messaging"
 	wspb "IM_backend/internal/interfaces/ws/pb"
+
+	"google.golang.org/protobuf/proto"
 )
 
 type MessageBatch struct {
+	BatchID  string
 	Messages []Message
 	Bytes    int
 }
@@ -19,46 +20,52 @@ type MessageBatch struct {
 type BatchMessageAccumulator struct {
 	config      configs.WebSocketConfig
 	activeBatch *MessageBatch
-	lingerTimer *time.Timer
-	timerC      <-chan time.Time
+	timer       *time.Timer
 }
 
 func NewBatchMessageAccumulator(config configs.WebSocketConfig) *BatchMessageAccumulator {
 	timer := time.NewTimer(time.Duration(config.BatchLingerMilliseconds) * time.Millisecond)
-	timer.Stop()
 	return &BatchMessageAccumulator{
-		config:      config,
-		lingerTimer: timer,
+		config: config,
+		timer:  timer,
 	}
 }
 
-func (a *BatchMessageAccumulator) stopTimer() {
-	a.lingerTimer.Stop()
-	a.timerC = nil
+func (a *BatchMessageAccumulator) stop() {
+	a.activeBatch = nil
+	a.timer.Stop()
 }
 
-func (a *BatchMessageAccumulator) Flush() *MessageBatch {
+func (a *BatchMessageAccumulator) flush() *MessageBatch {
 	batch := a.activeBatch
 	a.activeBatch = nil
-	a.stopTimer()
+	a.timer.Stop()
 	return batch
 }
 
 func (a *BatchMessageAccumulator) Append(message Message) []*MessageBatch {
-	messageSize := proto.Size(&wspb.WsFrame{Op: message.Op, Data: message.Data})
-	ready := make([]*MessageBatch, 0, 2)
-	if a.activeBatch != nil && a.activeBatch.Bytes+messageSize > a.config.BatchMaxBytes {
-		ready = append(ready, a.Flush())
+	size := proto.Size(&wspb.WsFrame{
+		Op:   message.Op,
+		Data: message.Data,
+	})
+
+	readyQuque := make([]*MessageBatch, 0, 2)
+
+	if a.activeBatch != nil && (len(a.activeBatch.Messages)+1 > a.config.BatchMaxMessages || a.activeBatch.Bytes+size > a.config.BatchMaxBytes) {
+		readyQuque = append(readyQuque, a.flush())
 	}
+
 	if a.activeBatch == nil {
 		a.activeBatch = &MessageBatch{Messages: make([]Message, 0, a.config.BatchMaxMessages)}
-		a.lingerTimer.Reset(time.Duration(a.config.BatchLingerMilliseconds) * time.Millisecond)
-		a.timerC = a.lingerTimer.C
+		a.timer.Reset(time.Duration(a.config.BatchLingerMilliseconds) * time.Millisecond)
 	}
+
 	a.activeBatch.Messages = append(a.activeBatch.Messages, message)
-	a.activeBatch.Bytes += messageSize
+	a.activeBatch.Bytes += size
+
 	if message.Op == messaging.TypeMessageSendResult || len(a.activeBatch.Messages) >= a.config.BatchMaxMessages || a.activeBatch.Bytes >= a.config.BatchMaxBytes {
-		ready = append(ready, a.Flush())
+		readyQuque = append(readyQuque, a.flush())
 	}
-	return ready
+
+	return readyQuque
 }

@@ -74,6 +74,9 @@ type Connection struct {
 
 	identity ConnectionIdentity
 
+	pendingBatch      *PendingBatch
+	pendingBatchTimer *time.Ticker
+
 	config         configs.WebSocketConfig
 	outbound       chan Message
 	outboundClosed bool
@@ -89,8 +92,18 @@ type Connection struct {
 
 func NewConnection(networkCtx context.Context, conn *gorilla.Conn, identity ConnectionIdentity, config configs.WebSocketConfig) *Connection {
 	ctx, cancel := context.WithCancel(networkCtx)
-	return &Connection{conn: conn, ctx: ctx, cancel: cancel, identity: identity, config: config,
-		outbound: make(chan Message, config.MaxMessageSendBufferSize), inbound: make(chan Message, config.MaxMessageSendBufferSize)}
+	return &Connection{
+		conn:     conn,
+		ctx:      ctx,
+		cancel:   cancel,
+		identity: identity,
+		config:   config,
+		pendingBatch: &PendingBatch{
+			items: make(map[string]*PendingBatchItem),
+		},
+		outbound: make(chan Message, config.MaxMessageSendBufferSize),
+		inbound:  make(chan Message, config.MaxMessageSendBufferSize),
+	}
 }
 
 func (s *Connection) marshalBatch(batch *MessageBatch) ([]byte, error) {
@@ -104,7 +117,8 @@ func (s *Connection) marshalBatch(batch *MessageBatch) ([]byte, error) {
 	}
 
 	batchData, err := proto.Marshal(&wspb.EventBatch{
-		Frames: frames,
+		Frames:  frames,
+		BatchId: batch.BatchID,
 	})
 
 	if err != nil {
@@ -124,14 +138,23 @@ func (s *Connection) marshalBatch(batch *MessageBatch) ([]byte, error) {
 }
 
 func (s *Connection) sendBatch(batch *MessageBatch) error {
+	if batch.BatchID == "" {
+		batch.BatchID = uuid.NewString()
+	}
 	payload, err := s.marshalBatch(batch)
 	if err != nil {
 		return err
 	}
+
+	s.pendingBatch.addPending(batch.BatchID, payload, s.config.BatchAckTimeoutSeconds)
+
 	return s.write(gorilla.BinaryMessage, payload)
 }
 
 func (s *Connection) Start(businessCtx context.Context, handler MessageHandler, onClose, onDispatchDone func(*Connection)) {
+	accumulator := NewBatchMessageAccumulator(s.config)
+	batchQueue := make(chan *MessageBatch, s.config.BatchReadyQueueSize)
+
 	go func() {
 		if onDispatchDone != nil {
 			defer onDispatchDone(s)
@@ -139,7 +162,8 @@ func (s *Connection) Start(businessCtx context.Context, handler MessageHandler, 
 		s.dispatchLoop(businessCtx, handler)
 	}()
 	go s.readLoop(onClose)
-	go s.writeLoop()
+	go s.accumulateLoop(accumulator, batchQueue)
+	go s.sendLoop(batchQueue)
 }
 
 func (s *Connection) Close() {
@@ -288,12 +312,16 @@ func (s *Connection) readLoop(onClose func(*Connection)) {
 
 func (s *Connection) accumulateLoop(
 	accumulator *BatchMessageAccumulator,
-	readyQueue chan<- *MessageBatch,
-) error {
+	batchQueue chan<- *MessageBatch,
+) {
+	defer close(batchQueue)
+	defer s.Close()
+
 	if accumulator == nil {
-		return errors.New("batch message accumulator is nil")
+		log.Printf("WebSocket 聚合器未初始化：connection=%s", s.ConnectionID())
+		return
 	}
-	defer accumulator.stopTimer()
+	defer accumulator.stop()
 
 	emitBatch := func(batch *MessageBatch) error {
 		if batch == nil {
@@ -304,7 +332,8 @@ func (s *Connection) accumulateLoop(
 		}
 
 		select {
-		case readyQueue <- batch:
+		case batchQueue <- batch:
+
 			return nil
 
 		case <-s.ctx.Done():
@@ -316,51 +345,63 @@ func (s *Connection) accumulateLoop(
 	for {
 		select {
 		case <-s.ctx.Done():
-			return s.ctx.Err()
+			return
 
 		case item, ok := <-s.outbound:
 			if !ok || s.ctx.Err() != nil {
-				return ErrConnectionClosed
+				return
 			}
+
 			for _, batch := range accumulator.Append(item) {
 				if err := emitBatch(batch); err != nil {
-					return err
+					if s.ctx.Err() == nil {
+						log.Printf("提交 WebSocket 消息批次失败：connection=%s err=%v", s.ConnectionID(), err)
+					}
+					return
 				}
 			}
 
-		case <-accumulator.timerC:
+		case <-accumulator.timer.C:
 			if err := s.ctx.Err(); err != nil {
-				return err
+				return
 			}
 			// 一批数据到时间了，依旧封口
-			if err := emitBatch(accumulator.Flush()); err != nil {
-				return err
+			if err := emitBatch(accumulator.flush()); err != nil {
+				if s.ctx.Err() == nil {
+					log.Printf("提交 WebSocket 定时消息批次失败：connection=%s err=%v", s.ConnectionID(), err)
+				}
+				return
 			}
 		}
 	}
 }
 
 func (s *Connection) sendLoop(
-	readyQueue <-chan *MessageBatch,
-) error {
+	batchQueue <-chan *MessageBatch,
+) {
+	defer s.Close()
+
 	if s.config.PingPeriodSeconds <= 0 {
-		return errors.New("ping period must be greater than zero")
+		log.Printf("WebSocket Ping 间隔配置无效：connection=%s", s.ConnectionID())
+		return
 	}
 
 	pingTicker := time.NewTicker(time.Duration(s.config.PingPeriodSeconds) * time.Second)
 	defer pingTicker.Stop()
+	s.pendingBatchTimer = time.NewTicker(time.Duration(s.config.BatchRetryIntervalSeconds) * time.Second)
+	defer s.pendingBatchTimer.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			return s.ctx.Err()
+			return
 
-		case batch, ok := <-readyQueue:
+		case batch, ok := <-batchQueue:
 			if !ok {
-				return nil
+				return
 			}
 			if err := s.ctx.Err(); err != nil {
-				return err
+				return
 			}
 
 			if batch == nil {
@@ -368,48 +409,33 @@ func (s *Connection) sendLoop(
 			}
 
 			if err := s.sendBatch(batch); err != nil {
-				// 出现慢连接，直接关闭
-				return fmt.Errorf(
-					"发送消息批次失败: %w",
-					err,
-				)
+				if s.ctx.Err() == nil {
+					log.Printf("发送 WebSocket 消息批次失败：connection=%s err=%v", s.ConnectionID(), err)
+				}
+				return
+			}
+
+		case <-s.pendingBatchTimer.C:
+			if err := s.retryTimeoutBatches(time.Now()); err != nil {
+				if s.ctx.Err() == nil {
+					log.Printf("重发 WebSocket 未确认批次失败：connection=%s err=%v", s.ConnectionID(), err)
+				}
+				return
 			}
 
 		case <-pingTicker.C:
 			if err := s.ctx.Err(); err != nil {
-				return err
+				return
 			}
 			if err := s.write(
 				gorilla.PingMessage,
 				nil,
 			); err != nil {
-				return fmt.Errorf("发送 WebSocket Ping 失败: %w", err)
+				if s.ctx.Err() == nil {
+					log.Printf("发送 WebSocket Ping 失败：connection=%s err=%v", s.ConnectionID(), err)
+				}
+				return
 			}
-		}
-	}
-}
-
-func (s *Connection) writeLoop() {
-	accumulator := NewBatchMessageAccumulator(s.config)
-	readyQueue := make(chan *MessageBatch, s.config.BatchReadyQueueSize)
-	errCh := make(chan error, 2)
-
-	defer close(readyQueue)
-
-	go func() {
-		errCh <- s.accumulateLoop(accumulator, readyQueue)
-	}()
-
-	go func() {
-		errCh <- s.sendLoop(readyQueue)
-	}()
-
-	// 任一协程结束就关闭连接，唤醒另一个协程，再等待它退出后清理队列。
-	for range 2 {
-		err := <-errCh
-		s.Close()
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrConnectionClosed) {
-			log.Printf("WebSocket 写循环退出：connection=%s err=%v", s.ConnectionID(), err)
 		}
 	}
 }
@@ -417,4 +443,37 @@ func (s *Connection) writeLoop() {
 func (s *Connection) write(messageType int, data []byte) error {
 	_ = s.conn.SetWriteDeadline(time.Now().Add(time.Duration(s.config.WriteWaitSeconds) * time.Second))
 	return s.conn.WriteMessage(messageType, data)
+}
+
+func (s *Connection) retryTimeoutBatches(now time.Time) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+
+	var payloads [][]byte
+	s.pendingBatch.mu.Lock()
+	for batchID, batch := range s.pendingBatch.items {
+		if now.Before(batch.nextRetryAt) {
+			continue
+		}
+		if batch.retries >= s.config.BatchMaxRetries {
+			delete(s.pendingBatch.items, batchID)
+			continue
+		}
+
+		batch.retries++
+		batch.nextRetryAt = now.Add(time.Duration(s.config.BatchAckTimeoutSeconds) * time.Second)
+		payloads = append(payloads, batch.payload)
+	}
+	s.pendingBatch.mu.Unlock()
+
+	for _, payload := range payloads {
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.write(gorilla.BinaryMessage, payload); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -54,6 +54,9 @@ ws:
   batch_max_bytes: 8192
   batch_linger_milliseconds: 20
   batch_ready_queue_size: 16
+  batch_ack_timeout_seconds: 3
+  batch_retry_interval_seconds: 1
+  batch_max_retries: 3
 room:
   max_members: 1000
   invite_code_ttl_seconds: 300

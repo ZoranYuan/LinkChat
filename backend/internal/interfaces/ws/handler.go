@@ -46,6 +46,7 @@ func NewHandler(
 	}
 	wh.upgrader.CheckOrigin = wh.checkOrigin
 
+	dispatcher.RegisterHandler(messaging.TypeEventBatchAck, wh.handleEventBatchAck)
 	dispatcher.RegisterHandler(messaging.TypeMessageSend, wh.handleMessageSend)
 	dispatcher.RegisterHandler(messaging.TypeMessageRead, wh.handleMessageRead)
 	dispatcher.RegisterHandler(messaging.TypeRoomEnter, wh.handleRoomEnter)
@@ -85,6 +86,21 @@ func (wh *Handler) allowEvent(ctx context.Context, op string, userID string, pol
 	}
 
 	return decision.Allowed, nil
+}
+
+func (wh *Handler) handleEventBatchAck(
+	_ context.Context,
+	connection *Connection,
+	data []byte,
+) error {
+	var ack wspb.EventBatchAck
+	if err := proto.Unmarshal(data, &ack); err != nil {
+		log.Printf("解析事件批次 ACK 失败：connection=%s err=%v", connection.ConnectionID(), err)
+		return nil
+	}
+
+	connection.pendingBatch.handleAck(ack.GetBatchId())
+	return nil
 }
 
 func (wh *Handler) handleMessageRead(ctx context.Context, connection *Connection, data []byte) error {

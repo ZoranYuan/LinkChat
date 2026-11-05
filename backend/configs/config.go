@@ -181,20 +181,23 @@ type App struct {
 }
 
 type WebSocketConfig struct {
-	WriteWaitSeconds         int `yaml:"write_wait_seconds"`
-	PongWaitSeconds          int `yaml:"pong_wait_seconds"`
-	PingPeriodSeconds        int `yaml:"ping_period_seconds"`
-	TimerInterval            int `yaml:"timer_interval_seconds"`
-	PageHiddenTimeoutSeconds int `yaml:"page_hidden_timeout_seconds"`
-	CloseTimeoutSeconds      int `yaml:"close_timeout_seconds"`
-	MaxMessageSize           int `yaml:"max_message_size"`
-	MaxMessageSendBufferSize int `yaml:"max_message_send_buffer_size"`
-	SendMessageRate          int `yaml:"send_message_rate"`
-	SendMessageBurst         int `yaml:"send_message_burst"`
-	BatchMaxMessages         int `yaml:"batch_max_messages"`
-	BatchMaxBytes            int `yaml:"batch_max_bytes"`
-	BatchLingerMilliseconds  int `yaml:"batch_linger_milliseconds"`
-	BatchReadyQueueSize      int `yaml:"batch_ready_queue_size"`
+	WriteWaitSeconds          int `yaml:"write_wait_seconds"`
+	PongWaitSeconds           int `yaml:"pong_wait_seconds"`
+	PingPeriodSeconds         int `yaml:"ping_period_seconds"`
+	TimerInterval             int `yaml:"timer_interval_seconds"`
+	PageHiddenTimeoutSeconds  int `yaml:"page_hidden_timeout_seconds"`
+	CloseTimeoutSeconds       int `yaml:"close_timeout_seconds"`
+	MaxMessageSize            int `yaml:"max_message_size"`
+	MaxMessageSendBufferSize  int `yaml:"max_message_send_buffer_size"`
+	SendMessageRate           int `yaml:"send_message_rate"`
+	SendMessageBurst          int `yaml:"send_message_burst"`
+	BatchMaxMessages          int `yaml:"batch_max_messages"`
+	BatchMaxBytes             int `yaml:"batch_max_bytes"`
+	BatchLingerMilliseconds   int `yaml:"batch_linger_milliseconds"`
+	BatchReadyQueueSize       int `yaml:"batch_ready_queue_size"`
+	BatchAckTimeoutSeconds    int `yaml:"batch_ack_timeout_seconds"`
+	BatchRetryIntervalSeconds int `yaml:"batch_retry_interval_seconds"`
+	BatchMaxRetries           int `yaml:"batch_max_retries"`
 }
 
 type MessageConfig struct {

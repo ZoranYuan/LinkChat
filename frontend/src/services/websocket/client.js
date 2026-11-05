@@ -87,26 +87,72 @@ export function createWsClient(callbacks = {}) {
   const dispatchApplicationFrame = (frame) => {
     const payloadType = payloadTypes[frame.op];
     if (!payloadType) {
-      callbacks.onUnknownFrame?.(frame);
-      return;
+      throw new Error(`未知的 WebSocket 事件：${frame.op}`);
     }
+
     const payload = decodePayload(payloadType, frame.data);
-    if (frame.op === "message_push") callbacks.onMessagePush?.(payload);
-    if (frame.op === "message_send_result") callbacks.onMessageSendResult?.(payload);
-    if (frame.op === "message_read_notice") callbacks.onMessageReadNotice?.(payload);
-    if (frame.op === "room_message_notice") callbacks.onRoomMessageNotice?.(payload);
-    if (frame.op === "friend_request_notice") callbacks.onFriendRequestNotice?.(payload);
-    if (frame.op === "error_notice") callbacks.onErrorNotice?.(payload);
+
+    switch (frame.op) {
+      case "message_push":
+        return callbacks.onMessagePush(payload);
+      case "message_send_result":
+        return callbacks.onMessageSendResult(payload);
+      case "message_read_notice":
+        return callbacks.onMessageReadNotice(payload);
+      case "room_message_notice":
+        return callbacks.onRoomMessageNotice(payload);
+      case "friend_request_notice":
+        return callbacks.onFriendRequestNotice(payload);
+      case "error_notice":
+        return callbacks.onErrorNotice(payload);
+    }
   };
 
-  /** 解码服务端批量帧，并按帧内顺序分发业务事件。 */
-  const dispatchFrame = (event) => {
+  /** 按帧顺序触发业务回调，整批处理成功后确认；处理中收到重推时复用同一份任务。 */
+  const dispatchFrame = async (event, currentSocket, processingBatches) => {
+    if (currentSocket !== socket) return;
+
     try {
       const frame = decodeFrame(event.data);
-      if (frame.op !== "event_batch") throw new Error(`unexpected websocket frame: ${frame.op}`);
+      if (frame.op !== "event_batch") {
+        throw new Error(`未知的 WebSocket 帧：${frame.op}`);
+      }
+
       const batch = decodePayload("eventBatch", frame.data);
-      batch.frames.forEach(dispatchApplicationFrame);
+      if (!batch.batchId) {
+        throw new Error("事件批次缺少 batchId");
+      }
+
+      let processing = processingBatches.get(batch.batchId);
+      if (!processing) {
+        processing = Promise.allSettled(
+          batch.frames.map(async (item) => dispatchApplicationFrame(item)),
+        );
+        processingBatches.set(batch.batchId, processing);
+      }
+
+      try {
+        const results = await processing;
+        const failure = results.find((item) => item.status === "rejected");
+        if (failure) throw failure.reason;
+
+        if (
+          currentSocket === socket &&
+          currentSocket.readyState === WebSocket.OPEN
+        ) {
+          currentSocket.send(
+            encodeFrame("event_batch_ack", "eventBatchAck", {
+              batchId: batch.batchId,
+            }),
+          );
+        }
+      } finally {
+        if (processingBatches.get(batch.batchId) === processing) {
+          processingBatches.delete(batch.batchId);
+        }
+      }
     } catch (error) {
+      if (currentSocket !== socket) return;
       notifyState("error");
       callbacks.onProtocolError?.(error);
     }
@@ -130,7 +176,11 @@ export function createWsClient(callbacks = {}) {
       reportPageVisibility();
       callbacks.onOpen?.({ recovered });
     };
-    socket.onmessage = dispatchFrame;
+    const currentSocket = socket;
+    const processingBatches = new Map();
+    currentSocket.onmessage = (event) => {
+      void dispatchFrame(event, currentSocket, processingBatches);
+    };
     socket.onerror = (error) => {
       notifyState("error");
       callbacks.onError?.(error);
