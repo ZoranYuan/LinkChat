@@ -50,7 +50,7 @@ func (r *InboxRepository) TryClaimBatch(
 	ctx context.Context,
 	requests []inboxport.ClaimRequest,
 	lockToken string,
-	now time.Time,
+	now, staleBefore time.Time,
 ) ([]string, error) {
 	rows := make([]InboxModel, 0, len(requests))
 	eventIDs := make([]string, 0, len(requests))
@@ -85,15 +85,33 @@ func (r *InboxRepository) TryClaimBatch(
 	var claimed []InboxModel
 	if err := r.db.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("event_id").
-		Where("event_id IN ? AND status = ? AND lock_token = ?", eventIDs, inboxport.StatusProcessing, lockToken).
+		Select("event_id", "status", "lock_token", "locked_at").
+		Where("event_id IN ?", eventIDs).
 		Find(&claimed).Error; err != nil {
 		return nil, err
 	}
 
-	claimedEventIDs := make([]string, len(claimed))
-	for i, row := range claimed {
-		claimedEventIDs[i] = row.EventID
+	claimedEventIDs := make([]string, 0, len(claimed))
+	var expiredIDs []string
+	for _, row := range claimed {
+		if row.Status != inboxport.StatusProcessing {
+			continue
+		}
+		if row.LockToken == lockToken {
+			claimedEventIDs = append(claimedEventIDs, row.EventID)
+			continue
+		}
+		if row.LockedAt != nil && row.LockedAt.After(staleBefore) {
+			return nil, inboxport.ErrEventInProgress
+		}
+		expiredIDs = append(expiredIDs, row.EventID)
+		claimedEventIDs = append(claimedEventIDs, row.EventID)
+	}
+	if len(expiredIDs) > 0 {
+		if err := r.db.WithContext(ctx).Model(&InboxModel{}).Where("event_id IN ?", expiredIDs).
+			Updates(map[string]any{"lock_token": lockToken, "locked_at": now, "attempt_count": gorm.Expr("attempt_count + 1")}).Error; err != nil {
+			return nil, err
+		}
 	}
 	return claimedEventIDs, nil
 }
@@ -177,6 +195,15 @@ func (r *InboxRepository) MarkRetry(ctx context.Context, eventID, lockToken, las
 		return inboxport.ErrLeaseLost
 	}
 	return nil
+}
+
+func (r *InboxRepository) MarkRetryBatch(ctx context.Context, eventIDs []string, lockToken, lastError string) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&InboxModel{}).
+		Where("event_id IN ? AND status = ? AND lock_token = ?", eventIDs, inboxport.StatusProcessing, lockToken).
+		Updates(map[string]any{"locked_at": nil, "lock_token": "", "last_error": lastError}).Error
 }
 
 func (r *InboxRepository) MarkCompleted(ctx context.Context, eventID, lockToken string, finishedAt time.Time) error {

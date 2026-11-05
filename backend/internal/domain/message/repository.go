@@ -9,6 +9,7 @@ type MessageRepository interface {
 	CreateNewMessages(ctx context.Context, messages []*Message) error
 	FindMessageByMessageID(ctx context.Context, messageID string) (*Message, error)
 	FindMessageBySenderIDAndClientMsgID(ctx context.Context, senderID, clientMsgID string) (*Message, error)
+	ListMessagesBySenderAndClientMsgIDs(ctx context.Context, keys [][2]string) ([]*Message, error)
 
 	GetHistoryMessage(
 		ctx context.Context,

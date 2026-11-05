@@ -11,8 +11,9 @@ import (
 var (
 	ErrUnknownConversationType = conversationapp.ErrUnknownConversationType
 
-	ErrMessageSeq           = errors.New("错误的消息序号")
-	ErrConversationNotFound = conversationapp.ErrConversationNotFound
+	ErrMessageSeq              = errors.New("错误的消息序号")
+	ErrConversationNotFound    = conversationapp.ErrConversationNotFound
+	ErrInvalidSyncConversation = errors.New("消息同步仅支持房间会话")
 
 	ErrUserConversationNotFound = errors.New("用户会话不存在")
 	ErrMessageNotFound          = errors.New("消息不存在")

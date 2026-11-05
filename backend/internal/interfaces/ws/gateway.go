@@ -6,6 +6,10 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/proto"
+
+	"IM_backend/internal/application/ports/messaging"
 )
 
 var ErrGatewayClosed = errors.New("实时通道网关已关闭")
@@ -16,8 +20,8 @@ type Gateway struct {
 	userConnections   map[string]map[string]struct{} //  用户当前有哪些在线连接
 	roomConnections   map[string]map[string]struct{} //  房间当前有哪些在线成员连接
 	connectionRooms   map[string]map[string]struct{} //  连接所属哪些在线房间，断线时反向清理
-	globalCtx         context.Context
-	cancelGlobalCtx   context.CancelFunc
+	networkCtx        context.Context
+	cancelNetworkCtx  context.CancelFunc
 	businessCtx       context.Context
 	cancelBusinessCtx context.CancelFunc
 	dispatchWg        sync.WaitGroup
@@ -25,11 +29,11 @@ type Gateway struct {
 }
 
 func NewGateway(serviceCtx context.Context) *Gateway {
-	globalCtx, cancelGlobalCtx := context.WithCancel(serviceCtx)
+	networkCtx, cancelNetworkCtx := context.WithCancel(serviceCtx)
 	businessCtx, cancelBusinessCtx := context.WithCancel(serviceCtx)
 	return &Gateway{
-		globalCtx:         globalCtx,
-		cancelGlobalCtx:   cancelGlobalCtx,
+		networkCtx:        networkCtx,
+		cancelNetworkCtx:  cancelNetworkCtx,
 		businessCtx:       businessCtx,
 		cancelBusinessCtx: cancelBusinessCtx,
 		connections:       make(map[string]*Connection),
@@ -40,7 +44,7 @@ func NewGateway(serviceCtx context.Context) *Gateway {
 }
 
 func (g *Gateway) NetworkContext() context.Context {
-	return g.globalCtx
+	return g.networkCtx
 }
 
 func (g *Gateway) SweepHiddenConnections(ctx context.Context, interval, hiddenTimeout time.Duration) {
@@ -73,7 +77,7 @@ func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.Unlock()
 
 	// 网络先停止接收，业务分发正常排空后取消；超时则提前通知业务中断。
-	g.cancelGlobalCtx()
+	g.cancelNetworkCtx()
 	defer g.cancelBusinessCtx()
 
 	done := make(chan struct{})
@@ -138,9 +142,7 @@ func (g *Gateway) Unregister(connection *Connection) {
 	}
 	for roomID := range g.connectionRooms[connectionID] {
 		connections := g.roomConnections[roomID]
-		if _, exists := connections[connectionID]; exists {
-			delete(connections, connectionID)
-		}
+		delete(connections, connectionID)
 		if len(connections) == 0 {
 			delete(g.roomConnections, roomID)
 		}
@@ -171,20 +173,36 @@ func (g *Gateway) CloseAuthSession(userID, sessionID string) int {
 	return len(connections)
 }
 
-func (g *Gateway) DeliverToUser(eventType, userID string, payload []byte) error {
-	for _, connection := range g.connectionsForUser(userID) {
-		if err := connection.PushEvent(eventType, payload); err != nil {
-			// 当前 Connection 投递失败，主动断开，然后让前端重新连接并同步消息。
-			// 单个 Connection 的失败不能影响同一用户的其他连接。
-			connection.Close()
+func (g *Gateway) DeliverMessageToUser(userID string, event messaging.MessagePushEvent) error {
+	return g.deliverToUser(userID, messaging.TypeMessagePush, messagePushToPB(event))
+}
 
-			log.Printf(
-				"WS 用户推送失败：user=%s connection=%s event=%s error=%v",
-				userID,
-				connection.ConnectionID(),
-				eventType,
-				err,
-			)
+func (g *Gateway) DeliverMessageReadNotice(userID string, event messaging.MessageReadNoticeEvent) error {
+	return g.deliverToUser(userID, messaging.TypeMessageReadNotice, messageReadNoticeToPB(event))
+}
+
+func (g *Gateway) DeliverFriendRequestNotice(userID string, event messaging.FriendRequestNoticeEvent) error {
+	return g.deliverToUser(userID, messaging.TypeFriendRequestNotice, friendRequestNoticeToPB(event))
+}
+
+func (g *Gateway) DeliverRoomMessageNotice(roomID string, event messaging.RoomMessageNoticeEvent) error {
+	return g.deliverToRoom(roomID, messaging.TypeRoomMessageNotice, roomMessageNoticeToPB(event), "")
+}
+
+func (g *Gateway) DeliverMessageToOnlineRoomMembers(roomID string, event messaging.MessagePushEvent, excludeUserID string) error {
+	return g.deliverToRoom(roomID, messaging.TypeMessagePush, messagePushToPB(event), excludeUserID)
+}
+
+func (g *Gateway) deliverToUser(userID, eventType string, event proto.Message) error {
+	payload, err := proto.Marshal(event)
+	if err != nil {
+		return err
+	}
+	message := Message{Op: eventType, Data: payload}
+	for _, connection := range g.connectionsForUser(userID) {
+		if err := connection.Enqueue(message); err != nil {
+			connection.Close()
+			log.Printf("WS 用户推送失败：user=%s connection=%s event=%s error=%v", userID, connection.ConnectionID(), eventType, err)
 		}
 	}
 	return nil
@@ -262,9 +280,7 @@ func (g *Gateway) UnbindUserFromRoom(userID, roomID string) {
 	g.mu.Lock()
 	for connectionID := range g.userConnections[userID] {
 		connections := g.roomConnections[roomID]
-		if _, exists := connections[connectionID]; exists {
-			delete(connections, connectionID)
-		}
+		delete(connections, connectionID)
 		if len(connections) == 0 {
 			delete(g.roomConnections, roomID)
 		}
@@ -277,12 +293,12 @@ func (g *Gateway) UnbindUserFromRoom(userID, roomID string) {
 	g.mu.Unlock()
 }
 
-func (g *Gateway) DeliverToOnlineRoomMembers(eventType, roomID string, payload []byte, excludeUserID string) error {
-	encoded, err := EncodePayload(eventType, payload)
+func (g *Gateway) deliverToRoom(roomID, eventType string, event proto.Message, excludeUserID string) error {
+	payload, err := proto.Marshal(event)
 	if err != nil {
 		return err
 	}
-	message := Message{Op: eventType, Data: encoded}
+	message := Message{Op: eventType, Data: payload}
 	for _, connection := range g.connectionsForRoom(roomID) {
 		// 排除发送者自身
 		if excludeUserID != "" && connection.UserID() == excludeUserID {

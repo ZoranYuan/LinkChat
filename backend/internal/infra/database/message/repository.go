@@ -3,6 +3,7 @@ package inframessage
 import (
 	"context"
 	"errors"
+	"strings"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
@@ -30,7 +31,7 @@ func (r *MessageRepository) CreateNewMessage(ctx context.Context, msg *domainmes
 	err := r.db.WithContext(ctx).Create(m).Error
 	if err != nil {
 		var mysqlErr *mysqlDriver.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 && m.ClientMsgID != nil {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 && (strings.Contains(mysqlErr.Message, "uk_message_sender_client") || strings.Contains(mysqlErr.Message, "PRIMARY")) {
 			return domainmessage.ErrDuplicateClientMessage
 		}
 	}
@@ -53,7 +54,7 @@ func (r *MessageRepository) CreateNewMessages(ctx context.Context, messages []*d
 	err := r.db.WithContext(ctx).Create(&rows).Error
 	if err != nil {
 		var mysqlErr *mysqlDriver.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 && (strings.Contains(mysqlErr.Message, "uk_message_sender_client") || strings.Contains(mysqlErr.Message, "PRIMARY")) {
 			return domainmessage.ErrDuplicateClientMessage
 		}
 	}
@@ -78,6 +79,25 @@ func (r *MessageRepository) FindMessageBySenderIDAndClientMsgID(
 		return nil, err
 	}
 	return toMessageDomain(&m), nil
+}
+
+func (r *MessageRepository) ListMessagesBySenderAndClientMsgIDs(ctx context.Context, keys [][2]string) ([]*domainmessage.Message, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	pairs := make([][]any, len(keys))
+	for i, key := range keys {
+		pairs[i] = []any{key[0], key[1]}
+	}
+	var rows []MessageModel
+	if err := r.db.WithContext(ctx).Where("(sender_id, client_msg_id) IN ?", pairs).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	messages := make([]*domainmessage.Message, len(rows))
+	for i := range rows {
+		messages[i] = toMessageDomain(&rows[i])
+	}
+	return messages, nil
 }
 
 func (r *MessageRepository) FindMessageByMessageID(

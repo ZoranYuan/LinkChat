@@ -2,13 +2,13 @@ package message
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
 
 	"IM_backend/configs"
@@ -17,7 +17,7 @@ import (
 	conversationcache "IM_backend/internal/application/ports/cache/conversation"
 	filecache "IM_backend/internal/application/ports/cache/file"
 	friendcache "IM_backend/internal/application/ports/cache/friend"
-	messagecache "IM_backend/internal/application/ports/cache/message"
+	messagecacheport "IM_backend/internal/application/ports/cache/message"
 	roomcache "IM_backend/internal/application/ports/cache/room"
 	idport "IM_backend/internal/application/ports/id"
 	"IM_backend/internal/application/ports/messaging"
@@ -29,10 +29,11 @@ import (
 	domainfriend "IM_backend/internal/domain/friend"
 	domainmessage "IM_backend/internal/domain/message"
 	domainroom "IM_backend/internal/domain/room"
+	messagecache "IM_backend/internal/infra/cache/message"
 )
 
 type MessageApplication struct {
-	messageCache                 messagecache.MessageCache
+	messageCache                 messagecacheport.MessageCache
 	roomMemberCache              roomcache.RoomMemberCache
 	roomCache                    roomcache.RoomCache
 	roomApplication              *roomapp.RoomApplication
@@ -68,7 +69,7 @@ func (ma *MessageApplication) SetConversationApplication(application *conversati
 }
 
 func NewMessageApplication(
-	messageCache messagecache.MessageCache,
+	messageCache messagecacheport.MessageCache,
 	roomMemberCache roomcache.RoomMemberCache,
 	roomCache roomcache.RoomCache,
 	txManager transaction.Manager,
@@ -112,38 +113,42 @@ func NewMessageApplication(
 	return app
 }
 
-func (ma *MessageApplication) HandleSendMessage(ctx context.Context, conversationID string, dto messaging.SendMessageDTO) (string, error) {
+func (ma *MessageApplication) HandleSendMessage(ctx context.Context, conversationID string, dto messaging.SendMessageDTO) (messagecache.DedupEntry, error) {
 	if dto.ClientMessageID == "" {
-		return "", errors.New("clientMsgId 不能为空")
+		return messagecache.DedupEntry{}, errors.New("clientMsgId 不能为空")
 	}
 	info, err := ma.getConversationInfo(ctx, conversationID)
 	if err != nil {
-		return "", err
+		return messagecache.DedupEntry{}, err
 	}
 	if err := ma.authorizeSend(ctx, info, dto.SenderID); err != nil {
-		return "", err
+		return messagecache.DedupEntry{}, err
 	}
 	dto.ConversationID = conversationID
 	dto.ConversationType = info.ConversationType
-	eventUUID := uuid.NewSHA1(
-		uuid.NameSpaceURL,
-		[]byte("im.messages\x00"+conversationID+"\x00"+dto.SenderID+"\x00"+dto.ClientMessageID),
-	)
-	eventID := hex.EncodeToString(eventUUID[:])
 	payload, err := json.Marshal(dto)
 	if err != nil {
-		return "", err
+		return messagecache.DedupEntry{}, err
 	}
-	err = ma.messageProducer.Publish(ctx, messaging.IntegrationEvent{
-		EventID:      eventID,
-		Name:         messaging.TypeMessageSend,
-		PartitionKey: conversationID,
-		Payload:      payload,
-	})
+	sum := sha256.Sum256(payload)
+	messageID, err := ma.idGenerator.Generate()
 	if err != nil {
-		return "", err
+		return messagecache.DedupEntry{}, err
 	}
-	return eventID, nil
+	entry, err := ma.messageCache.GetOrCreateDedupEntry(ctx, dto.ClientMessageID, messagecache.DedupEntry{
+		SenderID: dto.SenderID, MessageID: messageID, RequestHash: hex.EncodeToString(sum[:]),
+	}, time.Duration(ma.config.Cache.MessageDedup.ProcessingTTLSeconds)*time.Second)
+	if err != nil {
+		return messagecache.DedupEntry{}, err
+	}
+	if entry.Status != messagecache.StatusProcessing {
+		return entry, nil
+	}
+	err = ma.messageProducer.Publish(ctx, entry.MessageID, messaging.TypeMessageSend, conversationID, payload)
+	if err != nil {
+		return entry, err
+	}
+	return entry, nil
 }
 
 func (ma *MessageApplication) getConversationInfo(ctx context.Context, conversationID string) (*conversationcache.ConversationInfo, error) {
@@ -276,37 +281,6 @@ func friendCacheRelation(relation *domainfriend.Friend) *friendcache.Relation {
 
 func isActiveFriendRelation(relation *friendcache.Relation) bool {
 	return relation != nil && relation.Exists && relation.Status == int(domainfriend.StatusFriend)
-}
-
-// existingMessageResult 将数据库中的已有消息转换成幂等请求的返回值。
-func (ma *MessageApplication) existingMessageResult(
-	ctx context.Context,
-	dto messaging.SendMessageDTO,
-	existing *domainmessage.Message,
-) *MessageAckDTO {
-	if existing == nil {
-		return nil
-	}
-
-	attachmentID := ""
-	if ma.messageAttachmentsRepository != nil {
-		attachments, err := ma.messageAttachmentsRepository.BatchGetByMessageIDs(ctx, []string{existing.MessageID}, false)
-		if err == nil {
-			if attachment := attachments[existing.MessageID]; attachment != nil {
-				attachmentID = attachment.AttachmentID
-			}
-		}
-	}
-
-	return &MessageAckDTO{
-		ClientMessageID: dto.ClientMessageID,
-		ConversationID:  existing.ConversationID,
-		MessageID:       existing.MessageID,
-		Seq:             existing.Seq,
-		AttachmentID:    attachmentID,
-		SendTime:        existing.SendTime,
-		Status:          string(messaging.AckStatusSent),
-	}
 }
 
 func (ma *MessageApplication) isRoomConvMember(ctx context.Context, userID, roomID string) error {

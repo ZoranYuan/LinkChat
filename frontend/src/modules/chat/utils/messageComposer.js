@@ -26,6 +26,7 @@ export const createOutgoingMessage = (conversation, payload, currentUser) => {
     durationMs: payload.durationMs || 0,
     sendTime,
     status: 1,
+    sendStatus: "pending",
   };
 };
 

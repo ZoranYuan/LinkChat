@@ -3,7 +3,6 @@ package ws
 import (
 	"IM_backend/internal/application/ports/messaging"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +17,8 @@ import (
 	"IM_backend/configs"
 	messageapp "IM_backend/internal/application/message"
 	ratelimitport "IM_backend/internal/application/ports/ratelimit"
+	domainmessage "IM_backend/internal/domain/message"
+	messagecache "IM_backend/internal/infra/cache/message"
 	"IM_backend/internal/interfaces/http/response"
 	wspb "IM_backend/internal/interfaces/ws/pb"
 )
@@ -46,7 +47,7 @@ func NewHandler(
 	wh.upgrader.CheckOrigin = wh.checkOrigin
 
 	dispatcher.RegisterHandler(messaging.TypeMessageSend, wh.handleMessageSend)
-	dispatcher.RegisterHandler(messaging.TypeMessageRead, wh.handleReadMessageAck)
+	dispatcher.RegisterHandler(messaging.TypeMessageRead, wh.handleMessageRead)
 	dispatcher.RegisterHandler(messaging.TypeRoomEnter, wh.handleRoomEnter)
 	dispatcher.RegisterHandler(messaging.TypeConnectionVisibility, wh.handleConnectionVisibility)
 
@@ -75,7 +76,7 @@ func (wh *Handler) allowEvent(ctx context.Context, op string, userID string, pol
 	)
 
 	if err != nil {
-		// 限流服务异常时拒绝发送，向客户端返回失败 ACK。
+		// 限流服务异常时拒绝发送，向客户端返回失败结果。
 		log.Printf(
 			"WebSocket 限流器执行失败：%v",
 			err,
@@ -86,7 +87,7 @@ func (wh *Handler) allowEvent(ctx context.Context, op string, userID string, pol
 	return decision.Allowed, nil
 }
 
-func (wh *Handler) handleReadMessageAck(ctx context.Context, connection *Connection, data []byte) error {
+func (wh *Handler) handleMessageRead(ctx context.Context, connection *Connection, data []byte) error {
 	var pb wspb.MessageReadRequest
 
 	if err := proto.Unmarshal(data, &pb); err != nil {
@@ -155,41 +156,40 @@ func (wh *Handler) handleMessageSend(ctx context.Context, connection *Connection
 		StickerID:       request.GetStickerId(),
 		PackID:          request.GetPackId(),
 	}
-	messageID, err := wh.app.HandleSendMessage(ctx, conversationID, dto)
+	entry, err := wh.app.HandleSendMessage(ctx, conversationID, dto)
 	if err != nil {
-		reason := "消息服务暂不可用"
+		entry.Status = messagecache.StatusFailed
+		entry.Error = "消息服务暂不可用"
 		switch {
 		case errors.Is(err, messageapp.ErrNotRoomMember), errors.Is(err, messageapp.ErrNotFriends), errors.Is(err, messageapp.ErrForbidden):
-			reason = "无权在该会话发送消息"
+			entry.Error = "无权在该会话发送消息"
 		case errors.Is(err, messageapp.ErrConversationNotFound):
-			reason = "会话不存在"
+			entry.Error = "会话不存在"
+		case errors.Is(err, domainmessage.ErrClientMessageConflict):
+			entry.Error = err.Error()
 		}
-		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), reason)
 	}
-	payload, err := json.Marshal(messaging.MessageSendResultEvent{
+	event := messaging.MessageSendResultEvent{
 		ClientMsgID:    request.GetClientMsgId(),
-		MessageID:      messageID,
+		MessageID:      entry.MessageID,
 		ConversationID: conversationID,
-		Status:         messaging.AckStatusSent,
+		Seq:            entry.Seq,
+		AttachmentID:   entry.AttachmentID,
+		Status:         messaging.SendStatus(entry.Status),
+		Extra:          entry.Error,
 		SendTime:       time.Now().UnixMilli(),
-	})
-	if err != nil {
-		return err
 	}
-	return connection.PushEvent(messaging.TypeMessageSendResult, payload)
+	return connection.PushProtobufEvent(messaging.TypeMessageSendResult, messageSendResultToPB(event))
 }
 
 func (wh *Handler) replyFailedSendResult(connection *Connection, clientMsgID, reason string) error {
-	payload, err := json.Marshal(messaging.MessageSendResultEvent{
+	event := messaging.MessageSendResultEvent{
 		ClientMsgID: clientMsgID,
-		Status:      messaging.AckStatusFailed,
+		Status:      messaging.SendStatusFailed,
 		Extra:       reason,
 		SendTime:    time.Now().UnixMilli(),
-	})
-	if err != nil {
-		return err
 	}
-	return connection.PushEvent(messaging.TypeMessageSendResult, payload)
+	return connection.PushProtobufEvent(messaging.TypeMessageSendResult, messageSendResultToPB(event))
 }
 
 func (wh *Handler) checkOrigin(r *http.Request) bool {

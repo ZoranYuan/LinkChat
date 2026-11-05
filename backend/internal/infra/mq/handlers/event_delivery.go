@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"hash/fnv"
 	"log"
@@ -12,27 +11,21 @@ import (
 	"IM_backend/configs"
 	conversationapp "IM_backend/internal/application/conversation"
 	"IM_backend/internal/application/ports/messaging"
-	roomapp "IM_backend/internal/application/room"
 	"IM_backend/internal/interfaces/ws"
 )
 
 type MessageDelivery struct {
-	gateway         *ws.Gateway
-	roomApplication *roomapp.RoomApplication
-	config          configs.MessageConfig
-	noticeBatcher   *roomNoticeBatcher
+	gateway       *ws.Gateway
+	noticeBatcher *roomNoticeBatcher
 }
 
 func NewMessageDelivery(
 	delivery *ws.Gateway,
-	roomApplication *roomapp.RoomApplication,
 	config configs.MessageConfig,
 ) *MessageDelivery {
 	return &MessageDelivery{
-		gateway:         delivery,
-		roomApplication: roomApplication,
-		config:          config,
-		noticeBatcher:   newRoomNoticeBatcher(delivery, config),
+		gateway:       delivery,
+		noticeBatcher: newRoomNoticeBatcher(delivery, config),
 	}
 }
 
@@ -41,56 +34,27 @@ func (m *MessageDelivery) OnlineRoomConnectionCount(roomID string) int {
 }
 
 func (m *MessageDelivery) Deliver(
-	ctx context.Context,
-	eventType string,
 	event messaging.MessagePushEvent,
-	payload []byte,
-	active bool,
+	pull bool,
 ) error {
 	switch event.ConvType {
 	case messaging.PrivateChat:
-		// 消息入库后把带 seq 的消息回推给发送者，用 clientMsgId 更新本地占位消息。
-		if err := m.gateway.DeliverToUser(eventType, event.SenderID, payload); err != nil {
-			return err
-		}
 		if event.RecvID == event.SenderID {
 			return nil
 		}
-		return m.gateway.DeliverToUser(eventType, event.RecvID, payload)
+		return m.gateway.DeliverMessageToUser(event.RecvID, event)
 	case messaging.RoomChat:
-		// 大群也给发送者推完整消息；群内其他成员仍按原推拉策略接收。
-		if err := m.gateway.DeliverToUser(eventType, event.SenderID, payload); err != nil {
-			return err
+		if pull {
+			return m.noticeBatcher.enqueue(event.RecvID, messaging.RoomMessageNoticeEvent{
+				ConversationID: event.ConversationID,
+				MessageID:      event.MessageID,
+				Seq:            event.Seq,
+			})
 		}
-		return m.deliverRoomMessage(ctx, eventType, event, payload, active)
+		return m.gateway.DeliverMessageToOnlineRoomMembers(event.RecvID, event, event.SenderID)
 	default:
 		return conversationapp.ErrUnknownConversationType
 	}
-}
-
-func (m *MessageDelivery) deliverRoomMessage(
-	ctx context.Context,
-	eventType string,
-	event messaging.MessagePushEvent,
-	payload []byte,
-	active bool,
-) error {
-	roomID := event.RecvID
-	room, err := m.roomApplication.GetActiveRoom(ctx, roomID)
-	if err != nil {
-		return err
-	}
-
-	large := room.MemberCount > m.config.RoomRealtimeFanoutLimit
-	if large || active {
-		return m.noticeBatcher.enqueue(roomID, messaging.RoomMessageNoticeEvent{
-			ConversationID: event.ConversationID,
-			MessageID:      event.MessageID,
-			Seq:            event.Seq,
-		})
-	}
-
-	return m.gateway.DeliverToOnlineRoomMembers(eventType, roomID, payload, event.SenderID)
 }
 
 func (m *MessageDelivery) Close(ctx context.Context) {
@@ -201,10 +165,7 @@ func (s *roomNoticeShard) flush(ctx context.Context, delivery *ws.Gateway) {
 		if ctx.Err() != nil {
 			return
 		}
-		payload, err := json.Marshal(item.notice)
-		if err == nil {
-			err = delivery.DeliverToOnlineRoomMembers(messaging.TypeRoomMessageNotice, item.roomID, payload, "")
-		}
+		err := delivery.DeliverRoomMessageNotice(item.roomID, item.notice)
 		if err != nil {
 			log.Printf("推送群聊消息通知失败：conversation=%s seq=%d error=%v", item.notice.ConversationID, item.notice.Seq, err)
 		}

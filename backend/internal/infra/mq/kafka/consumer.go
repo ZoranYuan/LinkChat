@@ -1,16 +1,15 @@
 package kafka
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
 
 	"IM_backend/configs"
-	"IM_backend/internal/application/ports/messaging"
 	mqhandler "IM_backend/internal/infra/mq/handlers"
 )
 
@@ -22,16 +21,16 @@ var (
 type Consumer struct {
 	group          sarama.ConsumerGroup
 	consumeBatcher *consumeBatcher
-	topicRouter    *TopicRouter
 	topics         []string
 	retryInterval  time.Duration
+	retryInitial   time.Duration
+	retryMax       time.Duration
 	messageHandler *mqhandler.MessageHandler
 }
 
 func NewConsumer(
 	client *Client,
 	topics []string,
-	topicRouter *TopicRouter,
 	messageHandler *mqhandler.MessageHandler,
 	config configs.KafkaConsumerConfig,
 ) (*Consumer, error) {
@@ -43,7 +42,7 @@ func NewConsumer(
 		return nil, ErrEmptyTopics
 	}
 
-	if topicRouter == nil || messageHandler == nil {
+	if messageHandler == nil {
 		return nil, errors.New("Kafka Consumer 依赖未配置")
 	}
 	if config.ConsumeRetryIntervalSecs <= 0 {
@@ -56,34 +55,12 @@ func NewConsumer(
 		group:          client.ConsumerGroup,
 		consumeBatcher: newConsumeBatcher(config),
 		topics:         topics,
-		topicRouter:    topicRouter,
 		retryInterval:  time.Duration(config.ConsumeRetryIntervalSecs) * time.Second,
+		retryInitial:   time.Duration(config.RetryInitialDelayMilliseconds) * time.Millisecond,
+		retryMax:       time.Duration(config.RetryMaxDelayMilliseconds) * time.Millisecond,
 		messageHandler: messageHandler,
 	}
 	return consumer, nil
-}
-
-func eventIDFromHeaders(headers []*sarama.RecordHeader) string {
-	for _, header := range headers {
-		if string(header.Key) == "event_id" {
-			return string(header.Value)
-		}
-	}
-	return ""
-}
-
-func (c *Consumer) incomingEvent(message *sarama.ConsumerMessage) (messaging.IncomingEvent, error) {
-	name, err := c.topicRouter.EventFor(message.Topic)
-	if err != nil {
-		return messaging.IncomingEvent{}, err
-	}
-
-	return messaging.IncomingEvent{
-		EventID: eventIDFromHeaders(message.Headers),
-		Name:    name,
-		Key:     bytes.Clone(message.Key),
-		Payload: bytes.Clone(message.Value),
-	}, nil
 }
 
 func (c *Consumer) Consume(ctx context.Context) error {
@@ -116,29 +93,32 @@ func (c *Consumer) Consume(ctx context.Context) error {
 }
 
 func (c *Consumer) processBatch(ctx context.Context, batch *consumeBatch) {
-	events := make([]messaging.IncomingEvent, len(batch.items))
+	messages := make([]*sarama.ConsumerMessage, len(batch.items))
 	for i, item := range batch.items {
-		event, err := c.incomingEvent(item.message)
-		if err != nil {
+		messages[i] = item.message
+	}
+
+	delay := c.retryInitial
+	for ctx.Err() == nil {
+		persisted, skipped, err := c.messageHandler.HandleSendMessages(ctx, batch.conversationID, messages)
+		if err == nil {
+			log.Printf("Kafka 消息批次处理完成：conversation=%s persisted=%d skipped=%d", batch.conversationID, persisted, skipped)
 			for _, item := range batch.items {
-				item.failed(err)
+				item.completed()
 			}
 			return
 		}
-		events[i] = event
-	}
-
-	successMessages, failedMessages, err := c.messageHandler.HandleSendMessages(ctx, batch.conversationID, events)
-	if err != nil {
 		for _, item := range batch.items {
 			item.failed(err)
 		}
-		return
-	}
-
-	log.Printf("Kafka 消息批次处理完成：conversation=%s persisted=%d inbox_skipped=%d", batch.conversationID, len(successMessages), len(failedMessages))
-	for _, item := range batch.items {
-		item.completed()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		delay = min(delay*2, c.retryMax)
 	}
 }
 
@@ -157,6 +137,31 @@ func (*Consumer) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	ctx := session.Context()
 	messages := claim.Messages()
+	var completionMu sync.Mutex
+	var pending []*sarama.ConsumerMessage
+	completed := make(map[int64]struct{})
+	// 消息并行处理，offset 只推进到按接收顺序连续完成的位置。
+	complete := func(message *sarama.ConsumerMessage) {
+		completionMu.Lock()
+		defer completionMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		completed[message.Offset] = struct{}{}
+		var last *sarama.ConsumerMessage
+		for len(pending) > 0 {
+			if _, done := completed[pending[0].Offset]; !done {
+				break
+			}
+			last = pending[0]
+			delete(completed, last.Offset)
+			pending[0] = nil
+			pending = pending[1:]
+		}
+		if last != nil {
+			session.MarkMessage(last, "")
+		}
+	}
 
 	for {
 		select {
@@ -167,9 +172,12 @@ func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 			if !ok {
 				return nil
 			}
+			completionMu.Lock()
+			pending = append(pending, message)
+			completionMu.Unlock()
 			item := &consumeBatchItem{
 				message:   message,
-				completed: func() { session.MarkMessage(message, "") },
+				completed: func() { complete(message) },
 				failed: func(err error) {
 					log.Printf("Kafka 消息批次处理失败：topic=%s partition=%d offset=%d err=%v", message.Topic, message.Partition, message.Offset, err)
 				},

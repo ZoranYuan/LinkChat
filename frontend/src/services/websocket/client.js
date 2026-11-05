@@ -5,6 +5,8 @@ const payloadTypes = {
   message_send_result: "messageSendResult",
   message_read_notice: "messageReadNotice",
   room_message_notice: "roomMessageNotice",
+  friend_request_notice: "friendRequestNotice",
+  error_notice: "errorNotice",
 };
 
 const DEVICE_ID_KEY = "im_device_id";
@@ -81,7 +83,7 @@ export function createWsClient(callbacks = {}) {
     return `${protocol}//${window.location.host}/api/v1/ws?${params.toString()}`;
   };
 
-  /** 解码单个业务帧，并分发给消息、ACK、已读或大型房间通知回调。 */
+  /** 解码单个业务帧，并分发给消息推送、发送结果、已读或大型房间通知回调。 */
   const dispatchApplicationFrame = (frame) => {
     const payloadType = payloadTypes[frame.op];
     if (!payloadType) {
@@ -93,6 +95,8 @@ export function createWsClient(callbacks = {}) {
     if (frame.op === "message_send_result") callbacks.onMessageSendResult?.(payload);
     if (frame.op === "message_read_notice") callbacks.onMessageReadNotice?.(payload);
     if (frame.op === "room_message_notice") callbacks.onRoomMessageNotice?.(payload);
+    if (frame.op === "friend_request_notice") callbacks.onFriendRequestNotice?.(payload);
+    if (frame.op === "error_notice") callbacks.onErrorNotice?.(payload);
   };
 
   /** 解码服务端批量帧，并按帧内顺序分发业务事件。 */

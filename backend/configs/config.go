@@ -61,7 +61,8 @@ type CacheConfig struct {
 }
 
 type MessageDedupConfig struct {
-	TTLSeconds int `yaml:"ttl_seconds"`
+	TTLSeconds           int `yaml:"ttl_seconds"`
+	ProcessingTTLSeconds int `yaml:"processing_ttl_seconds"`
 }
 
 type RoomMessagesConfig struct {
@@ -114,13 +115,13 @@ type KafkaConsumerConfig struct {
 	Version                       string `yaml:"version"`
 	Assignor                      string `yaml:"assignor"` // range / roundrobin / sticky
 	BatchSize                     int    `yaml:"batch_size"`
+	FlushIntervalMilliseconds     int    `yaml:"flush_interval_milliseconds"`
 	InputQueueSize                int    `yaml:"input_queue_size"`
 	WorkerCount                   int    `yaml:"worker_count"`
 	WorkerQueueSize               int    `yaml:"worker_queue_size"`
 	MaxAttempts                   int    `yaml:"max_attempts"`
 	LeaseStaleAfterSecs           int    `yaml:"lease_stale_after_seconds"`
 	ConsumeRetryIntervalSecs      int    `yaml:"consume_retry_interval_seconds"`
-	DeadLetterSuffix              string `yaml:"dead_letter_suffix"`
 	RetryInitialDelayMilliseconds int    `yaml:"retry_initial_delay_milliseconds"`
 	RetryMaxDelayMilliseconds     int    `yaml:"retry_max_delay_milliseconds"`
 }

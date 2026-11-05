@@ -2,6 +2,8 @@
 export const normalizeMessage = (message = {}) => ({
   ...message,
   seq: Number(message.seq) || 0,
+  sendStatus: Number(message.seq) > 0 ? "completed" : message.sendStatus || "pending",
+  error: Number(message.seq) > 0 ? "" : message.error || "",
 });
 
 /** 按服务端 seq 升序排列消息，未确认消息放在末尾。 */

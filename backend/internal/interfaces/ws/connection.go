@@ -229,21 +229,12 @@ func (s *Connection) read() (*Message, error) {
 	return &Message{Op: frame.GetOp(), Data: frame.GetData()}, nil
 }
 
-func (s *Connection) PushEvent(
-	op string,
-	payload []byte,
-) error {
-	encoded, err := EncodePayload(op, payload)
+func (s *Connection) PushProtobufEvent(op string, payload proto.Message) error {
+	encoded, err := proto.Marshal(payload)
 	if err != nil {
 		return err
 	}
-
-	return s.Enqueue(
-		Message{
-			Op:   op,
-			Data: encoded,
-		},
-	)
+	return s.Enqueue(Message{Op: op, Data: encoded})
 }
 
 // inbound 仅由 readLoop 关闭，正常断线后继续分发已经接收的消息。

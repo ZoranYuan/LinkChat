@@ -74,7 +74,7 @@ const pendingSendRequests = new Map();
 const pendingUploadTasks = new Map();
 const historyRequests = new Map();
 const messageProcessingByConversation = new Map();
-let pendingRoomEntryConversationID = "";
+let pendingRoomEnterConversationID = "";
 
 let sessionGeneration = 0;
 let startupCatchupGeneration = -1;
@@ -124,6 +124,29 @@ const persistConfirmedMessages = async (
   });
 
   if (!isSessionActive(session)) return result;
+
+  for (const message of messages) {
+    if (message.senderId !== session.userId || !message.clientMsgId || Number(message.seq) <= 0)
+      continue;
+    const pending = findPendingMessage(message.clientMsgId, message.conversationId);
+    if (pending) {
+      Object.assign(pending, message, {
+        sendStatus: "completed",
+        accepted: true,
+        error: "",
+      });
+    }
+    pendingMessages.delete(message.clientMsgId);
+    pendingSendRequests.delete(message.clientMsgId);
+    const task = pendingUploadTasks.get(message.clientMsgId);
+    if (task) {
+      task.fileId = "";
+      const confirmed = pending || message;
+      attachmentResolver.resolve([confirmed])
+        .finally(() => releaseUploadPreview(message.clientMsgId, confirmed))
+        .catch(() => {});
+    }
+  }
 
   for (const [conversationId, seq] of Object.entries(
     result?.lastContinuousSeqByConversation || {},
@@ -179,10 +202,14 @@ const updatePendingMessage = (clientMsgId, conversationId, changes) => {
   return message;
 };
 
-const markPendingMessageFailed = (clientMsgId, conversationId, error) =>
-  updatePendingMessage(clientMsgId, conversationId, {
+const markPendingMessageFailed = (clientMsgId, conversationId, error) => {
+  const message = findPendingMessage(clientMsgId, conversationId);
+  if (Number(message?.seq) > 0 || message?.sendStatus === "completed") return message;
+  return updatePendingMessage(clientMsgId, conversationId, {
+    sendStatus: "failed",
     error: error?.message || String(error || "消息发送失败"),
   });
+};
 
 /** 为图片或视频生成本地预览地址；该地址只存在于内存中。 */
 const createLocalPreviewURL = (file, cType) => {
@@ -232,6 +259,7 @@ const sendPendingMessage = (clientMsgId, conversation, request, session = captur
   pendingSendRequests.set(clientMsgId, pendingRequest);
 
   updatePendingMessage(clientMsgId, conversation.conversationId, {
+    sendStatus: "pending",
     error: "",
   });
 
@@ -426,7 +454,7 @@ const processRealtimeMessage = async (rawMessage) => {
     const messageSeq = Number(message.seq);
 
     let messagesToPersist = [message];
-    let nextBoundary = messageSeq;
+    let nextBoundary = Math.max(localBoundary, messageSeq);
     if (messageSeq > localBoundary + 1) {
       const syncResult = await syncMessages(conversationId, localBoundary);
       if (!isSessionActive(session)) return;
@@ -478,13 +506,28 @@ const upsertIncomingMessage = (payload) => {
   processRealtimeMessage(payload).catch(() => {});
 };
 
-/** ACK 只更新发送状态；带 seq 的消息推送负责持久化确认消息。 */
-const handleMessageAck = (ack) => {
+/** processing 发送结果 更新发送状态，completed 发送结果 复用完整消息的持久化流程。 */
+const handleMessageSendResult = (ack) => {
   const session = captureSession();
-  const pending = pendingMessages.get(ack?.clientMsgId);
+  const pending = pendingMessages.get(ack?.clientMsgId) ||
+    findPendingMessage(ack?.clientMsgId, ack?.conversationId);
   if (!pending || !isSessionActive(session)) return;
+  if (Number(pending.seq) > 0 || pending.sendStatus === "completed") return;
 
   const conversationId = ack.conversationId || pending.conversationId;
+  if (ack.status === "completed" && Number(ack.seq) > 0) {
+    processRealtimeMessage({
+      ...pending,
+      messageId: ack.messageId,
+      conversationId,
+      seq: Number(ack.seq),
+      attachmentId: ack.attachmentId || pending.attachmentId || "",
+      sendStatus: "completed",
+      accepted: true,
+      error: "",
+    }).catch(() => {});
+    return;
+  }
   const failed = ack.status === "failed";
   const updated = normalizeMessage({
     ...pending,
@@ -494,6 +537,7 @@ const handleMessageAck = (ack) => {
     attachmentId: ack.attachmentId || pending.attachmentId || "",
     sendTime: Number(ack.sendTime) || pending.sendTime,
     status: Number(pending.status) || 1,
+    sendStatus: ack.status,
     accepted: !failed,
     error: failed ? ack.extra || "消息发送失败" : "",
   });
@@ -504,26 +548,8 @@ const handleMessageAck = (ack) => {
   const storedMessage = state.messages[conversationId].find(
     (item) => item.clientMsgId === updated.clientMsgId,
   );
-  if (failed) {
-    // 失败消息必须继续保留在待处理表中，点击重试时复用原 clientMsgId。
-    pendingMessages.set(ack.clientMsgId, storedMessage || updated);
-  } else {
-    pendingMessages.delete(ack.clientMsgId);
-    pendingSendRequests.delete(ack.clientMsgId);
-    const uploadTask = pendingUploadTasks.get(ack.clientMsgId);
-    if (uploadTask) uploadTask.fileId = "";
-  }
-
-  if (storedMessage) {
-    attachmentResolver
-      .resolve([storedMessage])
-      .finally(() => {
-        if (!failed) releaseUploadPreview(ack.clientMsgId, storedMessage);
-      })
-      .catch(() => {});
-  } else if (!failed) {
-    pendingUploadTasks.delete(ack.clientMsgId);
-  }
+  // 未持久化的请求继续保留，终止失败或连接重试时仍复用原请求和上传结果。
+  pendingMessages.set(ack.clientMsgId, storedMessage || updated);
 };
 
 /** 以最大值推进私聊对端最高已读水位；该水位决定最后一条本人消息的展示状态。 */
@@ -638,8 +664,8 @@ const wsClient = createWsClient({
     state.connection = connection;
   },
   onOpen: () => {
-    if (pendingRoomEntryConversationID === state.activeConversationId) {
-      sendRoomEnter(pendingRoomEntryConversationID);
+    if (pendingRoomEnterConversationID === state.activeConversationId) {
+      sendRoomEnter(pendingRoomEnterConversationID);
     }
     const session = captureSession();
     syncAllConversationGaps(session).catch((error) => {
@@ -656,7 +682,7 @@ const wsClient = createWsClient({
     console.error("WebSocket 重连前离线补齐失败", error);
   },
   onMessagePush: upsertIncomingMessage,
-  onMessageSendResult: handleMessageAck,
+  onMessageSendResult: handleMessageSendResult,
   onMessageReadNotice: handleMessageReadNotice,
   onRoomMessageNotice: (notice) => {
     syncRoomMessageNotice(notice).catch(() => {});
@@ -674,8 +700,8 @@ const sendRoomEnter = (conversationId) => {
     return false;
 
   const sent = wsClient.sendRoomEnter({ roomId: conversation.targetId });
-  if (sent && pendingRoomEntryConversationID === conversationId) {
-    pendingRoomEntryConversationID = "";
+  if (sent && pendingRoomEnterConversationID === conversationId) {
+    pendingRoomEnterConversationID = "";
   }
   return sent;
 };
@@ -715,7 +741,7 @@ const connectSocket = ({ initialCatchupComplete = false } = {}) => {
 const clearAuthState = () => {
   sessionGeneration += 1;
   startupCatchupGeneration = -1;
-  pendingRoomEntryConversationID = "";
+  pendingRoomEnterConversationID = "";
   pendingMessages.clear();
   pendingSendRequests.clear();
   for (const task of pendingUploadTasks.values()) {
@@ -931,10 +957,10 @@ export const useChatStore = defineStore("chat", () => {
     const conversation = findConversation(state.conversations, conversationId);
     if (conversation) conversation.unread = 0;
     if (conversation?.convType === ConversationType.ROOM) {
-      pendingRoomEntryConversationID = conversationId;
+      pendingRoomEnterConversationID = conversationId;
       sendRoomEnter(conversationId);
     } else {
-      pendingRoomEntryConversationID = "";
+      pendingRoomEnterConversationID = "";
     }
     if (state.authenticated) await loadHistory(conversationId, 0);
   };

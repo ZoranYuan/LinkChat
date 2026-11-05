@@ -116,7 +116,7 @@ func newConsumeBatcher(config configs.KafkaConsumerConfig) *consumeBatcher {
 	return &consumeBatcher{
 		workers:    workers,
 		batchSize:  config.BatchSize,
-		flushEvery: 100 * time.Millisecond,
+		flushEvery: time.Duration(config.FlushIntervalMilliseconds) * time.Millisecond,
 	}
 }
 

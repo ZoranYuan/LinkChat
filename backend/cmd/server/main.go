@@ -17,7 +17,6 @@ import (
 	fileapp "IM_backend/internal/application/file"
 	friendapp "IM_backend/internal/application/friend"
 	messageapp "IM_backend/internal/application/message"
-	"IM_backend/internal/application/ports/messaging"
 	ratelimitport "IM_backend/internal/application/ports/ratelimit"
 	roomapp "IM_backend/internal/application/room"
 	userapp "IM_backend/internal/application/user"
@@ -256,17 +255,10 @@ func main() {
 
 	messageDelivery := mqhandler.NewMessageDelivery(
 		realtimeGateway,
-		roomApp,
 		cfg.Message,
 	)
 	defer messageDelivery.Close(context.Background())
-	topicRouter, routerErr := kafka.NewTopicRouter(map[string]string{
-		string(messaging.TypeMessageSend): cfg.Kafka.Topics.Message,
-	}, cfg.Kafka.Consumer.DeadLetterSuffix)
-	if routerErr != nil {
-		log.Fatal("创建 Kafka Topic 路由失败：", routerErr)
-	}
-	messageProducer := kafka.NewProducer(kafkaClient, topicRouter)
+	messageProducer := kafka.NewProducer(kafkaClient, cfg.Kafka.Topics.Message)
 	dispatcher := ws.NewDispatcher()
 
 	messageApplication := messageapp.NewMessageApplication(
@@ -296,13 +288,12 @@ func main() {
 		inboxRepository, txManager, cfg, conversationApplication, conversationRepository,
 		messageRepository, userConversationRepository, fileRepository, fileCache,
 		messageAttachmentsRepository, messageStickerRepository, idGenerator,
-		roomCache, roomApp, messageDelivery,
+		roomCache, roomApp, messageDelivery, messageCache,
 	)
 
 	messageConsumer, err := kafka.NewConsumer(
 		kafkaClient,
 		[]string{cfg.Kafka.Topics.Message},
-		topicRouter,
 		messageSendHandler,
 		cfg.Kafka.Consumer,
 	)
@@ -349,6 +340,7 @@ func main() {
 	wsHandler.SetLimiter(limiter)
 
 	// 注册路由
+
 	apiGroup := r.Group("/api/v1")
 	apiGroup.Use(authMiddle.CookieOriginProtectionMiddleware())
 	httpapi.RegisterFriendRequestRouter(apiGroup, friendRequestHandler, authMiddle)

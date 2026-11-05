@@ -3,7 +3,6 @@ package message
 import (
 	"IM_backend/internal/application/ports/messaging"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -369,7 +368,7 @@ func (ma *MessageApplication) HandleReadMessage(
 	}
 
 	uconv.UpdateReadSeq(lastReadSeq)
-	var notify *messaging.MessageReadNotice
+	var notify *messaging.MessageReadNoticeEvent
 
 	if lastReadSeq > latestSeq {
 		return ErrMessageSeq
@@ -385,7 +384,7 @@ func (ma *MessageApplication) HandleReadMessage(
 		}
 
 		if message.SenderID != "" && message.SenderID != userID {
-			notify = &messaging.MessageReadNotice{
+			notify = &messaging.MessageReadNoticeEvent{
 				UserID:         userID,
 				ConversationID: conversationID,
 				LastReadSeq:    lastReadSeq,
@@ -397,10 +396,7 @@ func (ma *MessageApplication) HandleReadMessage(
 		return err
 	}
 	if notify != nil && ma.userDelivery != nil {
-		payload, err := json.Marshal(notify)
-		if err == nil {
-			err = ma.userDelivery.DeliverToUser(messaging.TypeMessageReadNotice, message.SenderID, payload)
-		}
+		err := ma.userDelivery.DeliverMessageReadNotice(message.SenderID, *notify)
 		if err != nil {
 			log.Printf("已读通知推送失败：recipient=%s conversation=%s seq=%d error=%v", message.SenderID, conversationID, lastReadSeq, err)
 		}

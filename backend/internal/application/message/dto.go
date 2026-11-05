@@ -4,17 +4,6 @@ import (
 	domainmessage "IM_backend/internal/domain/message"
 )
 
-type MessageAckDTO struct {
-	ClientMessageID string
-	ConversationID  string
-	MessageID       string
-	Seq             int64
-	AttachmentID    string
-	SendTime        int64
-	Status          string
-	Error           string
-}
-
 type MessageDTO struct {
 	MessageID       string
 	ConversationID  string

@@ -2,47 +2,11 @@ package ws
 
 import (
 	"IM_backend/internal/application/ports/messaging"
-	"encoding/json"
-
-	"google.golang.org/protobuf/proto"
 
 	wspb "IM_backend/internal/interfaces/ws/pb"
 )
 
-// EncodePayload 按事件类型将后端 JSON 事件编码为对应的 WebSocket protobuf payload。
-// 未配置 protobuf 映射的事件保持原始 payload，保证非消息事件可以继续透传。
-func EncodePayload(eventType string, payload []byte) ([]byte, error) {
-	switch eventType {
-	case string(messaging.TypeMessagePush):
-		var event messaging.MessagePushEvent
-		if err := json.Unmarshal(payload, &event); err != nil {
-			return nil, err
-		}
-		return proto.Marshal(messagePushToPB(event))
-	case string(messaging.TypeMessageSendResult):
-		var event messaging.MessageSendResultEvent
-		if err := json.Unmarshal(payload, &event); err != nil {
-			return nil, err
-		}
-		return proto.Marshal(messageSendResultToPB(event))
-	case string(messaging.TypeMessageRead), string(messaging.TypeMessageReadNotice):
-		var event messaging.MessageReadNotice
-		if err := json.Unmarshal(payload, &event); err != nil {
-			return nil, err
-		}
-		return proto.Marshal(messageReadNoticeToPB(event))
-	case string(messaging.TypeRoomMessageNotice):
-		var event messaging.RoomMessageNoticeEvent
-		if err := json.Unmarshal(payload, &event); err != nil {
-			return nil, err
-		}
-		return proto.Marshal(roomMessageNoticeToPB(event))
-	default:
-		return payload, nil
-	}
-}
-
-// messageSendResultToPB 将内部 ACK 事件编码为前端使用的 protobuf 消息。
+// messageSendResultToPB 将消息发送结果编码为前端使用的 protobuf 消息。
 func messageSendResultToPB(event messaging.MessageSendResultEvent) *wspb.MessageSendResult {
 	return &wspb.MessageSendResult{
 		ClientMsgId:    event.ClientMsgID,
@@ -57,7 +21,7 @@ func messageSendResultToPB(event messaging.MessageSendResultEvent) *wspb.Message
 }
 
 // messageReadNoticeToPB 将内部已读事件编码为前端使用的 protobuf 消息。
-func messageReadNoticeToPB(event messaging.MessageReadNotice) *wspb.MessageReadNotice {
+func messageReadNoticeToPB(event messaging.MessageReadNoticeEvent) *wspb.MessageReadNotice {
 	return &wspb.MessageReadNotice{UserId: event.UserID, ConversationId: event.ConversationID, LastReadSeq: event.LastReadSeq, ConvType: int32(event.ConvType), Avatar: event.Avatar}
 }
 
@@ -68,6 +32,24 @@ func roomMessageNoticeToPB(event messaging.RoomMessageNoticeEvent) *wspb.RoomMes
 		ConversationId: event.ConversationID,
 		MessageId:      event.MessageID,
 		Seq:            event.Seq,
+	}
+}
+
+func friendRequestNoticeToPB(event messaging.FriendRequestNoticeEvent) *wspb.FriendRequestNotice {
+	return &wspb.FriendRequestNotice{
+		RequestId:       event.RequestID,
+		ApplicantUserId: event.ApplicantUserID,
+		PeerUserId:      event.PeerUserID,
+		Message:         event.Message,
+		ApplyTime:       event.ApplyTime,
+	}
+}
+
+func errorNoticeToPB(event messaging.ErrorNoticeEvent) *wspb.ErrorNotice {
+	return &wspb.ErrorNotice{
+		RequestOp: event.RequestOp,
+		Code:      event.Code,
+		Message:   event.Message,
 	}
 }
 

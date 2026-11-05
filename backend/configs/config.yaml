@@ -86,20 +86,20 @@ kafka:
   brokers:
     - "kafka:9092"
   topics:
-    message: "im.message"
+    message: "im.messages"
 
   consumer:
     group_id: "im-chat-consumer-group"
     version: "2.6.0"
     assignor: "range"   # range / roundrobin / sticky
-    batch_size: 500
+    batch_size: 100
+    flush_interval_milliseconds: 50
     input_queue_size: 500
     worker_count: 16
     worker_queue_size: 50
     max_attempts: 3 # 首次处理一次，最多再重试两次。
     lease_stale_after_seconds: 10
     consume_retry_interval_seconds: 1
-    dead_letter_suffix: ".dlq"
     retry_initial_delay_milliseconds: 200
     retry_max_delay_milliseconds: 800
 
@@ -154,7 +154,8 @@ file_cleanup:
 
 cache:
   message_dedup:
-    ttl_seconds: 300
+    ttl_seconds: 120
+    processing_ttl_seconds: 86400
   room_messages:
     ttl_seconds: 600
     max_entries: 5000

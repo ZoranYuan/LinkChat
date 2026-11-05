@@ -5,26 +5,8 @@ import (
 	"errors"
 )
 
-type IntegrationEvent struct {
-	EventID      string
-	Name         string
-	PartitionKey string
-	Payload      []byte
-}
-
 type Publisher interface {
-	Publish(ctx context.Context, event IntegrationEvent) error
-}
-
-type IncomingEvent struct {
-	EventID string
-	Name    string
-	Key     []byte
-	Payload []byte
-}
-
-type Handler interface {
-	Handle(ctx context.Context, event IncomingEvent) error
+	Publish(ctx context.Context, eventID, eventType, partitionKey string, payload []byte) error
 }
 
 type NonRetryableError struct {
@@ -46,11 +28,12 @@ func IsNonRetryable(err error) bool {
 	return errors.As(err, &target)
 }
 
-type AckStatus string
+type SendStatus string
 
 const (
-	AckStatusSent   AckStatus = "sent"   // 消息已成功投递到 Kafka
-	AckStatusFailed AckStatus = "failed" // 消息未成功投递到 Kafka
+	SendStatusProcessing SendStatus = "processing"
+	SendStatusCompleted  SendStatus = "completed"
+	SendStatusFailed     SendStatus = "failed"
 )
 
 type EventType string
@@ -68,16 +51,16 @@ const (
 	TypeRoomEnter            = "room_enter"            // 前端进入房间时请求固定个人未读快照
 	TypeConnectionVisibility = "connection_visibility" // 前端上报当前页面可见状态
 	TypeMessageReadNotice    = "message_read_notice"   // 发送给前端，表示已经有用户读取消息
-	TypeMessageSendResult    = "message_send_result"   // 发送给前端，表示已经接收到消息
-	TypeMessageSend          = "message_send"
-	TypeEventBatchAck        = "event_batch_ack"
-	TypeMessagePush          = "message_push"        // 后端发送给前端，表示新的消息
-	TypeRoomMessageNotice    = "room_message_notice" // 大型房间轻量新消息提醒，客户端按 seq 拉取详情
-	TypeEventBatch           = "event_batch"         // 服务端一次性发送多个数据
+	TypeMessageSendResult    = "message_send_result"   // 消息发送请求的处理结果
+	TypeMessageSend          = "message_send"          // 客户端请求发送消息
+	TypeMessagePush          = "message_push"          // 向客户端推送已持久化消息
+	TypeEventBatchAck        = "event_batch_ack"       // 客户端确认整个事件批次
+	TypeRoomMessageNotice    = "room_message_notice"   // 大型房间轻量新消息提醒，客户端按 seq 拉取详情
+	TypeEventBatch           = "event_batch"           // 服务端一次性发送多个数据
 	TypeErrorNotice          = "error_notice"
 )
 
-type MessageReadNotice struct {
+type MessageReadNoticeEvent struct {
 	UserID         string   `json:"userId"`
 	ConversationID string   `json:"conversationId"`
 	LastReadSeq    int64    `json:"lastReadSeq"`
@@ -94,14 +77,14 @@ type FriendRequestNoticeEvent struct {
 }
 
 type MessageSendResultEvent struct {
-	ClientMsgID    string    `json:"clientMsgId"`
-	MessageID      string    `json:"messageId"`
-	ConversationID string    `json:"conversationId,omitempty"`
-	Seq            int64     `json:"seq,omitempty"`
-	AttachmentID   string    `json:"attachmentId,omitempty"`
-	Status         AckStatus `json:"status"`
-	Extra          string    `json:"extra"`
-	SendTime       int64     `json:"sendTime"`
+	ClientMsgID    string     `json:"clientMsgId"`
+	MessageID      string     `json:"messageId"`
+	ConversationID string     `json:"conversationId,omitempty"`
+	Seq            int64      `json:"seq,omitempty"`
+	AttachmentID   string     `json:"attachmentId,omitempty"`
+	Status         SendStatus `json:"status"`
+	Extra          string     `json:"extra"`
+	SendTime       int64      `json:"sendTime"`
 }
 
 type RoomMessageNoticeEvent struct {

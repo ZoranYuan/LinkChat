@@ -2,81 +2,105 @@ package message
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
-	messagecache "IM_backend/internal/application/ports/cache/message"
-	sharedcache "IM_backend/internal/infra/cache/shared"
+	domainmessage "IM_backend/internal/domain/message"
 )
 
-var _ messagecache.MessageCache = (*MessageCache)(nil)
+const (
+	StatusProcessing = "processing"
+	StatusCompleted  = "completed"
+	StatusFailed     = "failed"
+)
 
-type MessageCache struct {
-	store *sharedcache.Store
+type DedupEntry struct {
+	SenderID     string
+	MessageID    string
+	RequestHash  string
+	Status       string
+	UpdatedAt    int64
+	Seq          int64
+	AttachmentID string
+	Error        string
 }
+
+type MessageCache struct{ client *redis.Client }
 
 func NewMessageCache(client *redis.Client) *MessageCache {
-	return &MessageCache{store: sharedcache.NewStore(client)}
+	return &MessageCache{client: client}
 }
 
-// SetDedupEntries 使用一次 Pipeline 写入幂等结果，SET NX 避免覆盖已保存的结果。
-func (c *MessageCache) SetDedupEntries(ctx context.Context, entries []messagecache.DedupEntryWrite, ttl time.Duration) error {
+var getOrCreateDedupScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+    redis.call('HSET', KEYS[1],
+        'messageId', ARGV[1], 'requestHash', ARGV[2], 'status', ARGV[3],
+        'updatedAt', ARGV[4], 'seq', '0', 'attachmentId', '', 'error', '')
+    redis.call('PEXPIRE', KEYS[1], ARGV[5])
+elseif redis.call('HGET', KEYS[1], 'requestHash') ~= ARGV[2] then
+    return {}
+end
+return {
+    redis.call('HGET', KEYS[1], 'messageId'),
+    redis.call('HGET', KEYS[1], 'status'),
+    redis.call('HGET', KEYS[1], 'updatedAt'),
+    redis.call('HGET', KEYS[1], 'seq'),
+    redis.call('HGET', KEYS[1], 'attachmentId'),
+    redis.call('HGET', KEYS[1], 'error')
+}
+`)
+
+// GetOrCreateDedupEntry 原子登记请求，重复请求复用原消息 ID 和状态。
+func (c *MessageCache) GetOrCreateDedupEntry(ctx context.Context, clientMsgID string, entry DedupEntry, ttl time.Duration) (DedupEntry, error) {
+	values, err := getOrCreateDedupScript.Run(ctx, c.client, []string{MessageDedupKey(entry.SenderID, clientMsgID)}, entry.MessageID, entry.RequestHash, StatusProcessing, time.Now().UnixMilli(), ttl.Milliseconds()).StringSlice()
+	if err != nil {
+		return DedupEntry{}, err
+	}
+	if len(values) == 0 {
+		return DedupEntry{}, domainmessage.ErrClientMessageConflict
+	}
+	updatedAt, err := strconv.ParseInt(values[2], 10, 64)
+	if err != nil {
+		return DedupEntry{}, err
+	}
+	seq, err := strconv.ParseInt(values[3], 10, 64)
+	if err != nil {
+		return DedupEntry{}, err
+	}
+	entry.MessageID = values[0]
+	entry.Status = values[1]
+	entry.UpdatedAt = updatedAt
+	entry.Seq = seq
+	entry.AttachmentID = values[4]
+	entry.Error = values[5]
+	return entry, nil
+}
+
+const updateDedupScript = `
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    if redis.call('HGET', KEYS[1], 'requestHash') ~= ARGV[2] then return 0 end
+    if redis.call('HGET', KEYS[1], 'status') ~= 'processing' then return 0 end
+    if redis.call('HGET', KEYS[1], 'messageId') ~= ARGV[1] and ARGV[3] ~= 'completed' then return 0 end
+end
+redis.call('HSET', KEYS[1],
+    'messageId', ARGV[1], 'requestHash', ARGV[2], 'status', ARGV[3],
+    'updatedAt', ARGV[4], 'seq', ARGV[5], 'attachmentId', ARGV[6], 'error', ARGV[7])
+redis.call('PEXPIRE', KEYS[1], ARGV[8])
+return 1
+`
+
+// UpdateDedupEntries 批量回写终态；数据库已有消息可修正缓存失效后重新生成的候选 ID。
+func (c *MessageCache) UpdateDedupEntries(ctx context.Context, entries map[string]DedupEntry, ttl time.Duration) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	pipe := c.store.Client().Pipeline()
-	for _, item := range entries {
-		if item.Key.SenderID == "" || item.Key.ClientMsgID == "" {
-			continue
-		}
-		value, err := json.Marshal(item.Entry)
-		if err != nil {
-			return err
-		}
-		pipe.SetNX(ctx, MessageDedupKey(item.Key.SenderID, item.Key.ClientMsgID), value, ttl)
+	pipe := c.client.Pipeline()
+	now := time.Now().UnixMilli()
+	for key, entry := range entries {
+		pipe.Eval(ctx, updateDedupScript, []string{key}, entry.MessageID, entry.RequestHash, entry.Status, now, entry.Seq, entry.AttachmentID, entry.Error, ttl.Milliseconds())
 	}
 	_, err := pipe.Exec(ctx)
 	return err
-}
-
-// GetDedupEntries 合并独立 GET 的网络往返，同一发送标识只查询一次；未命中或无法解析的记录按缓存未命中处理。
-func (c *MessageCache) GetDedupEntries(ctx context.Context, keys []messagecache.DedupKey) (map[messagecache.DedupKey]messagecache.DedupEntry, error) {
-	entries := make(map[messagecache.DedupKey]messagecache.DedupEntry, len(keys))
-	if len(keys) == 0 {
-		return entries, nil
-	}
-
-	pipe := c.store.Client().Pipeline()
-	commands := make(map[messagecache.DedupKey]*redis.StringCmd, len(keys))
-	for _, key := range keys {
-		if key.SenderID == "" || key.ClientMsgID == "" {
-			continue
-		}
-		if _, exists := commands[key]; exists {
-			continue
-		}
-		commands[key] = pipe.Get(ctx, MessageDedupKey(key.SenderID, key.ClientMsgID))
-	}
-	if len(commands) == 0 {
-		return entries, nil
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
-	}
-
-	for key, command := range commands {
-		value, err := command.Bytes()
-		if err != nil || len(value) == 0 {
-			continue
-		}
-		var entry messagecache.DedupEntry
-		if err := json.Unmarshal(value, &entry); err != nil {
-			continue
-		}
-		entries[key] = entry
-	}
-	return entries, nil
 }
