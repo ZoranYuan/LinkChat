@@ -1,2 +1,12 @@
 /images
 docs/
+
+benchmarks/*
+!benchmarks/ws-outbound/
+benchmarks/ws-outbound/*
+!benchmarks/ws-outbound/k6-frame-aggregation.js
+!benchmarks/room-load/
+benchmarks/room-load/*
+!benchmarks/room-load/*.js
+!benchmarks/room-load/*.mjs
+!benchmarks/room-load/*.sh

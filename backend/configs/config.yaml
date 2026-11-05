@@ -58,7 +58,7 @@ ws:
   batch_retry_interval_seconds: 1
   batch_max_retries: 3
 room:
-  max_members: 1000
+  max_members: 1000000
   invite_code_ttl_seconds: 300
   invite_code_length: 9
   invite_code_attempts: 9
