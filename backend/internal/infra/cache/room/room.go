@@ -190,77 +190,35 @@ func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, roomID string,
 	return nil
 }
 
-func (rc *RoomCache) ListMessageAfterSeq(ctx context.Context, roomID string, afterSeq, latestSeq int64) (roomcache.RecentMessageRange, error) {
+func (rc *RoomCache) ListMessageAfterSeq(ctx context.Context, roomID string, afterSeq int64) (roomcache.RecentMessageRange, error) {
 	page := roomcache.RecentMessageRange{}
 
-	if roomID == "" {
-		return page, errors.New("roomID 不能为空")
-	}
-	if latestSeq <= 0 {
-		return page, errors.New("latestSeq 必须大于 0")
-	}
-	if latestSeq <= afterSeq {
-		page.Covered = true
-		return page, nil
-	}
-
-	key := RecentMessageSeqKey(roomID)
-	oldest, err := rc.store.Client().ZRangeWithScores(ctx, key, 0, 0).Result()
-	if err != nil {
-		return page, err
-	}
-
-	// 缓存不存在
-	if len(oldest) == 0 {
-		return page, nil
-	}
-
-	oldestSeq := int64(oldest[0].Score)
-	if afterSeq < oldestSeq-1 {
-		return page, nil
-	}
-
-	members, err := rc.store.Client().ZRangeArgs(
+	values, err := rc.store.Client().ZRangeByScore(
 		ctx,
-		redis.ZRangeArgs{
-			Key:     key,
-			Start:   fmt.Sprintf("(%d", afterSeq),
-			Stop:    strconv.FormatInt(latestSeq, 10),
-			ByScore: true,
-			Offset:  0,
+		RecentMessageSeqKey(roomID),
+		&redis.ZRangeBy{
+			Min: "(" + strconv.FormatInt(afterSeq, 10),
+			Max: "+inf",
 		},
 	).Result()
-
 	if err != nil {
 		return page, err
 	}
 
-	events := make([]messaging.MessagePushEvent, 0, len(members))
-	for _, member := range members {
+	events := make([]messaging.MessagePushEvent, 0, len(values))
+	for i, data := range values {
 		var event messaging.MessagePushEvent
-		if err := json.Unmarshal([]byte(member), &event); err != nil {
-			return page, fmt.Errorf("解析缓存消息失败: %w", err)
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return page, err
+		}
+		if event.Seq != afterSeq+int64(i)+1 {
+			return page, nil
 		}
 		events = append(events, event)
 	}
 
-	// 正常消息 seq 应该连续。发现中间缺口时，交给上层回源数据库。
-	expectedSeq := afterSeq + 1
-	for _, event := range events {
-		if event.Seq != expectedSeq {
-			return page, nil
-		}
-		expectedSeq++
-	}
-
-	if len(events) == 0 || events[len(events)-1].Seq != latestSeq {
-		// ZSET 没有覆盖到最新 seq，不能把当前结果当成完整结果。
-		return page, nil
-	}
-
 	page.Events = events
-	page.Covered = true
-
+	page.Covered = len(events) > 0
 	return page, nil
 }
 

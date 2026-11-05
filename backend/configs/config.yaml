@@ -158,7 +158,7 @@ cache:
     processing_ttl_seconds: 86400
   room_messages:
     ttl_seconds: 600
-    max_entries: 5000
+    max_entries: 500
   conversation_info:
     ttl_seconds: 600
     negative_ttl_seconds: 120

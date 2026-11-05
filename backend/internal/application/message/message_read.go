@@ -3,8 +3,6 @@ package message
 import (
 	"IM_backend/internal/application/ports/messaging"
 	"context"
-	"errors"
-	"fmt"
 	"log"
 	"math"
 	"sort"
@@ -13,7 +11,6 @@ import (
 	roomunreadcache "IM_backend/internal/application/ports/cache/agent"
 	conversationcache "IM_backend/internal/application/ports/cache/conversation"
 	domainconversation "IM_backend/internal/domain/conversation"
-	domainmessage "IM_backend/internal/domain/message"
 )
 
 // 通过游标的方式来获取历史记录
@@ -73,8 +70,6 @@ func (ma *MessageApplication) GetHistoryMessages(
 	return msgsApp, nextCursor, hasMore, nil
 }
 
-// GetMessagesBySeqs 按指定 seq 批量读取消息，用于修复客户端本地消息索引中的缺口。
-// 它不是增量同步：seq 可能是离散的，查询结果只返回数据库中实际存在的消息。
 func (ma *MessageApplication) GetMessagesBySeqs(
 	ctx context.Context,
 	conversationID string,
@@ -201,100 +196,68 @@ func (ma *MessageApplication) SyncMessages(
 	afterSeq int64,
 ) ([]MessageDTO, error) {
 	if afterSeq < 0 {
-		afterSeq = 0
+		return nil, ErrMessageSeq
 	}
 
-	conversation, err := ma.findAuthorizedConversation(ctx, conversationID, userID)
+	info, err := ma.conversationApplication.GetConversationInfo(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
-	latestSeq, err := ma.conversationRepository.GetConversationSeq(ctx, conversationID)
-	if err != nil {
+	if domainconversation.ConvType(info.ConversationType) != domainconversation.RoomChat {
+		return nil, ErrInvalidSyncConversation
+	}
+
+	if err := ma.checkConversationAccess(ctx, info, userID); err != nil {
 		return nil, err
 	}
-	if latestSeq <= afterSeq {
-		return []MessageDTO{}, nil
+
+	cached, err := ma.roomCache.ListMessageAfterSeq(ctx, info.RoomID, afterSeq)
+	if err == nil && cached.Covered {
+		return messageEventsToAppDTO(cached.Events, conversationID), nil
 	}
 
-	// 房间新消息提交后按策略写入 Redis 的 seq ZSET，优先从缓存同步。缓存未覆盖完整区间或读取失败时回源 MySQL。
-	if domainconversation.ConvType(conversation.ConversationType) == domainconversation.RoomChat && ma.roomCache != nil {
-		page, cacheErr := ma.roomCache.ListMessageAfterSeq(
-			ctx,
-			conversation.RoomID,
-			afterSeq,
-			latestSeq,
-		)
-		if cacheErr != nil {
-			log.Printf(
-				"读取房间近期消息缓存失败: conversation=%s afterSeq=%d err=%v",
-				conversationID,
-				afterSeq,
-				cacheErr,
-			)
-		} else if page.Covered {
-			return messageEventsToAppDTO(page.Events, conversationID), nil
-		}
-	}
-
-	syncKey := fmt.Sprintf(
-		"message-sync-all:%s:%d:%d",
-		conversationID,
-		afterSeq,
-		latestSeq,
-	)
-
-	result, err, _ := ma.sf.Do(syncKey, func() (any, error) {
-		msgs, err := ma.messageRepository.ListAfterSeq(
+	resultCh := ma.sf.DoChan("message_sync:"+conversationID, func() (any, error) {
+		messages, err := ma.messageRepository.GetHistoryMessage(
 			ctx,
 			conversationID,
-			afterSeq,
+			math.MaxInt64,
+			ma.config.Cache.RoomMessages.MaxEntries,
 		)
 		if err != nil {
 			return nil, err
 		}
 
-		filtered := make([]*domainmessage.Message, 0, len(msgs))
-		for _, msg := range msgs {
-			if msg == nil || msg.Seq > latestSeq {
-				continue
-			}
-			filtered = append(filtered, msg)
-		}
-		msgs = filtered
-
-		msgsApp := toMessageDTOs(msgs)
-		if err := ma.fillAttachmentIDs(ctx, msgsApp); err != nil {
+		items := toMessageDTOs(messages)
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Seq < items[j].Seq
+		})
+		if err := ma.fillAttachmentIDs(ctx, items); err != nil {
 			return nil, err
 		}
-		sort.SliceStable(msgsApp, func(i, j int) bool {
-			return msgsApp[i].Seq < msgsApp[j].Seq
-		})
 
-		if domainconversation.ConvType(conversation.ConversationType) == domainconversation.RoomChat && ma.roomCache != nil {
-			events := messageAppDTOsToEvents(msgsApp, conversationID, conversation.RoomID)
-			if err := ma.roomCache.WarmRecentMessageEvents(ctx, conversation.RoomID, events); err != nil {
-				log.Printf(
-					"回填房间近期消息缓存失败: conversation=%s afterSeq=%d latestSeq=%d err=%v",
-					conversationID,
-					afterSeq,
-					latestSeq,
-					err,
-				)
+		events := messageAppDTOsToEvents(items, conversationID, info.RoomID)
+		if err := ma.roomCache.WarmRecentMessageEvents(ctx, info.RoomID, events); err != nil {
+			log.Printf("回填消息缓存失败：conversation=%s error=%v", conversationID, err)
+		}
+		return items, nil
+	})
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		items := result.Val.([]MessageDTO)
+		messages := make([]MessageDTO, 0, len(items))
+		for _, item := range items {
+			if item.Seq > afterSeq {
+				messages = append(messages, item)
 			}
 		}
-
-		return msgsApp, nil
-	})
-	if err != nil {
-		return nil, err
+		return messages, nil
 	}
-
-	syncResult, ok := result.([]MessageDTO)
-	if !ok {
-		return nil, errors.New("同步消息结果类型错误")
-	}
-
-	return syncResult, nil
 }
 
 func (ma *MessageApplication) normalizeHistoryLimit(limit int) int {

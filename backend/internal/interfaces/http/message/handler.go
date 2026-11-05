@@ -118,6 +118,8 @@ func (mh *Handler) SyncMessages(c *gin.Context) {
 	)
 	if err != nil {
 		switch {
+		case errors.Is(err, messageapp.ErrInvalidSyncConversation), errors.Is(err, messageapp.ErrMessageSeq):
+			c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, err.Error()))
 		case errors.Is(err, messageapp.ErrConversationNotFound):
 			c.JSON(http.StatusNotFound, response.Error(http.StatusNotFound, "会话不存在"))
 		case errors.Is(err, messageapp.ErrForbidden):

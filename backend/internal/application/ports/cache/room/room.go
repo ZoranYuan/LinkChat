@@ -17,7 +17,7 @@ type MemberState struct {
 
 type RecentMessageRange struct {
 	Events  []messaging.MessagePushEvent
-	Covered bool // 缓存是否完整覆盖 afterSeq 到 latestSeq 的同步区间
+	Covered bool // 是否连续覆盖 afterSeq 到本次缓存末尾。
 }
 
 const (
@@ -28,7 +28,7 @@ const (
 
 type RoomCache interface {
 	UpdateRoomActivity(ctx context.Context, roomID string, messageCount, onlineSessions int, at time.Time) (int, error)
-	ListMessageAfterSeq(ctx context.Context, roomID string, afterSeq, latestSeq int64) (RecentMessageRange, error)
+	ListMessageAfterSeq(ctx context.Context, roomID string, afterSeq int64) (RecentMessageRange, error)
 	WarmRecentMessageEvents(ctx context.Context, roomID string, events []messaging.MessagePushEvent) error
 	GetRoomIDByCode(ctx context.Context, code string) (string, error)
 	UpdateInviteCode(ctx context.Context, roomID string, ttl time.Duration) (string, error)
