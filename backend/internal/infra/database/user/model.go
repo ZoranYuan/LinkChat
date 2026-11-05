@@ -5,7 +5,7 @@ import (
 )
 
 type UserModel struct {
-	UserID      string     `json:"userId" gorm:"size:32;primaryKey;not null;comment:用户ID"`
+	UserID      string     `json:"userId" gorm:"type:bigint;primaryKey;not null;comment:用户ID"`
 	Username    string     `json:"username" gorm:"column:user_name;size:16;uniqueIndex;not null"`
 	Nickname    string     `json:"nickName" gorm:"column:nick_name;size:64"`
 	Password    string     `json:"password" gorm:"size:255"`
@@ -17,8 +17,8 @@ type UserModel struct {
 
 	// 用于可以利用微信、手机号、QQ 登录
 	LoginType int     `json:"loginType"`
-	WxOpenID  *string `json:"-" gorm:"type:varchar(64);uniqueIndex;comment:微信OpenID(预留)"`
-	WxUnionID *string `json:"-" gorm:"type:varchar(64);uniqueIndex;comment:微信UnionID(预留)"`
+	WxOpenID  *string `json:"-" gorm:"type:varchar(64);comment:微信OpenID(预留)"`
+	WxUnionID *string `json:"-" gorm:"type:varchar(64);comment:微信UnionID(预留)"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

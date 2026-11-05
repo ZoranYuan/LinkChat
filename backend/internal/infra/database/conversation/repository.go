@@ -52,7 +52,7 @@ func (r *ConversationRepository) FindConversationByID(ctx context.Context, id st
 
 func (r *ConversationRepository) FindConversationByUserIDs(ctx context.Context, userID1, userID2 string) (*domainconversation.Conversation, error) {
 	var row ConversationModel
-	err := r.db.WithContext(ctx).Where("convtype = ? AND ((user_id1 = ? AND user_id2 = ?) OR (user_id1 = ? AND user_id2 = ?))", domainconversation.PrivateChat, userID1, userID2, userID2, userID1).Take(&row).Error
+	err := r.db.WithContext(ctx).Where("user_id1 = ? AND user_id2 = ?", min(userID1, userID2), max(userID1, userID2)).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

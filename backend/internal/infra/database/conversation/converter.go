@@ -39,15 +39,24 @@ func toConversationDomain(model *ConversationModel) *domainconversation.Conversa
 		return nil
 	}
 
-	return &domainconversation.Conversation{
-		ConversationID:  model.ConversationID,
-		ConvType:        domainconversation.ConvType(model.ConvType),
-		UserID1:         model.UserID1,
-		UserID2:         model.UserID2,
-		RoomID:          model.RoomID,
-		LatestSeq:       model.LatestSeq,
-		LatestMessageID: model.LatestMessageID,
+	conversation := &domainconversation.Conversation{
+		ConversationID: model.ConversationID,
+		ConvType:       domainconversation.ConvType(model.ConvType),
+		LatestSeq:      model.LatestSeq,
 	}
+	if model.UserID1 != nil {
+		conversation.UserID1 = *model.UserID1
+	}
+	if model.UserID2 != nil {
+		conversation.UserID2 = *model.UserID2
+	}
+	if model.RoomID != nil {
+		conversation.RoomID = *model.RoomID
+	}
+	if model.LatestMessageID != nil {
+		conversation.LatestMessageID = *model.LatestMessageID
+	}
+	return conversation
 }
 
 func toConversationModel(entity *domainconversation.Conversation) *ConversationModel {
@@ -55,13 +64,19 @@ func toConversationModel(entity *domainconversation.Conversation) *ConversationM
 		return nil
 	}
 
-	return &ConversationModel{
-		ConversationID:  entity.ConversationID,
-		ConvType:        int8(entity.ConvType),
-		UserID1:         entity.UserID1,
-		UserID2:         entity.UserID2,
-		RoomID:          entity.RoomID,
-		LatestSeq:       entity.LatestSeq,
-		LatestMessageID: entity.LatestMessageID,
+	model := &ConversationModel{
+		ConversationID: entity.ConversationID,
+		ConvType:       int8(entity.ConvType),
+		LatestSeq:      entity.LatestSeq,
 	}
+	if entity.ConvType == domainconversation.RoomChat {
+		model.RoomID = &entity.RoomID
+	} else {
+		model.UserID1 = &entity.UserID1
+		model.UserID2 = &entity.UserID2
+	}
+	if entity.LatestMessageID != "" {
+		model.LatestMessageID = &entity.LatestMessageID
+	}
+	return model
 }
