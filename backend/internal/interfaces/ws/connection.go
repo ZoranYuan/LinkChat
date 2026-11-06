@@ -456,8 +456,19 @@ func (s *Connection) sendLoop(
 }
 
 func (s *Connection) write(messageType int, data []byte) error {
+	startedAt := time.Now()
 	_ = s.conn.SetWriteDeadline(time.Now().Add(time.Duration(s.config.WriteWaitSeconds) * time.Second))
-	return s.conn.WriteMessage(messageType, data)
+	err := s.conn.WriteMessage(messageType, data)
+	if messageType == gorilla.BinaryMessage {
+		metrics.WSBinaryWriteDuration.Observe(time.Since(startedAt).Seconds())
+		if err != nil {
+			metrics.WSBinaryWriteErrors.Inc()
+		} else {
+			metrics.WSBinaryWrites.Inc()
+			metrics.WSBinaryWritePayloadBytes.Add(float64(len(data)))
+		}
+	}
+	return err
 }
 
 func (s *Connection) retryTimeoutBatches(now time.Time) error {
