@@ -66,7 +66,7 @@ friend:
   request_timeout_seconds: 5
   request_cooldown_seconds: 600
 message:
-  room_realtime_fanout_limit: 500
+  room_realtime_fanout_limit: 20000
   large_room_notice_linger_milliseconds: 50
   large_room_notice_shard_count: 16
   max_text_runes: 4096
@@ -75,9 +75,9 @@ message:
   room_activity_window_seconds: 30
   room_activity_bucket_seconds: 5
   room_activity_key_ttl_seconds: 60
-  # 阈值单位为统计窗口内的消息数 × 在线 WebSocket 会话数；6000/18000 保持约 200 个在线会话时原有 30/90 条消息的切换点。
-  room_activity_warn_fanout_work: 6000
-  room_activity_active_fanout_work: 18000
+  # 阈值为约 30 秒窗口内消息数 × 在线连接数；1 万连接在线时，超过 100/300 条消息分别预热缓存和切换拉模式。
+  room_activity_warn_fanout_work: 1000000
+  room_activity_active_fanout_work: 3000000
   room_member_state_ttl_seconds: 3600
   room_member_negative_ttl_seconds: 120
   history_default_limit: 20
