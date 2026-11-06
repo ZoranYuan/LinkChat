@@ -315,7 +315,7 @@ Prometheus 访问 `http://localhost:9090`，Grafana 访问 `http://localhost:300
 
 [Prometheus 配置](monitoring/prometheus.yml) 默认抓取开发容器的 `linux:8081/metrics`；使用 Compose 后端时改为 `backend:8081`。k6 通过 Remote Write 将客户端 ACK、消息获取和补拉延迟写入 Prometheus，后端 `/metrics` 提供服务端指标，Kafka Exporter 提供消费组积压。
 
-[房间负载脚本](benchmarks/room-load/k6-room-load.js) 使用独立账号定时发送，收到房间通知后异步补拉，覆盖通知目标后确认批次；[运行入口](benchmarks/room-load/run-k6.sh) 默认 300 人、每人每秒 1 条、持续 5 分钟。先使用 [账号准备脚本](benchmarks/room-load/prepare-fixture.mjs) 生成账号和房间数据，再运行入口脚本。账号令牌、fixture 和压测结果不提交到仓库。[帧聚合脚本](benchmarks/ws-outbound/k6-frame-aggregation.js) 用于比较不同聚合配置下的完整消息推送帧数与批量大小。
+[房间负载脚本](benchmarks/room-load/k6-room-load.js) 将接收连接数与发送速率分开：接收端 VU 只监听、确认批次并按通知补拉，固定发送端 VU 合计发送 200 条/秒；全部接收端都记录探针消息的端到端延迟。[运行入口](benchmarks/room-load/run-k6.sh) 通过 `--receivers 数量` 设置接收端规模，持续时间默认 5 分钟。运行前用 [账号准备脚本](benchmarks/room-load/prepare-fixture.mjs) 创建至少“接收端数量 + 发送端数量”个独立账号。账号令牌、fixture 和压测结果不提交到仓库。[帧聚合脚本](benchmarks/ws-outbound/k6-frame-aggregation.js) 用于比较不同聚合配置下的完整消息推送帧数与批量大小。
 
 ### 日志与停止
 

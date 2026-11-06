@@ -11,8 +11,8 @@ const concurrency = Number(process.env.SETUP_CONCURRENCY || 6);
 const origin = process.env.WEB_ORIGIN || 'http://127.0.0.1:5173';
 
 if (!password) throw new Error('请通过 TEST_PASSWORD 设置压测账号密码');
-if (!Number.isInteger(userCount) || userCount < 1 || userCount > 1000) {
-  throw new Error('USER_COUNT 必须在 1 到 1000 之间');
+if (!Number.isInteger(userCount) || userCount < 1) {
+  throw new Error('USER_COUNT 必须是正整数');
 }
 if (fs.existsSync(fixturePath) && !refreshTokens && process.env.OVERWRITE_FIXTURE !== '1') {
   throw new Error(`压测凭据文件已存在：${fixturePath}；设置 OVERWRITE_FIXTURE=1 才会覆盖`);
