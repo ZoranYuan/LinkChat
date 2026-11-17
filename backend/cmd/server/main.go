@@ -279,11 +279,11 @@ func main() {
 		messageRepository,
 		roomMemberRepository,
 		roomApp,
-		idGenerator,
 		cfg,
 		roomUnreadSnapshotCache,
 		messageAttachmentsRepository,
 		messageProducer,
+		inboxRepository,
 	)
 	messageApplication.SetConversationApplication(conversationApplication)
 	messageApplication.SetUserDelivery(realtimeGateway)

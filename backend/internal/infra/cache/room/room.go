@@ -127,9 +127,9 @@ func (rc *RoomCache) UpdateRoomActivity(ctx context.Context, roomID string, mess
 }
 
 // WarmRecentMessageEvents 批量回填近期消息缓存。
-func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, roomID string, events []messaging.MessagePushEvent) error {
-	if roomID == "" {
-		return errors.New("roomID 不能为空")
+func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, conversationID string, events []messaging.MessagePushEvent) error {
+	if conversationID == "" {
+		return errors.New("conversationID 不能为空")
 	}
 	if rc == nil || rc.store == nil || rc.store.Client() == nil {
 		return errors.New("近期消息缓存未配置")
@@ -180,7 +180,7 @@ func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, roomID string,
 	_, err := rc.store.Eval(
 		ctx,
 		script,
-		[]string{RecentMessageSeqKey(roomID)},
+		[]string{RecentMessageSeqKey(conversationID)},
 		args...,
 	)
 	if err != nil {
@@ -190,12 +190,12 @@ func (rc *RoomCache) WarmRecentMessageEvents(ctx context.Context, roomID string,
 	return nil
 }
 
-func (rc *RoomCache) ListMessageAfterSeq(ctx context.Context, roomID string, afterSeq int64) (roomcache.RecentMessageRange, error) {
+func (rc *RoomCache) ListMessageAfterSeq(ctx context.Context, conversationID string, afterSeq int64) (roomcache.RecentMessageRange, error) {
 	page := roomcache.RecentMessageRange{}
 
 	values, err := rc.store.Client().ZRangeByScore(
 		ctx,
-		RecentMessageSeqKey(roomID),
+		RecentMessageSeqKey(conversationID),
 		&redis.ZRangeBy{
 			Min: "(" + strconv.FormatInt(afterSeq, 10),
 			Max: "+inf",

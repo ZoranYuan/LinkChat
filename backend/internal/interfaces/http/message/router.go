@@ -12,4 +12,5 @@ func RegisterRoutes(r *gin.RouterGroup, mh *Handler, auth *middleware.AuthMiddle
 	mr.GET("/offline", mh.GetOfflineMessages)
 	mr.GET("/sync", mh.SyncMessages)
 	mr.GET("/seqs", mh.GetMessagesBySeqs)
+	mr.GET("/send-status/:clientMsgId", mh.GetSendMessageStatus)
 }

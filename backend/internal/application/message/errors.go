@@ -25,7 +25,8 @@ var (
 	ErrConversationSequenceUpdate = errors.New("更新会话序列失败")
 	ErrTooManySeqs                = errors.New("一次查询的消息序号过多")
 
-	ErrForbidden = errors.New("无权发送消息")
+	ErrForbidden               = errors.New("无权发送消息")
+	ErrMessagePublishUncertain = errors.New("消息已登记，Kafka 投递结果待确认")
 
 	ErrUnknown = errors.New("未知错误")
 )

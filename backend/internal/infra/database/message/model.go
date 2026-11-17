@@ -17,7 +17,6 @@ type MessageModel struct {
 	ConversationID string  `gorm:"type:bigint;not null;uniqueIndex:uk_message_conv_seq,priority:1" json:"conversationId"`
 	SenderID       string  `gorm:"type:bigint;not null;uniqueIndex:uk_message_sender_client,priority:1" json:"senderId"`
 	ClientMsgID    *string `gorm:"size:64;uniqueIndex:uk_message_sender_client,priority:2" json:"clientMsgId,omitempty"`
-	RequestHash    string  `gorm:"size:64;default:''" json:"-"`
 
 	Seq      int64  `gorm:"not null;uniqueIndex:uk_message_conv_seq,priority:2" json:"seq"`
 	Type     int8   `gorm:"not null;comment:1=text 2=image 3=video 4=sticker 5=file" json:"type"`

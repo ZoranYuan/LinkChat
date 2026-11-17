@@ -168,6 +168,32 @@ func (mh *Handler) GetMessagesBySeqs(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(toMessageSeqsResponse(messagesApp)))
 }
 
+func (mh *Handler) GetSendMessageStatus(c *gin.Context) {
+	userID := c.GetString("userId")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, response.Error(http.StatusUnauthorized, "登录过期"))
+		return
+	}
+	clientMsgID := c.Param("clientMsgId")
+	if clientMsgID == "" || len(clientMsgID) > 64 {
+		c.JSON(http.StatusBadRequest, response.Error(http.StatusBadRequest, "参数错误"))
+		return
+	}
+
+	status, err := mh.app.GetSendMessageStatus(c.Request.Context(), userID, clientMsgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Error(http.StatusInternalServerError, "查询消息状态失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(SendMessageStatusResponse{
+		ClientMsgID:  status.ClientMsgID,
+		Status:       status.Status,
+		MessageID:    status.MessageID,
+		Seq:          status.Seq,
+		AttachmentID: status.AttachmentID,
+	}))
+}
+
 func parseMessageSeqs(raw string) ([]int64, error) {
 	parts := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t' || r == '\n'

@@ -100,9 +100,9 @@ func (c *Consumer) processBatch(ctx context.Context, batch *consumeBatch) {
 
 	delay := c.retryInitial
 	for ctx.Err() == nil {
-		persisted, skipped, err := c.messageHandler.HandleSendMessages(ctx, batch.conversationID, messages)
+		err := c.messageHandler.HandleSendMessages(ctx, batch.conversationID, messages)
 		if err == nil {
-			log.Printf("Kafka 消息批次处理完成：conversation=%s persisted=%d skipped=%d", batch.conversationID, persisted, skipped)
+			log.Printf("Kafka 消息批次处理完成：conversation=%s", batch.conversationID)
 			for _, item := range batch.items {
 				item.completed()
 			}

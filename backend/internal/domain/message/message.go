@@ -13,7 +13,6 @@ type Message struct {
 	ConversationID string      `json:"ConversationId"`
 	SenderID       string      `json:"SenderId"`
 	ClientMsgID    *string     `json:"ClientMsgId"`
-	RequestHash    string      `json:"RequestHash"`
 	Seq            int64       `json:"Seq"`
 	Type           MessageType `json:"Type"`
 	Content        string      `json:"Content"`

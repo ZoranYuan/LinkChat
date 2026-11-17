@@ -27,6 +27,14 @@ type MessageSeqsRequest struct {
 	Seqs           string `form:"seqs" binding:"required"`
 }
 
+type SendMessageStatusResponse struct {
+	ClientMsgID  string `json:"clientMsgId"`
+	Status       string `json:"status"`
+	MessageID    string `json:"messageId,omitempty"`
+	Seq          int64  `json:"seq,omitempty"`
+	AttachmentID string `json:"attachmentId,omitempty"`
+}
+
 type MessageResponse struct {
 	MessageID       string  `json:"messageId"`
 	ConversationID  string  `json:"conversationId"`

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 	friendcache "IM_backend/internal/application/ports/cache/friend"
 	messagecacheport "IM_backend/internal/application/ports/cache/message"
 	roomcache "IM_backend/internal/application/ports/cache/room"
-	idport "IM_backend/internal/application/ports/id"
+	inboxport "IM_backend/internal/application/ports/inbox"
 	"IM_backend/internal/application/ports/messaging"
 	realtimeport "IM_backend/internal/application/ports/realtime"
 	"IM_backend/internal/application/ports/transaction"
@@ -34,6 +35,7 @@ import (
 
 type MessageApplication struct {
 	messageCache                 messagecacheport.MessageCache
+	inboxRepository              inboxport.InboxRepository
 	roomMemberCache              roomcache.RoomMemberCache
 	roomCache                    roomcache.RoomCache
 	roomApplication              *roomapp.RoomApplication
@@ -53,7 +55,6 @@ type MessageApplication struct {
 	userDelivery                 realtimeport.UserDelivery
 	roomMemberRepository         domainroom.RoomMemberRepository
 	sf                           singleflight.Group
-	idGenerator                  idport.Generator
 	config                       configs.Config
 }
 
@@ -83,14 +84,15 @@ func NewMessageApplication(
 	messageRepository domainmessage.MessageRepository,
 	roomMemberRepository domainroom.RoomMemberRepository,
 	roomApplication *roomapp.RoomApplication,
-	idGenerator idport.Generator,
 	config configs.Config,
 	roomUnreadSnapshotCache roomunreadcache.RoomUnreadSnapshotCache,
 	messageAttachmentsRepository domainmessage.MessageAttachmentRepository,
 	messageProducer messaging.Publisher,
+	inboxRepository inboxport.InboxRepository,
 ) *MessageApplication {
 	app := &MessageApplication{
 		messageCache:                 messageCache,
+		inboxRepository:              inboxRepository,
 		roomMemberCache:              roomMemberCache,
 		roomCache:                    roomCache,
 		roomUnreadSnapshotCache:      roomUnreadSnapshotCache,
@@ -105,7 +107,6 @@ func NewMessageApplication(
 		fileRepository:               fileRepository,
 		fileCache:                    fileCache,
 		messageStickerRepository:     messageStickerRepository,
-		idGenerator:                  idGenerator,
 		config:                       config,
 		messageAttachmentsRepository: messageAttachmentsRepository,
 		messageProducer:              messageProducer,
@@ -131,22 +132,19 @@ func (ma *MessageApplication) HandleSendMessage(ctx context.Context, conversatio
 		return messagecache.DedupEntry{}, err
 	}
 	sum := sha256.Sum256(payload)
-	messageID, err := ma.idGenerator.Generate()
-	if err != nil {
-		return messagecache.DedupEntry{}, err
-	}
-	entry, err := ma.messageCache.GetOrCreateDedupEntry(ctx, dto.ClientMessageID, messagecache.DedupEntry{
-		SenderID: dto.SenderID, MessageID: messageID, RequestHash: hex.EncodeToString(sum[:]),
+	// 发送端只登记请求指纹和 processing；真正的 message_id 在消费者成功抢占 Inbox 后生成。
+	entry, created, err := ma.messageCache.GetOrCreateDedupEntry(ctx, dto.ClientMessageID, messagecache.DedupEntry{
+		SenderID: dto.SenderID, RequestHash: hex.EncodeToString(sum[:]),
 	}, time.Duration(ma.config.Cache.MessageDedup.ProcessingTTLSeconds)*time.Second)
 	if err != nil {
 		return messagecache.DedupEntry{}, err
 	}
-	if entry.Status != messagecache.StatusProcessing {
+	if !created {
 		return entry, nil
 	}
-	err = ma.messageProducer.Publish(ctx, entry.MessageID, messaging.TypeMessageSend, conversationID, payload)
-	if err != nil {
-		return entry, err
+	if err := ma.messageProducer.Publish(ctx, messaging.TypeMessageSend, conversationID, payload); err != nil {
+		// SyncProducer 的错误可能发生在 broker 已接收之后，保留 processing 供客户端用原请求重试。
+		return entry, fmt.Errorf("%w: %v", ErrMessagePublishUncertain, err)
 	}
 	return entry, nil
 }

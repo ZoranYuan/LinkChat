@@ -203,15 +203,12 @@ func (ma *MessageApplication) SyncMessages(
 	if err != nil {
 		return nil, err
 	}
-	if domainconversation.ConvType(info.ConversationType) != domainconversation.RoomChat {
-		return nil, ErrInvalidSyncConversation
-	}
 
 	if err := ma.checkConversationAccess(ctx, info, userID); err != nil {
 		return nil, err
 	}
 
-	cached, err := ma.roomCache.ListMessageAfterSeq(ctx, info.RoomID, afterSeq)
+	cached, err := ma.roomCache.ListMessageAfterSeq(ctx, conversationID, afterSeq)
 	if err == nil && cached.Covered {
 		return messageEventsToAppDTO(cached.Events, conversationID), nil
 	}
@@ -236,7 +233,7 @@ func (ma *MessageApplication) SyncMessages(
 		}
 
 		events := messageAppDTOsToEvents(items, conversationID, info.RoomID)
-		if err := ma.roomCache.WarmRecentMessageEvents(ctx, info.RoomID, events); err != nil {
+		if err := ma.roomCache.WarmRecentMessageEvents(ctx, conversationID, events); err != nil {
 			log.Printf("回填消息缓存失败：conversation=%s error=%v", conversationID, err)
 		}
 		return items, nil

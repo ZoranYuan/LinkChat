@@ -6,7 +6,7 @@ import (
 )
 
 type Publisher interface {
-	Publish(ctx context.Context, eventID, eventType, partitionKey string, payload []byte) error
+	Publish(ctx context.Context, eventType, partitionKey string, payload []byte) error
 }
 
 type NonRetryableError struct {
@@ -28,14 +28,6 @@ func IsNonRetryable(err error) bool {
 	return errors.As(err, &target)
 }
 
-type SendStatus string
-
-const (
-	SendStatusProcessing SendStatus = "processing"
-	SendStatusCompleted  SendStatus = "completed"
-	SendStatusFailed     SendStatus = "failed"
-)
-
 type EventType string
 
 type ConvType int
@@ -51,7 +43,7 @@ const (
 	TypeRoomEnter            = "room_enter"            // 前端进入房间时请求固定个人未读快照
 	TypeConnectionVisibility = "connection_visibility" // 前端上报当前页面可见状态
 	TypeMessageReadNotice    = "message_read_notice"   // 发送给前端，表示已经有用户读取消息
-	TypeMessageSendResult    = "message_send_result"   // 消息发送请求的处理结果
+	TypeMessageSendAck       = "message_send_ack"      // 消息发送状态 ACK，客户端据此开始轮询
 	TypeMessageSend          = "message_send"          // 客户端请求发送消息
 	TypeMessagePush          = "message_push"          // 向客户端推送已持久化消息
 	TypeEventBatchAck        = "event_batch_ack"       // 客户端确认整个事件批次
@@ -74,17 +66,6 @@ type FriendRequestNoticeEvent struct {
 	PeerUserID      string `json:"peerUserId"`
 	Message         string `json:"message,omitempty"`
 	ApplyTime       int64  `json:"applyTime"`
-}
-
-type MessageSendResultEvent struct {
-	ClientMsgID    string     `json:"clientMsgId"`
-	MessageID      string     `json:"messageId"`
-	ConversationID string     `json:"conversationId,omitempty"`
-	Seq            int64      `json:"seq,omitempty"`
-	AttachmentID   string     `json:"attachmentId,omitempty"`
-	Status         SendStatus `json:"status"`
-	Extra          string     `json:"extra"`
-	SendTime       int64      `json:"sendTime"`
 }
 
 type RoomMessageNoticeEvent struct {

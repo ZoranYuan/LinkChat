@@ -158,7 +158,7 @@ file_cleanup:
 cache:
   message_dedup:
     ttl_seconds: 120
-    processing_ttl_seconds: 86400
+    processing_ttl_seconds: 15
   room_messages:
     ttl_seconds: 600
     max_entries: 500

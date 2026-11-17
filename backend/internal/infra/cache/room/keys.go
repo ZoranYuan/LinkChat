@@ -16,8 +16,8 @@ func InviteKeyPrefix() string {
 	return keycache.RoomInviteCode("") + ":"
 }
 
-func RecentMessageSeqKey(roomID string) string {
-	return keycache.Build("room", "recent", "seq", roomID)
+func RecentMessageSeqKey(conversationID string) string {
+	return keycache.Build("conversation", "recent", "seq", conversationID)
 }
 
 // 房间ID -> 邀请码
