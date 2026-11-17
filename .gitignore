@@ -10,6 +10,7 @@ benchmarks/room-load/*
 !benchmarks/room-load/*.js
 !benchmarks/room-load/*.mjs
 !benchmarks/room-load/*.sh
+!benchmarks/room-load/*.ps1
 !docs/
 docs/*
 !docs/Go后端开发简历.md
