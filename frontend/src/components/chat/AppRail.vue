@@ -4,10 +4,9 @@ import { LogOut, MessageCircle, Settings, Users } from "@lucide/vue";
 defineProps({
   activeSection: { type: String, required: true },
   currentUser: { type: Object, required: true },
-  connection: { type: String, default: "disconnected" },
 });
 
-defineEmits(["select", "logout", "retry"]);
+defineEmits(["select", "logout"]);
 </script>
 
 <template>
@@ -90,24 +89,6 @@ defineEmits(["select", "logout", "retry"]);
             currentUser.nickName || currentUser.name || currentUser.username || "我的账号"
           }}</strong>
         </span>
-      </button>
-      <button
-        class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-4 text-[11px] text-[#8d91a3] transition-colors duration-150 hover:bg-[#f1efff] hover:text-[#5b35f5]"
-        type="button"
-        :title="connection === 'connected' ? '实时连接正常' : '点击重新连接'"
-        @click="$emit('retry')"
-      >
-        <i
-          :class="[
-            'size-2.5 rounded-full',
-            connection === 'connected'
-              ? 'bg-[#62c894] shadow-[0_0_0_4px_rgba(98,200,148,0.14)]'
-              : connection === 'connecting'
-                ? 'bg-[#d29a42]'
-                : 'bg-[#dc6570]',
-          ]"
-        ></i>
-        <span>{{ connection === "connected" ? "在线" : "连接" }}</span>
       </button>
       <button
         class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-3 text-[11px] text-[#8d91a3] transition-colors duration-150 hover:bg-[#fff0f3] hover:text-[#dc6570]"

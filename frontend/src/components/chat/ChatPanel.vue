@@ -11,6 +11,7 @@ import {
   Pause,
   Play,
   Send,
+  Share2,
   Users,
   Video,
   X,
@@ -30,11 +31,14 @@ const props = defineProps({
   hasMore: { type: Boolean, default: false },
   mobile: { type: Boolean, default: false },
   visible: { type: Boolean, default: true },
+  shareLoading: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
   "back",
   "details",
+  "assistant",
+  "share-room",
   "send",
   "attachment",
   "load-older",
@@ -112,6 +116,7 @@ const handleEnter = (event) => {
 const isMine = (message) => message.senderId === props.currentUser.userId;
 const shouldShowMessageStatus = (message) => {
   if (!isMine(message)) return false;
+  if (message.sendStatus === "failed") return false;
   if (message.error) return true;
   return props.messages.at(-1) === message;
 };
@@ -167,6 +172,7 @@ const messageStatusText = (message) => {
     return `${uploadStageText(message)} ${Number(message.uploadProgress) || 0}%`;
   }
   if (message.error) return "发送失败";
+  if (message.sendStatus === "completed") return "已发送";
 
   if (!message.messageId) return "发送中";
   if (Number(message.seq) <= 0) return message.accepted ? "已发送" : "发送中";
@@ -316,6 +322,27 @@ watch(
         </div>
         <div class="flex items-center gap-1">
           <button
+            v-if="isRoom(conversation)"
+            class="flex min-h-9 items-center gap-1.5 rounded-lg border border-[#e8e1ff] bg-[#f8f5ff] px-3 text-[11px] font-semibold text-[#6847e8] hover:bg-[#f0ebff]"
+            type="button"
+            title="打开房间 AI 助手"
+            @click="$emit('assistant')"
+          >
+            <span class="grid size-5 place-items-center rounded-md bg-[#6d4aff] text-[9px] font-extrabold text-white">AI</span>
+            <span class="max-[420px]:hidden">房间助手</span>
+          </button>
+          <button
+            v-if="isRoom(conversation)"
+            class="flex min-h-9 items-center gap-1.5 rounded-lg border border-[#e8eaf0] bg-white px-3 text-[11px] font-semibold text-[#667085] transition-colors hover:border-[#cfc5ff] hover:bg-[#f8f7ff] hover:text-[#5b35f5] max-[420px]:px-2.5"
+            type="button"
+            title="分享房间"
+            :disabled="shareLoading"
+            @click="$emit('share-room')"
+          >
+            <Share2 :size="15" />
+            <span class="max-[420px]:hidden">{{ shareLoading ? "生成中" : "分享" }}</span>
+          </button>
+          <button
             class="grid size-9 place-items-center rounded-lg bg-transparent text-[#667085] hover:bg-[#f3efff] hover:text-[#5b35f5]"
             type="button"
             title="会话详情"
@@ -390,6 +417,11 @@ watch(
                   class="text-xs text-[#8b98aa]"
                   >{{ senderName(message) }}</span
                 >
+                <div
+                  :class="isMine(message) ? 'flex-row-reverse' : 'flex-row'"
+                  class="flex items-end gap-2"
+                >
+                  <div class="flex min-w-0 flex-col gap-1">
                 <component
                   :is="message.mediaUrl ? 'a' : 'div'"
                   v-if="displayType(message) === 'file'"
@@ -499,14 +531,15 @@ watch(
                   <small v-if="shouldShowMessageStatus(message)">{{
                     messageStatusText(message)
                   }}</small>
+                </div>
+                  </div>
                   <button
-                    v-if="isMine(message) && message.error"
-                    class="grid size-4 place-items-center rounded-full bg-[#d94f61] text-[10px] font-bold text-white hover:bg-[#bf394e]"
+                    v-if="isMine(message) && (message.sendStatus === 'failed' || message.error)"
+                    class="grid size-4 flex-none place-items-center rounded-full bg-[#d94f61] text-[10px] font-bold text-white hover:bg-[#bf394e]"
                     type="button"
-                    title="重新发送"
+                    aria-label="重试发送"
                     @click="$emit('retry-message', message)"
-                  >
-                    !
+                  >!
                   </button>
                 </div>
                 <div
@@ -549,17 +582,6 @@ watch(
       <footer
         class="flex flex-none flex-col gap-2 border-t border-[#ebe7f5] bg-[#fbfaff] px-8 pb-4 pt-2.5 max-[767px]:px-3 max-[767px]:pb-3"
       >
-        <div
-          v-if="connection !== 'connected'"
-          class="mx-auto w-full max-w-260 text-[11px] text-[#c08526]"
-        >
-          <i class="mr-1 inline-block size-1.5 rounded-full bg-[#d29a42]"></i
-          >{{
-            connection === "connecting"
-              ? "正在连接实时消息服务..."
-              : "实时连接已断开，暂时无法发送消息"
-          }}
-        </div>
         <div class="mx-auto w-full max-w-260">
           <div
             :class="isResizingComposer ? 'select-none' : ''"

@@ -8,9 +8,10 @@ const props = defineProps({
   conversations: { type: Array, default: () => [] },
   activeId: { type: String, default: "" },
   loading: { type: Boolean, default: false },
+  connection: { type: String, default: "disconnected" },
 });
 
-defineEmits(["select", "create-room"]);
+defineEmits(["select", "create-room", "retry"]);
 
 const query = ref("");
 const conversationDisplayName = (conversation) => conversation.displayName || "未命名会话";
@@ -72,6 +73,20 @@ const filtered = computed(() => {
         >⌘ K</kbd
       >
     </label>
+
+    <div
+      v-if="connection === 'connecting' || connection === 'disconnected'"
+      class="mx-4 mt-2 flex min-h-9 items-center justify-between gap-3 rounded-lg border border-[#f1d8d8] bg-[#fff7f7] px-3 text-[11px] text-[#bd5454]"
+      role="status"
+    >
+      <span>{{ connection === "connecting" ? "正在连接服务器…" : "无法连接服务器" }}</span>
+      <button
+        v-if="connection === 'disconnected'"
+        class="shrink-0 bg-transparent font-semibold text-[#a33f4a] hover:text-[#7c2630]"
+        type="button"
+        @click="$emit('retry')"
+      >重试</button>
+    </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-4">
       <div

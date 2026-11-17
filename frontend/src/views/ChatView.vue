@@ -3,14 +3,16 @@ import { MessageCircle, Plus, UserRound, Users, X } from "@lucide/vue";
 import { storeToRefs } from "pinia";
 import { onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { findUserByPhoneOrUsername } from "../services/http/api.js";
+import { findUserByPhoneOrUsername, getRoomInviteCode } from "../services/http/api.js";
 import AppRail from "../components/chat/AppRail.vue";
 import ChatPanel from "../components/chat/ChatPanel.vue";
+import RoomAssistantPanel from "../components/chat/RoomAssistantPanel.vue";
 import ContactsPanel from "../components/chat/ContactsPanel.vue";
 import ConversationDetails from "../components/chat/ConversationDetails.vue";
 import ConversationList from "../components/chat/ConversationList.vue";
 import ProfilePanel from "../components/chat/ProfilePanel.vue";
 import ConfirmDialog from "../components/common/ConfirmDialog.vue";
+import { ConversationType } from "../constants/conversation.js";
 import { useResponsive } from "../composables/useResponsive.js";
 import { useChatStore } from "../modules/chat/chatStore.js";
 import { messageTips } from "../utils/messageTips.js";
@@ -44,11 +46,15 @@ const {
 
 const activeSection = ref("conversations");
 const mobileChatOpen = ref(false);
-const detailsOpen = ref(false);
+const roomSidePanel = ref("");
 const roomDialogOpen = ref(false);
 const roomMode = ref("create");
 const roomSubmitting = ref(false);
 const clearConfirmOpen = ref(false);
+const inviteDialogOpen = ref(false);
+const inviteLoading = ref(false);
+const inviteCode = ref("");
+const inviteRoomName = ref("");
 
 const loadError = ref("");
 const roomForm = reactive({ roomName: "", description: "", avatar: "", inviteCode: "" });
@@ -66,14 +72,15 @@ const initialize = async () => {
 const chooseSection = (section) => {
   activeSection.value = section;
   mobileChatOpen.value = false;
-  detailsOpen.value = false;
+  roomSidePanel.value = "";
 };
 
 const chooseConversation = async (id) => {
   mobileChatOpen.value = true;
+  roomSidePanel.value = "";
   try {
     await selectConversation(id);
-    detailsOpen.value = false;
+    roomSidePanel.value = "";
     sendMessageRead();
   } catch (error) {
     messageTips.error({ title: "消息加载失败", message: error.message });
@@ -140,19 +147,35 @@ const handleAddFriend = async (form) => {
   }
 };
 
+const initializeRoomConversation = async (room) => {
+  const conversation = state.conversations.find(
+    (item) =>
+      item.conversationId === room.conversationId ||
+      (Number(item.convType) === ConversationType.ROOM && item.targetId === room.roomId),
+  );
+  if (!conversation) throw new Error("房间已处理，但未找到对应会话，请重新加载会话列表。");
+
+  roomDialogOpen.value = false;
+  activeSection.value = "conversations";
+  mobileChatOpen.value = true;
+  roomSidePanel.value = "";
+  await selectConversation(conversation.conversationId);
+};
+
 const submitRoom = async () => {
   roomSubmitting.value = true;
   try {
     if (roomMode.value === "create") {
       if (!roomForm.roomName.trim()) throw new Error("请输入房间名称。");
-      await createRoom(roomForm);
+      const room = await createRoom(roomForm);
+      await initializeRoomConversation(room);
       messageTips.success("房间创建成功");
     } else {
       if (!roomForm.inviteCode.trim()) throw new Error("请输入邀请码。");
-      await joinRoom(roomForm.inviteCode);
+      const room = await joinRoom(roomForm.inviteCode);
+      await initializeRoomConversation(room);
       messageTips.success("已加入房间");
     }
-    roomDialogOpen.value = false;
   } catch (error) {
     messageTips.error(error.message);
   } finally {
@@ -164,7 +187,7 @@ const confirmClear = async () => {
   try {
     await clearConversation(activeConversation.value.conversationId);
     clearConfirmOpen.value = false;
-    detailsOpen.value = false;
+    roomSidePanel.value = "";
     messageTips.success("本地聊天记录已清空");
   } catch (error) {
     messageTips.error({ title: "清空失败", message: error.message });
@@ -172,23 +195,57 @@ const confirmClear = async () => {
 };
 
 const handleLogout = async () => {
-  await logout();
-  messageTips.info("已退出登录");
-  router.replace("/login");
+  try {
+    await logout();
+    messageTips.info("已退出登录");
+  } catch (error) {
+    messageTips.warning(`退出请求失败：${error.message}`);
+  } finally {
+    await router.replace("/login");
+  }
 };
 
 const openDetails = () => {
-  detailsOpen.value = true;
+  roomSidePanel.value = "details";
 };
 
-const closeDetails = () => {
-  detailsOpen.value = false;
+const openRoomAssistant = () => {
+  roomSidePanel.value = "assistant";
+};
+
+const closeRoomSidePanel = () => {
+  roomSidePanel.value = "";
+};
+
+const createRoomInvite = async () => {
+  if (inviteLoading.value) return;
+  const conversation = activeConversation.value;
+  const roomId = conversation?.room?.roomId || conversation?.targetId;
+  if (Number(conversation?.convType) !== ConversationType.ROOM || !roomId) return;
+
+  inviteLoading.value = true;
+  try {
+    inviteCode.value = await getRoomInviteCode(roomId);
+    inviteRoomName.value = conversation.displayName || "房间";
+    inviteDialogOpen.value = true;
+  } catch (error) {
+    messageTips.error({ title: "邀请码生成失败", message: error.message });
+  } finally {
+    inviteLoading.value = false;
+  }
+};
+
+const copyRoomInviteCode = async () => {
+  try {
+    await navigator.clipboard.writeText(inviteCode.value);
+    messageTips.success("邀请码已复制");
+  } catch {
+    messageTips.error("复制失败，请手动复制邀请码");
+  }
 };
 
 watch(isMobile, (mobile) => {
-  if (mobile) {
-    detailsOpen.value = false;
-  }
+  if (mobile && roomSidePanel.value === "details") closeRoomSidePanel();
 });
 
 onMounted(initialize);
@@ -197,8 +254,8 @@ onMounted(initialize);
 <template>
   <main
     class="flex h-dvh min-h-0 w-full gap-3 overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(126,93,255,0.08),transparent_34%),#f3f1fb] p-3 text-sm max-[767px]:block max-[767px]:p-0">
-    <AppRail :active-section="activeSection" :current-user="state.currentUser" :connection="state.connection"
-      @select="chooseSection" @retry="retryConnection" @logout="handleLogout" />
+    <AppRail :active-section="activeSection" :current-user="state.currentUser"
+      @select="chooseSection" @logout="handleLogout" />
 
     <section
       class="im-workspace relative min-h-0 min-w-0 w-full h-full flex-1 overflow-hidden rounded-2xl border border-[#e5e0f3] bg-white shadow-[0_18px_60px_rgba(58,43,110,0.1)]">
@@ -207,8 +264,8 @@ onMounted(initialize);
         { 'mobile-hidden': mobileChatOpen },
       ]">
         <ConversationList v-if="activeSection === 'conversations'" :conversations="state.conversations"
-          :active-id="state.activeConversationId" :loading="state.loading" @select="chooseConversation"
-          @create-room="roomDialogOpen = true" />
+          :active-id="state.activeConversationId" :loading="state.loading" :connection="state.connection"
+          @select="chooseConversation" @retry="retryConnection" @create-room="roomDialogOpen = true" />
         <ContactsPanel v-else-if="activeSection === 'contacts'" :contacts="state.contacts"
           :requests="state.friendRequests" @open-chat="handleContact" @handle-request="handleRequest"
           :on-add-friend="handleAddFriend" />
@@ -224,16 +281,33 @@ onMounted(initialize);
 
       <div class="conversation-stage">
         <ChatPanel :visible="!isMobile || mobileChatOpen" :conversation="activeConversation" :messages="activeMessages"
+          :share-loading="inviteLoading"
           :current-user="state.currentUser" :connection="state.connection" :loading="state.historyLoading"
           :has-more="state.historyHasMore[state.activeConversationId]" :mobile="isMobile" @back="mobileChatOpen = false"
-          @details="openDetails" @send="handleSend" @attachment="handleAttachment" @retry-message="handleRetryMessage"
+          @details="openDetails" @share-room="createRoomInvite" @send="handleSend" @attachment="handleAttachment" @retry-message="handleRetryMessage"
+          @assistant="openRoomAssistant"
           @pause-upload="pauseUpload" @resume-upload="resumeUpload" @cancel-upload="cancelUpload"
           @load-older="loadOlderMessages" />
 
-        <div v-if="detailsOpen && isMobile" class="fixed inset-0 z-44 bg-slate-900/30" @click="closeDetails"></div>
-        <Transition name="details-panel">
-          <ConversationDetails v-show="detailsOpen" :conversation="activeConversation" @close="closeDetails"
-            @clear="clearConfirmOpen = true" />
+        <div v-if="roomSidePanel && isMobile" class="fixed inset-0 z-44 bg-slate-900/30" @click="closeRoomSidePanel"></div>
+        <Transition name="room-side-panel">
+          <div v-if="roomSidePanel" class="room-side-panel-shell">
+            <Transition name="room-side-panel-content" mode="out-in">
+              <ConversationDetails
+                v-if="roomSidePanel === 'details'"
+                key="room-details"
+                :conversation="activeConversation"
+                @close="closeRoomSidePanel"
+                @clear="clearConfirmOpen = true"
+              />
+              <RoomAssistantPanel
+                v-else-if="roomSidePanel === 'assistant' && Number(activeConversation?.convType) === ConversationType.ROOM"
+                key="room-assistant"
+                :conversation="activeConversation"
+                @close="closeRoomSidePanel"
+              />
+            </Transition>
+          </div>
         </Transition>
       </div>
     </section>
@@ -264,6 +338,42 @@ onMounted(initialize);
     </nav>
 
     <teleport to="body">
+      <div
+        v-if="inviteDialogOpen"
+        class="fixed inset-0 z-[80] grid place-items-center bg-slate-900/35 p-4 backdrop-blur-[2px]"
+        @click.self="inviteDialogOpen = false"
+      >
+        <section
+          class="w-full max-w-[380px] rounded-2xl border border-[#ebe8f3] bg-white p-5 shadow-[0_24px_70px_rgba(32,24,64,0.22)]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="room-invite-title"
+        >
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 id="room-invite-title" class="m-0 text-[15px] font-bold text-[#28243a]">分享房间</h2>
+              <p class="mb-0 mt-1 text-[11px] text-[#89849a]">将邀请码发送给想邀请的成员</p>
+            </div>
+            <button
+              class="grid size-8 place-items-center rounded-lg bg-transparent text-[#9893a6] hover:bg-[#f8f7ff] hover:text-[#5b35f5]"
+              type="button"
+              aria-label="关闭邀请码窗口"
+              @click="inviteDialogOpen = false"
+            >
+              <X :size="18" />
+            </button>
+          </div>
+          <p class="mb-2 mt-5 truncate text-[11px] text-[#77718c]">{{ inviteRoomName }}</p>
+          <div class="flex items-center gap-2 rounded-xl border border-[#e8e2f5] bg-[#faf9ff] p-2">
+            <code class="min-w-0 flex-1 truncate px-2 text-[17px] font-bold tracking-[0.16em] text-[#5234dc]">{{ inviteCode }}</code>
+            <button
+              class="min-h-9 rounded-lg bg-[#5b35f5] px-3 text-[11px] font-semibold text-white transition-colors hover:bg-[#4724d8]"
+              type="button"
+              @click="copyRoomInviteCode"
+            >复制邀请码</button>
+          </div>
+        </section>
+      </div>
       <div v-if="roomDialogOpen" class="fixed inset-0 z-70 grid place-items-center bg-slate-900/45 px-4.5"
         @click.self="roomDialogOpen = false">
         <section
