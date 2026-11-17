@@ -2,7 +2,7 @@ import { decodeFrame, decodePayload, encodeFrame } from "./protocol.js";
 
 const payloadTypes = {
   message_push: "messagePush",
-  message_send_result: "messageSendResult",
+  message_send_ack: "messageSendAck",
   message_read_notice: "messageReadNotice",
   room_message_notice: "roomMessageNotice",
   friend_request_notice: "friendRequestNotice",
@@ -83,7 +83,7 @@ export function createWsClient(callbacks = {}) {
     return `${protocol}//${window.location.host}/api/v1/ws?${params.toString()}`;
   };
 
-  /** 解码单个业务帧，并分发给消息推送、发送结果、已读或大型房间通知回调。 */
+  /** 解码单个业务帧，并分发给消息推送、已读或大型房间通知回调。 */
   const dispatchApplicationFrame = (frame) => {
     const payloadType = payloadTypes[frame.op];
     if (!payloadType) {
@@ -95,8 +95,8 @@ export function createWsClient(callbacks = {}) {
     switch (frame.op) {
       case "message_push":
         return callbacks.onMessagePush(payload);
-      case "message_send_result":
-        return callbacks.onMessageSendResult(payload);
+      case "message_send_ack":
+        return callbacks.onMessageSendAck?.(payload);
       case "message_read_notice":
         return callbacks.onMessageReadNotice(payload);
       case "room_message_notice":

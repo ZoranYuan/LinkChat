@@ -15,7 +15,11 @@ message MessageSendRequest {
   string file_id = 10;
   string sticker_id = 17; string pack_id = 18;
 }
-message MessageSendResult { string client_msg_id = 1; string message_id = 2; string status = 3; string extra = 4; int64 send_time = 5; string conversation_id = 6; int64 seq = 7; string attachment_id = 8; }
+message MessageSendAck {
+  string client_msg_id = 1; reserved 2; string status = 3; string extra = 4;
+  int64 send_time = 5; string conversation_id = 6; reserved 7, 8;
+  reserved "message_id", "seq", "attachment_id";
+}
 message RoomMessageNotice { string conversation_id = 1; string message_id = 2; int64 seq = 3; }
 message MessageReadNotice { string user_id = 1; string conversation_id = 2; int64 last_read_seq = 3; int32 conv_type = 4; string avatar = 6; }
 message FriendRequestNotice { string request_id = 1; string applicant_user_id = 2; string peer_user_id = 3; string message = 4; int64 apply_time = 5; }
@@ -35,7 +39,7 @@ const types = {
   eventBatchAck: root.lookupType("im.ws.EventBatchAck"),
   connectionVisibilityRequest: root.lookupType("im.ws.ConnectionVisibilityRequest"),
   messageSendRequest: root.lookupType("im.ws.MessageSendRequest"),
-  messageSendResult: root.lookupType("im.ws.MessageSendResult"),
+  messageSendAck: root.lookupType("im.ws.MessageSendAck"),
   roomMessageNotice: root.lookupType("im.ws.RoomMessageNotice"),
   messagePush: root.lookupType("im.ws.MessagePush"),
   messageReadRequest: root.lookupType("im.ws.MessageReadRequest"),

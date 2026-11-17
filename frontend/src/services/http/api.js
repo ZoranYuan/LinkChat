@@ -129,6 +129,62 @@ export const operateFriendRequest = ({ requestId, action }) =>
 export const createRoom = ({ roomName, description = "", avatar = "" }) =>
   http.post("/rooms", { roomName, description, avatar });
 
+export const getRoomInviteCode = (roomId) => http.get(`/rooms/${roomId}/invite-code`);
+
+const roomAgentRequest = (roomId, body, signal) =>
+  fetch(`/room-agent/rooms/${encodeURIComponent(roomId)}/agent`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+const readErrorBody = async (response) => {
+  const body = await response.json().catch(() => ({}));
+  return body.detail ?? body.message ?? `HTTP ${response.status}`;
+};
+
+/** POST 房间助手请求并按 SSE 帧顺序回调事件。 */
+export const streamRoomAgent = async (roomId, body, onEvent, signal) => {
+  let response = await roomAgentRequest(roomId, body, signal);
+  if (response.status === 401) {
+    await refreshAccessToken();
+    response = await roomAgentRequest(roomId, body, signal);
+  }
+  if (!response.ok) throw new Error(await readErrorBody(response));
+  if (!response.body) throw new Error("浏览器未提供 SSE 响应流");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const dispatchFrame = (frame) => {
+    let event = "message";
+    const data = [];
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+    }
+    if (data.length) onEvent({ event, data: JSON.parse(data.join("\n")) });
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) dispatchFrame(frame);
+    if (done) {
+      if (buffer.trim()) dispatchFrame(buffer);
+      return;
+    }
+  }
+};
+
 export const joinRoom = (inviteCode) => http.post("/rooms/join", { inviteCode });
 
 export const getConversations = () => http.get("/conversations");
@@ -140,6 +196,9 @@ export const syncMessages = (conversationId, afterSeq = 0) =>
       afterSeq,
     },
   });
+
+export const getSendMessageStatus = (clientMsgId) =>
+  http.get(`/messages/send-status/${encodeURIComponent(clientMsgId)}`);
 
 export const getOfflineMessages = ({ conversationId, afterSeq = 0, snapshotSeq, limit = 10 }) =>
   http.get("/messages/offline", {

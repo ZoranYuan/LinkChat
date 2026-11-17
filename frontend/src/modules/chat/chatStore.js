@@ -6,6 +6,7 @@ import {
   getAttachmentAccessURLs,
   getConversations,
   getOfflineMessages,
+  getSendMessageStatus,
   getFriendRequests,
   getFriends,
   joinRoom as joinRoomRequest,
@@ -70,6 +71,7 @@ const attachmentResolver = createAttachmentResolver(getAttachmentAccessURLs);
 const pendingMessages = new Map();
 // 独立保存 WS 请求数据，失败重试不依赖会话展示对象。
 const pendingSendRequests = new Map();
+const sendStatusPolls = new Map();
 // 只在内存中保存上传任务，便于失败后复用 File 或已完成的 fileId 重试。
 const pendingUploadTasks = new Map();
 const historyRequests = new Map();
@@ -81,6 +83,12 @@ let startupCatchupGeneration = -1;
 let cacheClearPromise = Promise.resolve();
 let authBootstrapPromise = null;
 let historyRequestSequence = 0;
+
+const clearSendStatusPoll = (clientMsgId) => {
+  const timer = sendStatusPolls.get(clientMsgId);
+  if (timer) clearTimeout(timer);
+  sendStatusPolls.delete(clientMsgId);
+};
 
 /** 返回当前登录用户 ID，作为本地缓存和会话请求的隔离边界。 */
 const currentUserId = () => state.currentUser?.userId || "";
@@ -138,6 +146,7 @@ const persistConfirmedMessages = async (
     }
     pendingMessages.delete(message.clientMsgId);
     pendingSendRequests.delete(message.clientMsgId);
+    clearSendStatusPoll(message.clientMsgId);
     const task = pendingUploadTasks.get(message.clientMsgId);
     if (task) {
       task.fileId = "";
@@ -503,49 +512,116 @@ const upsertIncomingMessage = (payload) => {
   return processRealtimeMessage(payload);
 };
 
-/** processing 发送结果 更新发送状态，completed 发送结果 复用完整消息的持久化流程。 */
-const handleMessageSendResult = (ack) => {
+const markSendStatusFailed = (clientMsgId, conversationId) => {
+  const failed = updatePendingMessage(clientMsgId, conversationId, {
+    sendStatus: "failed",
+    accepted: false,
+    error: "",
+  });
+  if (failed) pendingMessages.set(clientMsgId, failed);
+};
+
+/** 只为回执中匹配到的 clientMsgId 启动状态轮询。 */
+const handleMessageSendAck = (ack) => {
+  const clientMsgId = ack?.clientMsgId || "";
   const session = captureSession();
-  const pending = pendingMessages.get(ack?.clientMsgId) ||
-    findPendingMessage(ack?.clientMsgId, ack?.conversationId);
-  if (!pending || !isSessionActive(session)) return;
-  if (Number(pending.seq) > 0 || pending.sendStatus === "completed") return;
+  const pending = pendingMessages.get(clientMsgId) || findPendingMessage(clientMsgId, ack?.conversationId);
+  if (!clientMsgId || !pending || pending.clientMsgId !== clientMsgId || !isSessionActive(session)) return;
 
   const conversationId = ack.conversationId || pending.conversationId;
-  if (ack.status === "completed" && Number(ack.seq) > 0) {
-    return processRealtimeMessage({
-      ...pending,
-      messageId: ack.messageId,
-      conversationId,
-      seq: Number(ack.seq),
-      attachmentId: ack.attachmentId || pending.attachmentId || "",
-      sendStatus: "completed",
-      accepted: true,
-      error: "",
-    });
+  if (ack.status === "failed") {
+    clearSendStatusPoll(clientMsgId);
+    markSendStatusFailed(clientMsgId, conversationId);
+    return;
   }
-  const failed = ack.status === "failed";
-  const updated = normalizeMessage({
-    ...pending,
-    messageId: ack.messageId || pending.messageId || "",
-    conversationId,
-    seq: pending.seq || 0,
-    attachmentId: ack.attachmentId || pending.attachmentId || "",
-    sendTime: Number(ack.sendTime) || pending.sendTime,
-    status: Number(pending.status) || 1,
-    sendStatus: ack.status,
-    accepted: !failed,
-    error: failed ? ack.extra || "消息发送失败" : "",
-  });
 
-  state.messages[conversationId] = mergeMessageLists(state.messages[conversationId] || [], [
-    updated,
-  ]);
-  const storedMessage = state.messages[conversationId].find(
-    (item) => item.clientMsgId === updated.clientMsgId,
+  const updated = updatePendingMessage(clientMsgId, conversationId, {
+    sendStatus: ack.status,
+    accepted: false,
+    error: "",
+  });
+  if (!updated) return;
+  pendingMessages.set(clientMsgId, updated);
+  if (ack.status === "processing" || ack.status === "completed") {
+    startSendStatusPolling(clientMsgId, conversationId, session);
+  }
+};
+
+/** 收到对应 clientMsgId 的 ACK 后轮询持久化状态；最多三次。 */
+const pollSendMessageStatus = async (clientMsgId, conversationId, session, attempt) => {
+  if (!isSessionActive(session)) return;
+  const message = findPendingMessage(clientMsgId, conversationId);
+  if (!message || Number(message.seq) > 0) {
+    clearSendStatusPoll(clientMsgId);
+    return;
+  }
+
+  let status;
+  try {
+    status = await getSendMessageStatus(clientMsgId);
+  } catch {
+    status = null;
+  }
+  if (!isSessionActive(session)) return;
+
+  if (status?.status === "completed" && status.messageId && Number(status.seq) > 0) {
+    clearSendStatusPoll(clientMsgId);
+    try {
+      await processRealtimeMessage({
+        ...message,
+        messageId: status.messageId,
+        conversationId,
+        senderId: session.userId,
+        clientMsgId,
+        seq: Number(status.seq),
+        attachmentId: status.attachmentId || "",
+        sendTime: message.sendTime,
+        sendStatus: "completed",
+        accepted: true,
+        error: "",
+      });
+    } catch {
+      if (attempt >= 3) markSendStatusFailed(clientMsgId, conversationId);
+      else {
+        sendStatusPolls.set(
+          clientMsgId,
+          setTimeout(
+            () => pollSendMessageStatus(clientMsgId, conversationId, session, attempt + 1),
+            500 * 2 ** attempt,
+          ),
+        );
+      }
+    }
+    return;
+  }
+
+  if (status?.status === "failed") {
+    clearSendStatusPoll(clientMsgId);
+    markSendStatusFailed(clientMsgId, conversationId);
+    return;
+  }
+
+  if (attempt >= 3) {
+    clearSendStatusPoll(clientMsgId);
+    markSendStatusFailed(clientMsgId, conversationId);
+    return;
+  }
+
+  sendStatusPolls.set(
+    clientMsgId,
+    setTimeout(
+      () => pollSendMessageStatus(clientMsgId, conversationId, session, attempt + 1),
+      500 * 2 ** attempt,
+    ),
   );
-  // 未持久化的请求继续保留，终止失败或连接重试时仍复用原请求和上传结果。
-  pendingMessages.set(ack.clientMsgId, storedMessage || updated);
+};
+
+const startSendStatusPolling = (clientMsgId, conversationId, session = captureSession()) => {
+  if (sendStatusPolls.has(clientMsgId)) return;
+  sendStatusPolls.set(
+    clientMsgId,
+    setTimeout(() => pollSendMessageStatus(clientMsgId, conversationId, session, 1), 500),
+  );
 };
 
 /** 以最大值推进私聊对端最高已读水位；该水位决定最后一条本人消息的展示状态。 */
@@ -651,16 +727,6 @@ const syncRoomMessageNotice = async (notice) => {
   return syncConversationFromLocal(conversationId, { targetSeq });
 };
 
-/** WebSocket 建立或重连后，逐会话补齐离线快照与实时连接之间的缺口。 */
-const syncAllConversationGaps = async (session = captureSession()) => {
-  const conversations = [...state.conversations];
-  await Promise.all(
-    conversations.map((conversation) =>
-      syncConversationFromLocal(conversation.conversationId, { session }),
-    ),
-  );
-};
-
 const handleFriendRequestNotice = async () => {
   const session = captureSession();
   const requests = await getFriendRequests();
@@ -686,10 +752,6 @@ const wsClient = createWsClient({
     if (pendingRoomEnterConversationID === state.activeConversationId) {
       sendRoomEnter(pendingRoomEnterConversationID);
     }
-    const session = captureSession();
-    syncAllConversationGaps(session).catch((error) => {
-      console.error("WebSocket 建立后补齐消息失败", error);
-    });
   },
   onBeforeReconnect: async () => {
     const session = captureSession();
@@ -701,7 +763,7 @@ const wsClient = createWsClient({
     console.error("WebSocket 重连前离线补齐失败", error);
   },
   onMessagePush: upsertIncomingMessage,
-  onMessageSendResult: handleMessageSendResult,
+  onMessageSendAck: handleMessageSendAck,
   onMessageReadNotice: handleMessageReadNotice,
   onRoomMessageNotice: syncRoomMessageNotice,
   onFriendRequestNotice: handleFriendRequestNotice,
@@ -768,6 +830,7 @@ const clearAuthState = () => {
   pendingRoomEnterConversationID = "";
   pendingMessages.clear();
   pendingSendRequests.clear();
+  for (const clientMsgId of sendStatusPolls.keys()) clearSendStatusPoll(clientMsgId);
   for (const task of pendingUploadTasks.values()) {
     task.cancelRequested = true;
     if (task.running) {
@@ -1112,7 +1175,7 @@ export const useChatStore = defineStore("chat", () => {
     if (!clientMsgId || !pending || !conversation || !isSessionActive(session)) {
       throw new Error("消息已失效，请重新选择会话后重试。");
     }
-    if (!pending.error) return pending;
+    if (pending.sendStatus !== "failed" && !pending.error) return pending;
     if (!wsClient.isConnected()) {
       throw new Error("实时连接尚未建立，请稍后重试。");
     }
