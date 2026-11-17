@@ -393,34 +393,31 @@ func (x *MessageSendRequest) GetConversationId() string {
 	return ""
 }
 
-type MessageSendResult struct {
+type MessageSendAck struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	ClientMsgId    string                 `protobuf:"bytes,1,opt,name=client_msg_id,json=clientMsgId,proto3" json:"client_msg_id,omitempty"`
-	MessageId      string                 `protobuf:"bytes,2,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
 	Status         string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
 	Extra          string                 `protobuf:"bytes,4,opt,name=extra,proto3" json:"extra,omitempty"`
 	SendTime       int64                  `protobuf:"varint,5,opt,name=send_time,json=sendTime,proto3" json:"send_time,omitempty"`
 	ConversationId string                 `protobuf:"bytes,6,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
-	Seq            int64                  `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
-	AttachmentId   string                 `protobuf:"bytes,8,opt,name=attachment_id,json=attachmentId,proto3" json:"attachment_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *MessageSendResult) Reset() {
-	*x = MessageSendResult{}
+func (x *MessageSendAck) Reset() {
+	*x = MessageSendAck{}
 	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MessageSendResult) String() string {
+func (x *MessageSendAck) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MessageSendResult) ProtoMessage() {}
+func (*MessageSendAck) ProtoMessage() {}
 
-func (x *MessageSendResult) ProtoReflect() protoreflect.Message {
+func (x *MessageSendAck) ProtoReflect() protoreflect.Message {
 	mi := &file_internal_interfaces_ws_ws_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -432,63 +429,42 @@ func (x *MessageSendResult) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MessageSendResult.ProtoReflect.Descriptor instead.
-func (*MessageSendResult) Descriptor() ([]byte, []int) {
+// Deprecated: Use MessageSendAck.ProtoReflect.Descriptor instead.
+func (*MessageSendAck) Descriptor() ([]byte, []int) {
 	return file_internal_interfaces_ws_ws_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *MessageSendResult) GetClientMsgId() string {
+func (x *MessageSendAck) GetClientMsgId() string {
 	if x != nil {
 		return x.ClientMsgId
 	}
 	return ""
 }
 
-func (x *MessageSendResult) GetMessageId() string {
-	if x != nil {
-		return x.MessageId
-	}
-	return ""
-}
-
-func (x *MessageSendResult) GetStatus() string {
+func (x *MessageSendAck) GetStatus() string {
 	if x != nil {
 		return x.Status
 	}
 	return ""
 }
 
-func (x *MessageSendResult) GetExtra() string {
+func (x *MessageSendAck) GetExtra() string {
 	if x != nil {
 		return x.Extra
 	}
 	return ""
 }
 
-func (x *MessageSendResult) GetSendTime() int64 {
+func (x *MessageSendAck) GetSendTime() int64 {
 	if x != nil {
 		return x.SendTime
 	}
 	return 0
 }
 
-func (x *MessageSendResult) GetConversationId() string {
+func (x *MessageSendAck) GetConversationId() string {
 	if x != nil {
 		return x.ConversationId
-	}
-	return ""
-}
-
-func (x *MessageSendResult) GetSeq() int64 {
-	if x != nil {
-		return x.Seq
-	}
-	return 0
-}
-
-func (x *MessageSendResult) GetAttachmentId() string {
-	if x != nil {
-		return x.AttachmentId
 	}
 	return ""
 }
@@ -912,17 +888,14 @@ const file_internal_interfaces_ws_ws_proto_rawDesc = "" +
 	"\n" +
 	"sticker_id\x18\x11 \x01(\tR\tstickerId\x12\x17\n" +
 	"\apack_id\x18\x12 \x01(\tR\x06packId\x12'\n" +
-	"\x0fconversation_id\x18\x13 \x01(\tR\x0econversationIdJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\x81\x02\n" +
-	"\x11MessageSendResult\x12\"\n" +
-	"\rclient_msg_id\x18\x01 \x01(\tR\vclientMsgId\x12\x1d\n" +
-	"\n" +
-	"message_id\x18\x02 \x01(\tR\tmessageId\x12\x16\n" +
+	"\x0fconversation_id\x18\x13 \x01(\tR\x0econversationIdJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xda\x01\n" +
+	"\x0eMessageSendAck\x12\"\n" +
+	"\rclient_msg_id\x18\x01 \x01(\tR\vclientMsgId\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x14\n" +
 	"\x05extra\x18\x04 \x01(\tR\x05extra\x12\x1b\n" +
 	"\tsend_time\x18\x05 \x01(\x03R\bsendTime\x12'\n" +
-	"\x0fconversation_id\x18\x06 \x01(\tR\x0econversationId\x12\x10\n" +
-	"\x03seq\x18\a \x01(\x03R\x03seq\x12#\n" +
-	"\rattachment_id\x18\b \x01(\tR\fattachmentId\"m\n" +
+	"\x0fconversation_id\x18\x06 \x01(\tR\x0econversationIdJ\x04\b\x02\x10\x03J\x04\b\a\x10\bJ\x04\b\b\x10\tR\n" +
+	"message_idR\x03seqR\rattachment_id\"m\n" +
 	"\x11RoomMessageNotice\x12'\n" +
 	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x1d\n" +
 	"\n" +
@@ -983,7 +956,7 @@ var file_internal_interfaces_ws_ws_proto_goTypes = []any{
 	(*RoomEnterRequest)(nil),            // 4: im.ws.RoomEnterRequest
 	(*ConnectionVisibilityRequest)(nil), // 5: im.ws.ConnectionVisibilityRequest
 	(*MessageSendRequest)(nil),          // 6: im.ws.MessageSendRequest
-	(*MessageSendResult)(nil),           // 7: im.ws.MessageSendResult
+	(*MessageSendAck)(nil),              // 7: im.ws.MessageSendAck
 	(*RoomMessageNotice)(nil),           // 8: im.ws.RoomMessageNotice
 	(*MessageReadNotice)(nil),           // 9: im.ws.MessageReadNotice
 	(*FriendRequestNotice)(nil),         // 10: im.ws.FriendRequestNotice

@@ -42,15 +42,15 @@ message MessageSendRequest {
   string conversation_id = 19;
 }
 
-message MessageSendResult {
+message MessageSendAck {
   string client_msg_id = 1;
-  string message_id    = 2;
-  string status        = 3;
-  string extra         = 4;
-  int64  send_time     = 5;
+  reserved 2;
+  string status = 3;
+  string extra = 4;
+  int64 send_time = 5;
   string conversation_id = 6;
-  int64  seq               = 7;
-  string attachment_id    = 8;
+  reserved 7, 8;
+  reserved "message_id", "seq", "attachment_id";
 }
 
 message RoomMessageNotice {

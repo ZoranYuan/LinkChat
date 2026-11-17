@@ -18,7 +18,6 @@ import (
 	messageapp "IM_backend/internal/application/message"
 	ratelimitport "IM_backend/internal/application/ports/ratelimit"
 	domainmessage "IM_backend/internal/domain/message"
-	messagecache "IM_backend/internal/infra/cache/message"
 	"IM_backend/internal/interfaces/http/response"
 	wspb "IM_backend/internal/interfaces/ws/pb"
 )
@@ -150,16 +149,17 @@ func (wh *Handler) handleMessageSend(ctx context.Context, connection *Connection
 		},
 	)
 	if limitErr != nil {
-		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), "限流服务暂不可用")
+		log.Printf("消息限流检查失败：user=%s error=%v", connection.UserID(), limitErr)
+		return wh.replyMessageSendAck(connection, request.GetClientMsgId(), "failed", "限流服务暂不可用", "")
 	}
 
 	if !allowed {
-		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), "消息发送过于频繁")
+		return wh.replyMessageSendAck(connection, request.GetClientMsgId(), "failed", "消息发送过于频繁", "")
 	}
 
 	conversationID := request.GetConversationId()
 	if conversationID == "" || len(conversationID) > wh.config.Message.MaxIdentifierLength {
-		return wh.replyFailedSendResult(connection, request.GetClientMsgId(), "会话标识无效")
+		return wh.replyMessageSendAck(connection, request.GetClientMsgId(), "failed", "会话标识无效", conversationID)
 	}
 
 	dto := messaging.SendMessageDTO{
@@ -174,38 +174,34 @@ func (wh *Handler) handleMessageSend(ctx context.Context, connection *Connection
 	}
 	entry, err := wh.app.HandleSendMessage(ctx, conversationID, dto)
 	if err != nil {
-		entry.Status = messagecache.StatusFailed
+		entry.Status = "failed"
 		entry.Error = "消息服务暂不可用"
 		switch {
+		case errors.Is(err, messageapp.ErrMessagePublishUncertain):
+			// Broker 可能已接收；保留 processing，让客户端开始查状态并在必要时用原 ID 重试。
+			entry.Status = "processing"
 		case errors.Is(err, messageapp.ErrNotRoomMember), errors.Is(err, messageapp.ErrNotFriends), errors.Is(err, messageapp.ErrForbidden):
 			entry.Error = "无权在该会话发送消息"
 		case errors.Is(err, messageapp.ErrConversationNotFound):
 			entry.Error = "会话不存在"
 		case errors.Is(err, domainmessage.ErrClientMessageConflict):
 			entry.Error = err.Error()
+		default:
+			log.Printf("消息投递失败：user=%s conversation=%s client_msg_id=%s error=%v",
+				connection.UserID(), conversationID, request.GetClientMsgId(), err)
 		}
 	}
-	event := messaging.MessageSendResultEvent{
-		ClientMsgID:    request.GetClientMsgId(),
-		MessageID:      entry.MessageID,
-		ConversationID: conversationID,
-		Seq:            entry.Seq,
-		AttachmentID:   entry.AttachmentID,
-		Status:         messaging.SendStatus(entry.Status),
-		Extra:          entry.Error,
-		SendTime:       time.Now().UnixMilli(),
-	}
-	return connection.PushProtobufEvent(messaging.TypeMessageSendResult, messageSendResultToPB(event))
+	return wh.replyMessageSendAck(connection, request.GetClientMsgId(), entry.Status, entry.Error, conversationID)
 }
 
-func (wh *Handler) replyFailedSendResult(connection *Connection, clientMsgID, reason string) error {
-	event := messaging.MessageSendResultEvent{
-		ClientMsgID: clientMsgID,
-		Status:      messaging.SendStatusFailed,
-		Extra:       reason,
-		SendTime:    time.Now().UnixMilli(),
-	}
-	return connection.PushProtobufEvent(messaging.TypeMessageSendResult, messageSendResultToPB(event))
+func (wh *Handler) replyMessageSendAck(connection *Connection, clientMsgID, sendStatus, extra, conversationID string) error {
+	return connection.PushProtobufEvent(messaging.TypeMessageSendAck, &wspb.MessageSendAck{
+		ClientMsgId:    clientMsgID,
+		Status:         sendStatus,
+		Extra:          extra,
+		SendTime:       time.Now().UnixMilli(),
+		ConversationId: conversationID,
+	})
 }
 
 func (wh *Handler) checkOrigin(r *http.Request) bool {

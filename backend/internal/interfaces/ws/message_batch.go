@@ -63,7 +63,7 @@ func (a *BatchMessageAccumulator) Append(message Message) []*MessageBatch {
 	a.activeBatch.Messages = append(a.activeBatch.Messages, message)
 	a.activeBatch.Bytes += size
 
-	if message.Op == messaging.TypeMessageSendResult || len(a.activeBatch.Messages) >= a.config.BatchMaxMessages || a.activeBatch.Bytes >= a.config.BatchMaxBytes {
+	if message.Op == messaging.TypeMessageSendAck || len(a.activeBatch.Messages) >= a.config.BatchMaxMessages || a.activeBatch.Bytes >= a.config.BatchMaxBytes {
 		readyQuque = append(readyQuque, a.flush())
 	}
 

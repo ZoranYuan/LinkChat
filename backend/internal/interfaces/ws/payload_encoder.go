@@ -6,20 +6,6 @@ import (
 	wspb "IM_backend/internal/interfaces/ws/pb"
 )
 
-// messageSendResultToPB 将消息发送结果编码为前端使用的 protobuf 消息。
-func messageSendResultToPB(event messaging.MessageSendResultEvent) *wspb.MessageSendResult {
-	return &wspb.MessageSendResult{
-		ClientMsgId:    event.ClientMsgID,
-		MessageId:      event.MessageID,
-		Status:         string(event.Status),
-		Extra:          event.Extra,
-		SendTime:       event.SendTime,
-		ConversationId: event.ConversationID,
-		Seq:            event.Seq,
-		AttachmentId:   event.AttachmentID,
-	}
-}
-
 // messageReadNoticeToPB 将内部已读事件编码为前端使用的 protobuf 消息。
 func messageReadNoticeToPB(event messaging.MessageReadNoticeEvent) *wspb.MessageReadNotice {
 	return &wspb.MessageReadNotice{UserId: event.UserID, ConversationId: event.ConversationID, LastReadSeq: event.LastReadSeq, ConvType: int32(event.ConvType), Avatar: event.Avatar}
