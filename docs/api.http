@@ -1,7 +1,7 @@
 @baseUrl = http://localhost:8080/api/v1
 @token = Bearer REPLACE_ME
 @userId = REPLACE_USER_ID
-@roomId = REPLACE_ROOM_ID
+@groupId = REPLACE_GROUP_ID
 @conversationId = REPLACE_CONVERSATION_ID
 
 ### 用户注册
@@ -61,23 +61,23 @@ Content-Type: application/json
   "action": 1
 }
 
-### 创建房间
-POST {{baseUrl}}/rooms
+### 创建群聊
+POST {{baseUrl}}/groups
 Authorization: {{token}}
 Content-Type: application/json
 
 {
-  "roomName": "项目群",
+  "groupName": "项目群",
   "description": "项目协作讨论",
   "avatar": ""
 }
 
-### 获取房间邀请码
-GET {{baseUrl}}/rooms/{{roomId}}/invite-code
+### 获取群聊邀请码
+GET {{baseUrl}}/groups/{{groupId}}/invite-code
 Authorization: {{token}}
 
-### 通过邀请码加入房间
-POST {{baseUrl}}/rooms/join
+### 通过邀请码加入群聊
+POST {{baseUrl}}/groups/join
 Authorization: {{token}}
 Content-Type: application/json
 

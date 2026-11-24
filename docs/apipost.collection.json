@@ -12,7 +12,7 @@
     { "key": "readyUrl", "value": "http://localhost:8081/readyz" },
     { "key": "token", "value": "REPLACE_ACCESS_TOKEN" },
     { "key": "userId", "value": "REPLACE_USER_ID" },
-    { "key": "roomId", "value": "REPLACE_ROOM_ID" },
+    { "key": "groupId", "value": "REPLACE_GROUP_ID" },
     { "key": "conversationId", "value": "REPLACE_CONVERSATION_ID" },
     { "key": "attachmentId", "value": "REPLACE_ATTACHMENT_ID" },
     { "key": "uploadId", "value": "REPLACE_UPLOAD_ID" },
@@ -157,27 +157,27 @@
       ]
     },
     {
-      "name": "房间模块",
+      "name": "群聊模块",
       "item": [
         {
-          "name": "创建房间",
+          "name": "创建群聊",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"roomName\": \"项目群\",\n  \"description\": \"项目协作讨论\",\n  \"avatar\": \"\"\n}",
+              "raw": "{\n  \"groupName\": \"项目群\",\n  \"description\": \"项目协作讨论\",\n  \"avatar\": \"\"\n}",
               "options": { "raw": { "language": "json" } }
             },
-            "url": "{{baseUrl}}/rooms"
+            "url": "{{baseUrl}}/groups"
           }
         },
         {
-          "name": "获取房间邀请码",
-          "request": { "method": "GET", "url": "{{baseUrl}}/rooms/{{roomId}}/invite-code" }
+          "name": "获取群聊邀请码",
+          "request": { "method": "GET", "url": "{{baseUrl}}/groups/{{groupId}}/invite-code" }
         },
         {
-          "name": "通过邀请码加入房间",
+          "name": "通过邀请码加入群聊",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -186,12 +186,12 @@
               "raw": "{\n  \"inviteCode\": \"{{inviteCode}}\"\n}",
               "options": { "raw": { "language": "json" } }
             },
-            "url": "{{baseUrl}}/rooms/join"
+            "url": "{{baseUrl}}/groups/join"
           }
         },
         {
-          "name": "退出房间",
-          "request": { "method": "POST", "url": "{{baseUrl}}/rooms/{{roomId}}/leave" }
+          "name": "退出群聊",
+          "request": { "method": "POST", "url": "{{baseUrl}}/groups/{{groupId}}/leave" }
         }
       ]
     },
@@ -305,17 +305,17 @@
           }
         },
         {
-          "name": "房间历史视频",
+          "name": "群聊历史视频",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/messages/videos?roomId={{roomId}}&limit=20"
+            "url": "{{baseUrl}}/messages/videos?groupId={{groupId}}&limit=20"
           }
         },
         {
           "name": "弹幕回放",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/messages/danmaku?roomId={{roomId}}&videoId={{fileId}}&startTime=0&endTime=0&limit=200"
+            "url": "{{baseUrl}}/messages/danmaku?groupId={{groupId}}&videoId={{fileId}}&startTime=0&endTime=0&limit=200"
           }
         }
       ]
@@ -327,7 +327,7 @@
           "name": "WebSocket 连接",
           "request": {
             "method": "GET",
-            "description": "通过 Authorization: Bearer <access_token> 或 access_token Cookie 握手；前端使用 ?batch=1，服务端返回 protobuf 二进制帧。客户端操作：msg(messageReq)、msg_read_ack(readAck)；大群可能收到 room_msg_notice，随后调用消息增量同步接口。",
+            "description": "通过 Authorization: Bearer <access_token> 或 access_token Cookie 握手；前端使用 ?batch=1，服务端返回 protobuf 二进制帧。客户端操作：msg(messageReq)、msg_read_ack(readAck)；大群可能收到 group_message_notice，随后调用消息增量同步接口。",
             "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
             "url": "ws://localhost:8081/api/v1/ws?batch=1"
           }

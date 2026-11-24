@@ -9,7 +9,7 @@ tags:
   - name: Users
   - name: Friends
   - name: FriendRequests
-  - name: Rooms
+  - name: Groups
   - name: Conversations
   - name: Messages
   - name: WebSocket
@@ -143,10 +143,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuccessResponse'
-  /rooms:
+  /groups:
     post:
-      tags: [Rooms]
-      summary: Create room
+      tags: [Groups]
+      summary: Create group
       security:
         - bearerAuth: []
       requestBody:
@@ -154,23 +154,23 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RoomCreateRequest'
+              $ref: '#/components/schemas/GroupCreateRequest'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCreateResponse'
-  /rooms/{roomId}/invite-code:
+                $ref: '#/components/schemas/GroupCreateResponse'
+  /groups/{groupId}/invite-code:
     get:
-      tags: [Rooms]
+      tags: [Groups]
       summary: Get or refresh invite code
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: roomId
+          name: groupId
           required: true
           schema:
             type: string
@@ -181,10 +181,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StringResponse'
-  /rooms/join:
+  /groups/join:
     post:
-      tags: [Rooms]
-      summary: Join room by invite code
+      tags: [Groups]
+      summary: Join group by invite code
       security:
         - bearerAuth: []
       requestBody:
@@ -192,21 +192,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RoomJoinRequest'
+              $ref: '#/components/schemas/GroupJoinRequest'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomJoinResponse'
+                $ref: '#/components/schemas/GroupJoinResponse'
   /conversations:
     get:
       tags: [Conversations]
       summary: List current user's conversations
       description: >-
         Returns the conversation sidebar snapshot, including the latest message
-        and unread count for each private or room conversation. Call this after
+        and unread count for each private or group conversation. Call this after
         login, during page initialization, after a manual refresh, and after a
         successful WebSocket reconnect. This endpoint does not return every
         message received while offline; load a conversation's messages through
@@ -453,24 +453,24 @@ components:
         action:
           type: integer
           enum: [1, 2]
-    RoomCreateRequest:
+    GroupCreateRequest:
       type: object
-      required: [roomName]
+      required: [groupName]
       properties:
-        roomName:
+        groupName:
           type: string
         description:
           type: string
         avatar:
           type: string
-    RoomCreateData:
+    GroupCreateData:
       type: object
       properties:
-        roomId:
+        groupId:
           type: string
         description:
           type: string
-        roomName:
+        groupName:
           type: string
         avatar:
           type: string
@@ -478,27 +478,27 @@ components:
           type: integer
         inviteCode:
           type: string
-    RoomCreateResponse:
+    GroupCreateResponse:
       allOf:
         - $ref: '#/components/schemas/BaseResponse'
         - type: object
           properties:
             data:
-              $ref: '#/components/schemas/RoomCreateData'
-    RoomJoinRequest:
+              $ref: '#/components/schemas/GroupCreateData'
+    GroupJoinRequest:
       type: object
       required: [inviteCode]
       properties:
         inviteCode:
           type: string
-    RoomJoinData:
+    GroupJoinData:
       type: object
       properties:
-        roomId:
+        groupId:
           type: string
         description:
           type: string
-        roomName:
+        groupName:
           type: string
         avatar:
           type: string
@@ -509,13 +509,13 @@ components:
         joinTime:
           type: integer
           format: int64
-    RoomJoinResponse:
+    GroupJoinResponse:
       allOf:
         - $ref: '#/components/schemas/BaseResponse'
         - type: object
           properties:
             data:
-              $ref: '#/components/schemas/RoomJoinData'
+              $ref: '#/components/schemas/GroupJoinData'
     ConversationPeerUser:
       type: object
       properties:
@@ -529,12 +529,12 @@ components:
           type: string
         avatar:
           type: string
-    ConversationRoom:
+    ConversationGroup:
       type: object
       properties:
-        roomId:
+        groupId:
           type: string
-        roomName:
+        groupName:
           type: string
         avatar:
           type: string
@@ -557,7 +557,7 @@ components:
         convType:
           type: integer
           enum: [1, 2]
-          description: 1 means private chat; 2 means room chat.
+          description: 1 means private chat; 2 means group chat.
         cType:
           type: integer
           description: Message content type.
@@ -582,10 +582,10 @@ components:
         convType:
           type: integer
           enum: [1, 2]
-          description: 1 means private chat; 2 means room chat.
+          description: 1 means private chat; 2 means group chat.
         targetId:
           type: string
-          description: Peer user ID for private chat, or room ID for room chat.
+          description: Peer user ID for private chat, or group ID for group chat.
         displayName:
           type: string
         avatar:
@@ -600,9 +600,9 @@ components:
           allOf:
             - $ref: '#/components/schemas/ConversationPeerUser'
           description: Present only when convType is 1.
-        room:
+        group:
           allOf:
-            - $ref: '#/components/schemas/ConversationRoom'
+            - $ref: '#/components/schemas/ConversationGroup'
           description: Present only when convType is 2.
         isMuted:
           type: boolean
