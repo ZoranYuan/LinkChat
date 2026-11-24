@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package im.ws;
+
+option go_package = "IM_backend/core/interfaces/ws/pb;wspb";
+
+message WsFrame {
+  string op   = 1;
+  bytes  data = 2;
+}
+
+message EventBatch {
+  repeated WsFrame frames = 1;
+  string batch_id = 2;
+}
+
+message EventBatchAck {
+  string batch_id = 1;
+}
+
+message MessageReadRequest {
+  string message_id = 1;
+  reserved 2;
+}
+
+message GroupEnterRequest {
+  string group_id = 1;
+}
+
+message ConnectionVisibilityRequest {
+  optional bool hidden = 1;
+}
+
+message MessageSendRequest {
+  string client_msg_id  = 1;
+  int32  c_type         = 4;
+  string content        = 5;
+  string file_id        = 10;
+  reserved 6, 7;
+  string sticker_id     = 17;
+  string pack_id        = 18;
+  string conversation_id = 19;
+}
+
+message MessageSendAck {
+  string client_msg_id = 1;
+  reserved 2;
+  string status = 3;
+  string extra = 4;
+  int64 send_time = 5;
+  string conversation_id = 6;
+  reserved 7, 8;
+  reserved "message_id", "seq", "attachment_id";
+}
+
+message GroupMessageNotice {
+  string conversation_id = 1;
+  reserved 2;
+  reserved "message_id";
+  int64  seq             = 3;
+}
+
+message MessageReadNotice {
+  string user_id         = 1;
+  string conversation_id = 2;
+  int64  last_read_seq   = 3;
+  int32  conv_type       = 4;
+  reserved 5;
+  string avatar          = 6;
+}
+
+message FriendRequestNotice {
+  string request_id        = 1;
+  string applicant_user_id = 2;
+  string peer_user_id      = 3;
+  string message           = 4;
+  int64  apply_time        = 5;
+}
+
+message ErrorNotice {
+  string request_op = 1;
+  string code       = 2;
+  string message    = 3;
+}
+
+message MessagePush {
+  string message_id      = 1;
+  string conversation_id = 2;
+  string sender_id       = 3;
+  int64  seq             = 5;
+  int32  c_type          = 7;
+  string content         = 8;
+  int64  send_time       = 9;
+  string client_msg_id   = 11;
+  int32  status          = 14;
+  string attachment_id   = 25;
+
+  // 路由、用户展示以及媒体子表字段不属于消息推送本体。
+  reserved 4, 6, 10, 12, 13, 18 to 24;
+}

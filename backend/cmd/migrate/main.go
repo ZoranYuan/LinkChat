@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"IM_backend/configs"
-	"IM_backend/internal/infra/database"
-	"IM_backend/internal/infra/database/migration"
+	"IM_backend/core/infra/database"
+	"IM_backend/core/infra/database/migration"
 )
 
 func main() {

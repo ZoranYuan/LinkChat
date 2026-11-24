@@ -25,7 +25,14 @@ type Config struct {
 	FileCleanup FileCleanupConfig `yaml:"file_cleanup"`
 	Cache       CacheConfig       `yaml:"cache"`
 	Friend      FriendConfig      `yaml:"friend"`
-	Room        RoomConfig        `yaml:"room"`
+	Group       GroupConfig       `yaml:"group"`
+}
+
+type KafkaTopics struct {
+	MessageSendPersist string `yaml:"message.send.persist"`
+	MessageSendCache   string `yaml:"message.send.cache"`
+	MessageSendPush    string `yaml:"message.send.push"`
+	MessageReadReceipt string `yaml:"message.read.receipt"`
 }
 
 type HTTPConfig struct {
@@ -37,7 +44,7 @@ type UserAPIRateLimitConfig struct {
 	Burst         int64   `yaml:"burst"`
 }
 
-type RoomConfig struct {
+type GroupConfig struct {
 	MaxMembers           int `yaml:"max_members"`
 	InviteCodeTTLSeconds int `yaml:"invite_code_ttl_seconds"`
 	InviteCodeLength     int `yaml:"invite_code_length"`
@@ -50,14 +57,13 @@ type FriendConfig struct {
 }
 
 type CacheConfig struct {
-	MessageDedup       MessageDedupConfig        `yaml:"message_dedup"`
-	RoomMessages       RoomMessagesConfig        `yaml:"room_messages"`
-	AttachmentAccess   AttachmentAccessConfig    `yaml:"attachment_access"`
-	AttachmentFileCard AttachmentFileCardConfig  `yaml:"attachment_file_card"`
-	RoomUnreadSnapshot RoomUnreadSnapshotConfig  `yaml:"room_unread_snapshot"`
-	RoomInfo           RoomInfoConfig            `yaml:"room_info"`
-	ConversationInfo   ConversationInfoConfig    `yaml:"conversation_info"`
-	FriendRelation     FriendRelationCacheConfig `yaml:"friend_relation"`
+	MessageDedup        MessageDedupConfig        `yaml:"message_dedup"`
+	GroupMessages       GroupMessagesConfig       `yaml:"group_messages"`
+	AttachmentAccess    AttachmentAccessConfig    `yaml:"attachment_access"`
+	GroupUnreadSnapshot GroupUnreadSnapshotConfig `yaml:"group_unread_snapshot"`
+	GroupInfo           GroupInfoConfig           `yaml:"group_info"`
+	ConversationInfo    ConversationInfoConfig    `yaml:"conversation_info"`
+	FriendRelation      FriendRelationCacheConfig `yaml:"friend_relation"`
 }
 
 type MessageDedupConfig struct {
@@ -65,12 +71,12 @@ type MessageDedupConfig struct {
 	ProcessingTTLSeconds int `yaml:"processing_ttl_seconds"`
 }
 
-type RoomMessagesConfig struct {
+type GroupMessagesConfig struct {
 	TTLSeconds int `yaml:"ttl_seconds"`
 	MaxEntries int `yaml:"max_entries"`
 }
 
-type RoomInfoConfig struct {
+type GroupInfoConfig struct {
 	TTLSeconds int `yaml:"ttl_seconds"`
 }
 
@@ -84,15 +90,11 @@ type FriendRelationCacheConfig struct {
 	NegativeTTLSeconds int `yaml:"negative_ttl_seconds"`
 }
 
-type RoomUnreadSnapshotConfig struct {
+type GroupUnreadSnapshotConfig struct {
 	TTLSeconds int `yaml:"ttl_seconds"`
 }
 
 type AttachmentAccessConfig struct {
-	TTLSeconds int `yaml:"ttl_seconds"`
-}
-
-type AttachmentFileCardConfig struct {
 	TTLSeconds int `yaml:"ttl_seconds"`
 }
 
@@ -106,24 +108,30 @@ type KafkaConfig struct {
 	Producer KafkaProducerConfig `yaml:"producer"`
 }
 
-type KafkaTopics struct {
-	Message string `yaml:"message"`
-}
-
 type KafkaConsumerConfig struct {
 	GroupID                       string `yaml:"group_id"`
 	Version                       string `yaml:"version"`
 	Assignor                      string `yaml:"assignor"` // range / roundrobin / sticky
-	BatchSize                     int    `yaml:"batch_size"`
-	FlushIntervalMilliseconds     int    `yaml:"flush_interval_milliseconds"`
-	InputQueueSize                int    `yaml:"input_queue_size"`
-	WorkerCount                   int    `yaml:"worker_count"`
-	WorkerQueueSize               int    `yaml:"worker_queue_size"`
 	MaxAttempts                   int    `yaml:"max_attempts"`
-	LeaseStaleAfterSecs           int    `yaml:"lease_stale_after_seconds"`
 	ConsumeRetryIntervalSecs      int    `yaml:"consume_retry_interval_seconds"`
 	RetryInitialDelayMilliseconds int    `yaml:"retry_initial_delay_milliseconds"`
 	RetryMaxDelayMilliseconds     int    `yaml:"retry_max_delay_milliseconds"`
+	// offset 异步刷脏：Sarama AutoCommit 后台协程提交间隔（毫秒）
+	AutoCommitIntervalMs int `yaml:"auto_commit_interval_ms"`
+	// fetch 节流调优：单次 fetch 最多等待时长（毫秒），调小可降低空等
+	FetchMaxWaitMs int `yaml:"fetch_max_wait_ms"`
+	// fetch 节流调优：单轮 ConsumeClaim 处理预算时长（毫秒），调大可减少暂停切换
+	FetchMaxProcessingMs int `yaml:"fetch_max_processing_ms"`
+
+	// 消息攒批：按会话（conversationID）聚合，一批共享一次事务 / fsync，摊薄刷盘固定开销
+	Batch MessageBatchConfig `yaml:"batch"`
+}
+
+// MessageBatchConfig 消息攒批配置。
+// 按会话聚合消息，达到 Size 条或 FlushIntervalMs 毫秒触发一次批量落库事务。
+type MessageBatchConfig struct {
+	Size            int `yaml:"size"`              // 攒批条数上限，默认 500
+	FlushIntervalMs int `yaml:"flush_interval_ms"` // 攒批超时（毫秒），默认 100；到点不足一批也 flush
 }
 
 type KafkaProducerConfig struct {
@@ -140,39 +148,27 @@ type StorageConfig struct {
 type FileCleanupConfig struct {
 	IntervalSeconds         int `yaml:"interval_seconds"`
 	BatchSize               int `yaml:"batch_size"`
-	StaleAfterSeconds       int `yaml:"stale_after_seconds"`
-	BaseRetryWaitSeconds    int `yaml:"base_retry_wait_seconds"`
 	OperationTimeoutSeconds int `yaml:"operation_timeout_seconds"`
-	MaxRetries              int `yaml:"max_retries"`
 	OrphanAfterSeconds      int `yaml:"orphan_after_seconds"`
-	CompleteLockTTLSeconds  int `yaml:"complete_lock_ttl_seconds"`
-	MaxRetryWaitSeconds     int `yaml:"max_retry_wait_seconds"`
 }
 
 type MinIOConfig struct {
-	Endpoint                        string   `yaml:"endpoint"`
-	PublicEndpoint                  string   `yaml:"public_endpoint"`
-	Region                          string   `yaml:"region"`
-	AccessKeyID                     string   `yaml:"access_key_id"`
-	SecretAccessKey                 string   `yaml:"secret_access_key"`
-	Bucket                          string   `yaml:"bucket"`
-	UseSSL                          bool     `yaml:"use_ssl"`
-	CacheTTLSeconds                 int      `yaml:"cache_ttl_seconds"`
-	URLTTLSeconds                   int      `yaml:"url_ttl_seconds"`
-	MultipartTTL                    int      `yaml:"multipartTTL"`
-	PartURLTTLSeconds               int      `yaml:"part_url_ttl_seconds"`
-	DirectUploadURLTTLSeconds       int      `yaml:"direct_upload_url_ttl_seconds"`
-	DirectUploadMaxSizeBytes        int64    `yaml:"direct_upload_max_size_bytes"`
-	MultipartInitLockTTLSeconds     int      `yaml:"multipart_init_lock_ttl_seconds"`
-	MultipartCompleteLockTTLSeconds int      `yaml:"multipart_complete_lock_ttl_seconds"`
-	MaxFileSizeBytes                int64    `yaml:"max_file_size_bytes"`
-	MaxMultipartParts               int      `yaml:"max_multipart_parts"`
-	UploadRate                      float64  `yaml:"upload_rate"`
-	UploadBurst                     int64    `yaml:"upload_burst"`
-	CompleteLockRenewTimeoutSeconds int      `yaml:"complete_lock_renew_timeout_seconds"`
-	LockReleaseTimeoutSeconds       int      `yaml:"lock_release_timeout_seconds"`
-	ObjectCleanupTimeoutSeconds     int      `yaml:"object_cleanup_timeout_seconds"`
-	AllowedContentTypes             []string `yaml:"allowed_content_types"`
+	Endpoint                    string   `yaml:"endpoint"`
+	PublicEndpoint              string   `yaml:"public_endpoint"`
+	Region                      string   `yaml:"region"`
+	AccessKeyID                 string   `yaml:"access_key_id"`
+	SecretAccessKey             string   `yaml:"secret_access_key"`
+	Bucket                      string   `yaml:"bucket"`
+	UseSSL                      bool     `yaml:"use_ssl"`
+	URLTTLSeconds               int      `yaml:"url_ttl_seconds"`
+	MultipartTTL                int      `yaml:"multipartTTL"`
+	PartURLTTLSeconds           int      `yaml:"part_url_ttl_seconds"`
+	MaxFileSizeBytes            int64    `yaml:"max_file_size_bytes"`
+	MaxMultipartParts           int      `yaml:"max_multipart_parts"`
+	UploadRate                  float64  `yaml:"upload_rate"`
+	UploadBurst                 int64    `yaml:"upload_burst"`
+	ObjectCleanupTimeoutSeconds int      `yaml:"object_cleanup_timeout_seconds"`
+	AllowedContentTypes         []string `yaml:"allowed_content_types"`
 }
 
 type App struct {
@@ -201,24 +197,22 @@ type WebSocketConfig struct {
 }
 
 type MessageConfig struct {
-	RoomRealtimeFanoutLimit           int   `yaml:"room_realtime_fanout_limit"`
-	LargeRoomNoticeLingerMilliseconds int   `yaml:"large_room_notice_linger_milliseconds"`
-	LargeRoomNoticeShardCount         int   `yaml:"large_room_notice_shard_count"`
-	RoomActivityWindowSeconds         int   `yaml:"room_activity_window_seconds"`
-	RoomActivityBucketSeconds         int   `yaml:"room_activity_bucket_seconds"`
-	RoomActivityKeyTTLSeconds         int   `yaml:"room_activity_key_ttl_seconds"`
-	RoomActivityWarnFanoutWork        int   `yaml:"room_activity_warn_fanout_work"`
-	RoomActivityActiveFanoutWork      int   `yaml:"room_activity_active_fanout_work"`
-	RoomMemberStateTTLSeconds         int   `yaml:"room_member_state_ttl_seconds"`
-	RoomMemberNegativeTTLSeconds      int   `yaml:"room_member_negative_ttl_seconds"`
-	HistoryDefaultLimit               int   `yaml:"history_default_limit"`
-	HistoryMaxLimit                   int   `yaml:"history_max_limit"`
-	OfflinePageSize                   int   `yaml:"offline_page_size"`
-	MaxSyncSeqs                       int   `yaml:"max_sync_seqs"`
-	MemberQueryTimeoutSeconds         int   `yaml:"member_query_timeout_seconds"`
-	MaxTextRunes                      int   `yaml:"max_text_runes"`
-	MaxIdentifierLength               int   `yaml:"max_identifier_length"`
-	AttachmentTTLSeconds              int64 `yaml:"attachment_ttl_seconds"`
+	LargeGroupNoticeLingerMilliseconds int   `yaml:"large_group_notice_linger_milliseconds"`
+	LargeGroupNoticeShardCount         int   `yaml:"large_group_notice_shard_count"`
+	GroupActivityWindowSeconds         int   `yaml:"group_activity_window_seconds"`
+	GroupActivityBucketSeconds         int   `yaml:"group_activity_bucket_seconds"`
+	GroupActivityKeyTTLSeconds         int   `yaml:"group_activity_key_ttl_seconds"`
+	GroupActivityWarnFanoutWork        int   `yaml:"group_activity_warn_fanout_work"`
+	GroupActivityActiveFanoutWork      int   `yaml:"group_activity_active_fanout_work"`
+	GroupMemberStateTTLSeconds         int   `yaml:"group_member_state_ttl_seconds"`
+	GroupMemberNegativeTTLSeconds      int   `yaml:"group_member_negative_ttl_seconds"`
+	HistoryDefaultLimit                int   `yaml:"history_default_limit"`
+	HistoryMaxLimit                    int   `yaml:"history_max_limit"`
+	OfflinePageSize                    int   `yaml:"offline_page_size"`
+	MaxSyncSeqs                        int   `yaml:"max_sync_seqs"`
+	MemberQueryTimeoutSeconds          int   `yaml:"member_query_timeout_seconds"`
+	MaxIdentifierLength                int   `yaml:"max_identifier_length"`
+	AttachmentTTLSeconds               int64 `yaml:"attachment_ttl_seconds"`
 }
 
 type Server struct {
@@ -231,9 +225,9 @@ type Server struct {
 }
 
 type GRPCConfig struct {
-	RoomAgentAddress                string `yaml:"room_agent_address"`
-	RoomMessageSyncDefaultBatchSize int    `yaml:"room_message_sync_default_batch_size"`
-	RoomMessageSyncMaxBatchSize     int    `yaml:"room_message_sync_max_batch_size"`
+	GroupAgentAddress                string `yaml:"group_agent_address"`
+	GroupMessageSyncDefaultBatchSize int    `yaml:"group_message_sync_default_batch_size"`
+	GroupMessageSyncMaxBatchSize     int    `yaml:"group_message_sync_max_batch_size"`
 }
 
 type Database struct {
@@ -296,8 +290,8 @@ func applyEnvironmentOverrides(config *Config) error {
 	if value := os.Getenv("SERVER_PORT"); value != "" {
 		config.Server.Port = value
 	}
-	if value := os.Getenv("GRPC_ROOM_AGENT_ADDRESS"); value != "" {
-		config.GRPC.RoomAgentAddress = value
+	if value := os.Getenv("GRPC_GROUP_AGENT_ADDRESS"); value != "" {
+		config.GRPC.GroupAgentAddress = value
 	}
 	if value := os.Getenv("MYSQL_DSN"); value != "" {
 		config.Database.MySQL.DSN = value

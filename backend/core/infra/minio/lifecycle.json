@@ -1,0 +1,10 @@
+{
+  "Rules": [
+    {
+      "ID": "abort-incomplete-multipart-direct",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "minio/direct/" },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 3 }
+    }
+  ]
+}

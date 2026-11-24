@@ -13,51 +13,53 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"IM_backend/configs"
-	roomagentapp "IM_backend/internal/application/agent"
-	conversationapp "IM_backend/internal/application/conversation"
-	fileapp "IM_backend/internal/application/file"
-	friendapp "IM_backend/internal/application/friend"
-	messageapp "IM_backend/internal/application/message"
-	ratelimitport "IM_backend/internal/application/ports/ratelimit"
-	roomapp "IM_backend/internal/application/room"
-	userapp "IM_backend/internal/application/user"
-	infracache "IM_backend/internal/infra/cache"
-	agentcache "IM_backend/internal/infra/cache/agent"
-	authcache "IM_backend/internal/infra/cache/auth"
-	conversationcache "IM_backend/internal/infra/cache/conversation"
-	filecache "IM_backend/internal/infra/cache/file"
-	friendrelationcache "IM_backend/internal/infra/cache/friend"
-	messagecache "IM_backend/internal/infra/cache/message"
-	roomcache "IM_backend/internal/infra/cache/room"
-	usercache "IM_backend/internal/infra/cache/user"
-	"IM_backend/internal/infra/database"
-	infraconversation "IM_backend/internal/infra/database/conversation"
-	infrafile "IM_backend/internal/infra/database/file"
-	infrafriend "IM_backend/internal/infra/database/friend"
-	infrainbox "IM_backend/internal/infra/database/inbox"
-	inframessage "IM_backend/internal/infra/database/message"
-	infraroom "IM_backend/internal/infra/database/room"
-	infrauser "IM_backend/internal/infra/database/user"
-	"IM_backend/internal/infra/id/snowflake"
-	"IM_backend/internal/infra/metrics"
-	mqhandler "IM_backend/internal/infra/mq/handlers"
-	"IM_backend/internal/infra/mq/kafka"
-	"IM_backend/internal/infra/ratelimit"
-	authsvc "IM_backend/internal/infra/security/auth"
-	passwordsecurity "IM_backend/internal/infra/security/password"
-	minioobj "IM_backend/internal/infra/storage/minio"
-	grpcserver "IM_backend/internal/interfaces/grpc"
-	roomagentgrpc "IM_backend/internal/interfaces/grpc/agent"
-	userconversationhttp "IM_backend/internal/interfaces/http/conversation"
-	filehttp "IM_backend/internal/interfaces/http/file"
-	friendhttp "IM_backend/internal/interfaces/http/friend"
-	friendrequesthttp "IM_backend/internal/interfaces/http/friendrequest"
-	messagehttp "IM_backend/internal/interfaces/http/message"
-	"IM_backend/internal/interfaces/http/middleware"
-	monitoringhttp "IM_backend/internal/interfaces/http/monitoring"
-	roomhttp "IM_backend/internal/interfaces/http/room"
-	userhttp "IM_backend/internal/interfaces/http/user"
-	"IM_backend/internal/interfaces/ws"
+	groupagentapp "IM_backend/core/application/agent"
+	conversationapp "IM_backend/core/application/conversation"
+	fileapp "IM_backend/core/application/file"
+	friendapp "IM_backend/core/application/friend"
+	messageapp "IM_backend/core/application/message"
+	ratelimitport "IM_backend/core/application/ports/ratelimit"
+	groupapp "IM_backend/core/application/group"
+	userapp "IM_backend/core/application/user"
+	infracache "IM_backend/core/infra/cache"
+	agentcache "IM_backend/core/infra/cache/agent"
+	authcache "IM_backend/core/infra/cache/auth"
+	conversationcache "IM_backend/core/infra/cache/conversation"
+	filecache "IM_backend/core/infra/cache/file"
+	friendrelationcache "IM_backend/core/infra/cache/friend"
+	messagecache "IM_backend/core/infra/cache/message"
+	groupcache "IM_backend/core/infra/cache/group"
+	usercache "IM_backend/core/infra/cache/user"
+	"IM_backend/core/infra/database"
+	infraconversation "IM_backend/core/infra/database/conversation"
+	infrafile "IM_backend/core/infra/database/file"
+	infrafriend "IM_backend/core/infra/database/friend"
+	infrainbox "IM_backend/core/infra/database/inbox"
+	inframessage "IM_backend/core/infra/database/message"
+	infragroup "IM_backend/core/infra/database/group"
+	infrauser "IM_backend/core/infra/database/user"
+	"IM_backend/core/infra/id/snowflake"
+	"IM_backend/core/infra/metrics"
+	mqhandler "IM_backend/core/infra/mq/handlers"
+	messagesend "IM_backend/core/infra/mq/handlers/message/send"
+	messageread "IM_backend/core/infra/mq/handlers/message/read"
+	"IM_backend/core/infra/mq/kafka"
+	"IM_backend/core/infra/ratelimit"
+	authsvc "IM_backend/core/infra/security/auth"
+	passwordsecurity "IM_backend/core/infra/security/password"
+	minioobj "IM_backend/core/infra/storage/minio"
+	grpcserver "IM_backend/core/interfaces/grpc"
+	groupagentgrpc "IM_backend/core/interfaces/grpc/agent"
+	userconversationhttp "IM_backend/core/interfaces/http/conversation"
+	filehttp "IM_backend/core/interfaces/http/file"
+	friendhttp "IM_backend/core/interfaces/http/friend"
+	friendrequesthttp "IM_backend/core/interfaces/http/friendrequest"
+	messagehttp "IM_backend/core/interfaces/http/message"
+	"IM_backend/core/interfaces/http/middleware"
+	monitoringhttp "IM_backend/core/interfaces/http/monitoring"
+	grouphttp "IM_backend/core/interfaces/http/group"
+	userhttp "IM_backend/core/interfaces/http/user"
+	"IM_backend/core/interfaces/ws"
 )
 
 func main() {
@@ -105,10 +107,10 @@ func main() {
 
 	authCache := authcache.NewAuthCache(redisClient)
 	userProfileCache := usercache.NewProfileCache(redisClient)
-	roomCache := roomcache.NewRoomCache(redisClient, cfg)
-	roomInfoCache := roomcache.NewRoomInfoCache(redisClient)
-	roomUnreadSnapshotCache := agentcache.NewRoomUnreadSnapshotCache(redisClient)
-	roomMemberCache := roomcache.NewRoomMemberCache(redisClient, cfg.Message)
+	groupCache := groupcache.NewGroupCache(redisClient, cfg)
+	groupInfoCache := groupcache.NewGroupInfoCache(redisClient)
+	groupUnreadSnapshotCache := agentcache.NewGroupUnreadSnapshotCache(redisClient)
+	groupMemberCache := groupcache.NewGroupMemberCache(redisClient, cfg.Message)
 	fileCache := filecache.NewFileCache(redisClient)
 	messageCache := messagecache.NewMessageCache(redisClient)
 
@@ -163,19 +165,15 @@ func main() {
 	fileApplication := fileapp.NewFileApplication(cfg, fileRepository, fileUploadRepository, messageAttachmentsRepository, fileCache, objectStorage, idGenerator, txManager)
 
 	// file 清除 worker
-	fileCleanupWorker := fileapp.NewCleanupWorker(
-		txManager,
-		fileUploadRepository,
+	fileDeleteOutdatedData := fileapp.NewDeleteOutdatedData(
 		fileRepository,
-		fileCache,
 		objectStorage,
 		cfg.FileCleanup,
-		cfg.Storage.MinIO,
 	)
 	cleanupDone := make(chan struct{})
 	go func() {
 		defer close(cleanupDone)
-		fileCleanupWorker.Run(ctx)
+		fileDeleteOutdatedData.Run(ctx)
 	}()
 	fileHandler := filehttp.NewHandler(fileApplication)
 
@@ -218,56 +216,57 @@ func main() {
 	friendApp := friendapp.NewFriendApplication(friendRepository, userRepository)
 	friendHandler := friendhttp.NewHandler(friendApp)
 
-	roomMemberRepository := infraroom.NewRoomMemberRepository(db)
-	roomRepository := infraroom.NewRoomRepository(db)
-	roomAgentApplication := roomagentapp.NewRoomAgentApplication(
-		roomMemberRepository,
+	groupMemberRepository := infragroup.NewGroupMemberRepository(db)
+	groupRepository := infragroup.NewGroupRepository(db)
+	groupAgentApplication := groupagentapp.NewGroupAgentApplication(
+		groupMemberRepository,
 		conversationRepository,
 		userConversationRepository,
 		userRepository,
 		messageRepository,
-		roomMemberCache,
+		groupMemberCache,
 		cfg.Message,
 		cfg.GRPC,
 	)
-	roomAgentHandler := roomagentgrpc.NewRoomAgentContextHandler(roomAgentApplication, tokenService, authCache)
-	roomAgentGRPCServer, err := grpcserver.NewServer(cfg.GRPC.RoomAgentAddress, roomAgentHandler)
+	groupAgentHandler := groupagentgrpc.NewGroupAgentContextHandler(groupAgentApplication, tokenService, authCache)
+	groupAgentGRPCServer, err := grpcserver.NewServer(cfg.GRPC.GroupAgentAddress, groupAgentHandler)
 	if err != nil {
-		log.Fatal("启动 Room Agent gRPC 监听失败：", err)
+		log.Fatal("启动 Group Agent gRPC 监听失败：", err)
 	}
-	defer roomAgentGRPCServer.Stop()
+	defer groupAgentGRPCServer.Stop()
 	grpcServeErr := make(chan error, 1)
 	go func() {
-		grpcServeErr <- roomAgentGRPCServer.Serve()
+		grpcServeErr <- groupAgentGRPCServer.Serve()
 	}()
-	log.Printf("Room Agent gRPC 服务已启动：address=%s", cfg.GRPC.RoomAgentAddress)
-	roomApp := roomapp.NewRoomApplication(
-		roomRepository,
-		roomMemberRepository,
+	log.Printf("Group Agent gRPC 服务已启动：address=%s", cfg.GRPC.GroupAgentAddress)
+	groupApp := groupapp.NewGroupApplication(
+		groupRepository,
+		groupMemberRepository,
 		userConversationRepository,
 		conversationRepository,
-		roomCache,
-		roomMemberCache,
+		groupCache,
+		groupMemberCache,
 		txManager,
 		idGenerator,
-		cfg.Room,
+		cfg.Group,
 	)
-	roomApp.SetRoomInfoCache(roomInfoCache, time.Duration(cfg.Cache.RoomInfo.TTLSeconds)*time.Second)
-	roomApp.SetConversationApplication(conversationApplication)
-	roomHandler := roomhttp.NewHandler(roomApp, conversationApplication)
+	groupApp.SetGroupInfoCache(groupInfoCache, time.Duration(cfg.Cache.GroupInfo.TTLSeconds)*time.Second)
+	groupApp.SetConversationApplication(conversationApplication)
+	groupHandler := grouphttp.NewHandler(groupApp, conversationApplication)
 
 	messageDelivery := mqhandler.NewMessageDelivery(
 		realtimeGateway,
 		cfg.Message,
 	)
 	defer messageDelivery.Close(context.Background())
-	messageProducer := kafka.NewProducer(kafkaClient, cfg.Kafka.Topics.Message)
+	messageProducer := kafka.NewProducer(kafkaClient)
+	deadLetterWriter := kafka.NewDeadLetterWriter(messageProducer)
 	dispatcher := ws.NewDispatcher()
 
 	messageApplication := messageapp.NewMessageApplication(
 		messageCache,
-		roomMemberCache,
-		roomCache,
+		groupMemberCache,
+		groupCache,
 		txManager,
 		userConversationRepository,
 		conversationRepository,
@@ -277,28 +276,42 @@ func main() {
 		fileCache,
 		messageStickerRepository,
 		messageRepository,
-		roomMemberRepository,
-		roomApp,
+		groupMemberRepository,
+		groupApp,
 		cfg,
-		roomUnreadSnapshotCache,
+		groupUnreadSnapshotCache,
 		messageAttachmentsRepository,
 		messageProducer,
 		inboxRepository,
 	)
 	messageApplication.SetConversationApplication(conversationApplication)
 	messageApplication.SetUserDelivery(realtimeGateway)
-	messageSendHandler := mqhandler.NewMessageHandler(
-		inboxRepository, txManager, cfg, conversationApplication, conversationRepository,
+	messageSendHandler := messagesend.NewMessageHandler(
+		ctx, inboxRepository, txManager, cfg, conversationApplication, conversationRepository,
 		messageRepository, userConversationRepository, fileRepository, fileCache,
 		messageAttachmentsRepository, messageStickerRepository, idGenerator,
-		roomCache, roomApp, messageDelivery, messageCache,
+		groupCache, groupApp, messageDelivery, messageCache, messageProducer,
 	)
+	messageRedisFillHandler := messagesend.NewMessageRedisFillHandler(messageCache, cfg)
+	messageTransferHandler := messagesend.NewMessageTransferHandler(conversationApplication, messageDelivery, groupCache, cfg)
+	readReceiptHandler := messageread.NewReadReceiptHandler(
+		cfg, inboxRepository, txManager, messageRepository,
+		conversationRepository, userConversationRepository, realtimeGateway,
+	)
+
+	consumerCtx, stopConsume := context.WithCancel(ctx)
 
 	messageConsumer, err := kafka.NewConsumer(
 		kafkaClient,
-		[]string{cfg.Kafka.Topics.Message},
-		messageSendHandler,
+		[]string{
+			cfg.Kafka.Topics.MessageSendPersist,
+			cfg.Kafka.Topics.MessageSendCache,
+			cfg.Kafka.Topics.MessageSendPush,
+			cfg.Kafka.Topics.MessageReadReceipt,
+		},
+		[]kafka.EventHandler{messageSendHandler, messageRedisFillHandler, messageTransferHandler, readReceiptHandler},
 		cfg.Kafka.Consumer,
+		deadLetterWriter,
 	)
 
 	if err != nil {
@@ -309,7 +322,7 @@ func main() {
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
-		if err := messageConsumer.Consume(ctx); err != nil && ctx.Err() == nil {
+		if err := messageConsumer.Consume(consumerCtx); err != nil && consumerCtx.Err() == nil {
 			log.Printf("消息队列消费者已停止：%v", err)
 		}
 	}()
@@ -330,7 +343,7 @@ func main() {
 		friendRepository,
 		userRepository,
 		userProfileCache,
-		roomApp,
+		groupApp,
 	)
 
 	userConversationHandler := userconversationhttp.NewHandler(userConversationApplication)
@@ -355,7 +368,7 @@ func main() {
 	userhttp.RegisterRoutes(apiGroup, userHandler, authMiddle, limiterMiddleware, userAPIRateLimit)
 	userconversationhttp.RegisterRoutes(apiGroup, userConversationHandler, authMiddle)
 	friendhttp.RegisterRoutes(apiGroup, friendHandler, authMiddle)
-	roomhttp.RegisterRoutes(apiGroup, roomHandler, authMiddle)
+	grouphttp.RegisterRoutes(apiGroup, groupHandler, authMiddle)
 	messagehttp.RegisterRoutes(apiGroup, messageHandler, authMiddle)
 	filehttp.RegisterRoutes(apiGroup, fileHandler, authMiddle, limiterMiddleware, ratelimitport.Policy{
 		Rate:  cfg.Storage.MinIO.UploadRate,
@@ -391,9 +404,9 @@ func main() {
 	case <-quit:
 	case err := <-grpcServeErr:
 		if err != nil {
-			log.Printf("Room Agent gRPC 服务异常退出：%v", err)
+			log.Printf("Group Agent gRPC 服务异常退出：%v", err)
 		}
-		log.Printf("Room Agent gRPC 服务已停止，开始关闭后端")
+		log.Printf("Group Agent gRPC 服务已停止，开始关闭后端")
 	}
 
 	log.Println("服务正在停止")
@@ -402,7 +415,7 @@ func main() {
 	grpcStopDone := make(chan struct{})
 	go func() {
 		defer close(grpcStopDone)
-		roomAgentGRPCServer.GracefulStop()
+		groupAgentGRPCServer.GracefulStop()
 	}()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("关闭 HTTP 服务失败：%v", err)
@@ -410,22 +423,28 @@ func main() {
 	select {
 	case <-grpcStopDone:
 	case <-shutdownCtx.Done():
-		log.Printf("等待 Room Agent gRPC 请求优雅结束超时，强制停止")
-		roomAgentGRPCServer.Stop()
+		log.Printf("等待 Group Agent gRPC 请求优雅结束超时，强制停止")
+		groupAgentGRPCServer.Stop()
 		<-grpcStopDone
 	}
+	// 关闭顺序：先停 Kafka 消费（停止入队）→ 等消费循环退出 → drain 攒批器（flush 在途消息）→
+	// 再关 WS 通道。这样在途的推送能在网关仍存活时送达，避免消息已落库但推送丢失。
+	stopConsume()
+	select {
+	case <-consumerDone:
+	case <-shutdownCtx.Done():
+		log.Printf("等待消息消费循环退出超时")
+	}
+	messageSendHandler.Drain()
+	messageDelivery.Close(shutdownCtx)
 	if err := realtimeGateway.Shutdown(shutdownCtx); err != nil {
 		log.Printf("等待 WebSocket 入站分发结束失败：%v", err)
-		cancel()
 	}
-	messageDelivery.Close(shutdownCtx)
 	cancel()
-	for _, done := range []<-chan struct{}{cleanupDone, consumerDone} {
-		select {
-		case <-done:
-		case <-shutdownCtx.Done():
-			log.Printf("等待后台任务退出超时")
-		}
+	select {
+	case <-cleanupDone:
+	case <-shutdownCtx.Done():
+		log.Printf("等待后台清理任务退出超时")
 	}
 	log.Println("服务已停止")
 }

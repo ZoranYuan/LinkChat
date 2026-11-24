@@ -9,9 +9,8 @@ server:
   health_timeout_seconds: 2
   max_header_bytes: 1048576
 grpc:
-  room_agent_address: ":50051"
-  room_message_sync_default_batch_size: 100
-  room_message_sync_max_batch_size: 500
+  group_agent_address: ":50051"
+  group_message_sync_max_batch_size: 500
 http:
   user_api_rate_limit:
     # 本地压测准备允许同一来源批量登录；其他部署环境应按需覆盖。
@@ -23,7 +22,7 @@ database:
     max_idle_conns: 50
     conn_max_lifetime_seconds: 240
     slow_threshold_milliseconds: 1000
-    log_level: "info"
+    log_level: "warn"
     dsn: "user:123456@tcp(mysql:3306)/IMChat?charset=utf8mb4&parseTime=True&loc=Local"
   redis:
     dsn: "redis://redis:6379/1?dial_timeout=5s&read_timeout=3s&pool_size=50"
@@ -48,7 +47,7 @@ ws:
   close_timeout_seconds: 1
   max_message_size: 5120
   max_message_send_buffer_size: 256
-  send_message_rate: 10
+  send_message_rate: 100
   send_message_burst: 20
   batch_max_messages: 64
   batch_max_bytes: 8192
@@ -57,7 +56,7 @@ ws:
   batch_ack_timeout_seconds: 3
   batch_retry_interval_seconds: 1
   batch_max_retries: 3
-room:
+group:
   max_members: 1000000
   invite_code_ttl_seconds: 300
   invite_code_length: 9
@@ -66,20 +65,18 @@ friend:
   request_timeout_seconds: 5
   request_cooldown_seconds: 600
 message:
-  room_realtime_fanout_limit: 20000
-  large_room_notice_linger_milliseconds: 50
-  large_room_notice_shard_count: 16
-  max_text_runes: 4096
+  large_group_notice_linger_milliseconds: 50
+  large_group_notice_shard_count: 16
   max_identifier_length: 128
   attachment_ttl_seconds: 1209600
-  room_activity_window_seconds: 30
-  room_activity_bucket_seconds: 5
-  room_activity_key_ttl_seconds: 60
+  group_activity_window_seconds: 30
+  group_activity_bucket_seconds: 5
+  group_activity_key_ttl_seconds: 60
   # 阈值为约 30 秒窗口内消息数 × 在线连接数；1 万连接在线时，超过 100/300 条消息分别预热缓存和切换拉模式。
-  room_activity_warn_fanout_work: 1000000
-  room_activity_active_fanout_work: 3000000
-  room_member_state_ttl_seconds: 3600
-  room_member_negative_ttl_seconds: 120
+  group_activity_warn_fanout_work: 300000
+  group_activity_active_fanout_work: 1200000
+  group_member_state_ttl_seconds: 3600
+  group_member_negative_ttl_seconds: 120
   history_default_limit: 20
   history_max_limit: 30
   offline_page_size: 10
@@ -89,22 +86,27 @@ kafka:
   brokers:
     - "kafka:9092"
   topics:
-    message: "im.messages"
+    message.send.persist: "message.send.persist"
+    message.send.cache: "message.send.cache"
+    message.send.push: "message.send.push"
+    message.read.receipt: "message.read.receipt"
 
   consumer:
     group_id: "im-chat-consumer-group"
     version: "2.6.0"
     assignor: "range"   # range / roundrobin / sticky
-    batch_size: 100
-    flush_interval_milliseconds: 50
-    input_queue_size: 500
-    worker_count: 16
-    worker_queue_size: 50
     max_attempts: 3 # 首次处理一次，最多再重试两次。
-    lease_stale_after_seconds: 10
-    consume_retry_interval_seconds: 1
     retry_initial_delay_milliseconds: 200
     retry_max_delay_milliseconds: 800
+    consume_retry_interval_seconds: 1
+    auto_commit_interval_ms: 100       # offset 异步刷脏间隔
+    fetch_max_wait_ms: 100             # 单次 fetch 最大等待时长
+    fetch_max_processing_ms: 1000      # 单轮 ConsumeClaim 处理预算时长
+
+    # 消息攒批：按会话聚合，一批共享一次事务 / fsync；达到条数或超时即 flush
+    batch:
+      size: 500              # 攒批条数上限
+      flush_interval_ms: 100 # 攒批超时（毫秒），到点不足一批也 flush
 
   producer:
     retries: 3
@@ -121,45 +123,53 @@ storage:
     secret_access_key: "minioadmin"
     bucket: "imchat"
     use_ssl: false
-    cache_ttl_seconds: 600
     url_ttl_seconds: 3600
     multipartTTL: 86400
     part_url_ttl_seconds: 900
-    direct_upload_url_ttl_seconds: 1800
-    direct_upload_max_size_bytes: 8388608
-    multipart_init_lock_ttl_seconds: 15
-    multipart_complete_lock_ttl_seconds: 30
     max_file_size_bytes: 1073741824
     max_multipart_parts: 10000
     upload_rate: 1
     upload_burst: 5
-    complete_lock_renew_timeout_seconds: 2
-    lock_release_timeout_seconds: 3
     object_cleanup_timeout_seconds: 10
     allowed_content_types:
+      # Images
       - "image/jpeg"
       - "image/png"
       - "image/webp"
+      - "image/gif"
+
+      # Videos
       - "video/mp4"
+
+      # Documents
       - "application/pdf"
+      - "application/msword"
+      - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      - "application/vnd.ms-excel"
+      - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      - "application/vnd.ms-powerpoint"
+      - "application/vnd.openxmlformats-officedocument.presentationml.presentation"
       - "text/plain"
+      - "text/csv"
+      - "text/markdown"
+
+      # Audio
+      - "audio/mpeg"
+      - "audio/wav"
+      - "audio/ogg"
+      - "audio/mp4"
 
 file_cleanup:
   interval_seconds: 60
   batch_size: 50
-  stale_after_seconds: 300
-  base_retry_wait_seconds: 30
   operation_timeout_seconds: 30
-  max_retries: 10
   orphan_after_seconds: 86400
-  complete_lock_ttl_seconds: 35
-  max_retry_wait_seconds: 1800
 
 cache:
   message_dedup:
     ttl_seconds: 120
     processing_ttl_seconds: 15
-  room_messages:
+  group_messages:
     ttl_seconds: 600
     max_entries: 500
   conversation_info:
@@ -171,12 +181,9 @@ cache:
   attachment_access:
     # 访问 URL 缓存时间，略短于 storage.minio.url_ttl_seconds。
     ttl_seconds: 3570
-  attachment_file_card:
-    # 附件文件卡片缓存时间；实际不会超过附件自身的有效期。
-    ttl_seconds: 86400
-  room_unread_snapshot:
-    # 用户进入房间前的未读摘要范围缓存时间。
+  group_unread_snapshot:
+    # 用户进入群聊前的未读摘要范围缓存时间。
     ttl_seconds: 120
-  room_info:
-    # 房间基础信息缓存；成员数在加入房间、退出房间提交后主动失效。
+  group_info:
+    # 群聊基础信息缓存；成员数在加入群聊、退出群聊提交后主动失效。
     ttl_seconds: 60
