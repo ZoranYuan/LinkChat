@@ -1,0 +1,529 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "LinkChat 压测监控：在线连接数、WS 出站链路、Kafka 消费事务、MySQL 状态，以及 k6 写入的端到端延迟与 QPS。可用「压测 Run ID」变量按档位过滤。",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "在线 WebSocket 连接数",
+      "description": "服务端网关当前注册的在线连接数（新增 Gauge）。压测时应与 k6 VU 数基本一致，是连接容量的直接读数。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 12, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "linkchat_ws_active_connections{job=\"linkchat-backend\"}",
+          "legendFormat": "在线连接数 · {{instance}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "连接事件速率（opened / closed / rejected）",
+      "description": "累计连接计数器的每秒增量。rejected 非 0 表示网关停机期间有连接被拒，是链路健康哨兵。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(outcome) (rate(linkchat_ws_connections_total{job=\"linkchat-backend\"}[1m]))",
+          "legendFormat": "{{outcome}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "WS 出站二进制批次写延迟 P95 / P99",
+      "description": "从开始写入到 WriteMessage 返回的耗时。压测中该值飙升说明下行推送成为瓶颈。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by(le) (rate(linkchat_ws_binary_write_duration_seconds_bucket{job=\"linkchat-backend\"}[1m])))",
+          "legendFormat": "写延迟 P95",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(linkchat_ws_binary_write_duration_seconds_bucket{job=\"linkchat-backend\"}[1m])))",
+          "legendFormat": "写延迟 P99",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "WS 批次写入速率与吞吐",
+      "description": "每秒成功写入的批次数、写入字节数，以及写错误速率。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(linkchat_ws_binary_writes_total{job=\"linkchat-backend\"}[1m])",
+          "legendFormat": "写入批次/s",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "rate(linkchat_ws_binary_write_payload_bytes_total{job=\"linkchat-backend\"}[1m])",
+          "legendFormat": "写入字节/s",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "rate(linkchat_ws_binary_write_errors_total{job=\"linkchat-backend\"}[1m])",
+          "legendFormat": "写错误/s",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "进入 outbound 队列耗时 P95 / P99",
+      "description": "从尝试进入 outbound 到提交 readyQueue 的耗时。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by(le) (rate(linkchat_ws_outbound_to_ready_duration_seconds_bucket{job=\"linkchat-backend\"}[1m])))",
+          "legendFormat": "入队 P95",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(linkchat_ws_outbound_to_ready_duration_seconds_bucket{job=\"linkchat-backend\"}[1m])))",
+          "legendFormat": "入队 P99",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Kafka 消费事务耗时 P95 / P99",
+      "description": "按 stage 分组：message_persist（消息持久化）、inbox_claim（Inbox 认领）。这是入库链路的核心耗时。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(linkchat_kafka_db_transaction_duration_seconds_bucket{job=\"linkchat-backend\"}[1m])))",
+          "legendFormat": "P95 · {{stage}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by(le,stage) (rate(linkchat_kafka_db_transaction_duration_seconds_bucket{job=\"linkchat-backend\"}[1m])))",
+          "legendFormat": "P99 · {{stage}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Kafka 事务速率与错误率",
+      "description": "按 stage 与 outcome 分组的事务执行速率。error 持续增长表示入库链路异常。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(stage,outcome) (rate(linkchat_kafka_db_transactions_total{job=\"linkchat-backend\"}[1m]))",
+          "legendFormat": "{{stage}} · {{outcome}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Kafka 事务批次大小 P95",
+      "description": "每个数据库事务处理的事件数量，按 stage 分组。反映攒批效率。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(linkchat_kafka_db_transaction_batch_size_bucket{job=\"linkchat-backend\"}[1m])))",
+          "legendFormat": "批次 P95 · {{stage}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Kafka Consumer Lag",
+      "description": "消费组积压。持续上涨说明消费能力跟不上发送速率。依赖 kafka-exporter（job=kafka-exporter）指标。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 12, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1000 }, { "color": "red", "value": 10000 }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(topic,consumergroup) (kafka_consumergroup_lag{job=\"kafka-exporter\"})",
+          "legendFormat": "{{consumergroup}} · {{topic}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "MySQL Buffer Pool 命中率与状态",
+      "description": "命中率 = 1 - 磁盘读取/逻辑读请求。低于 99% 或 mysql_up=0 需警惕。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.99 }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["min", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - (rate(linkchat_mysql_buffer_pool_reads_total{job=\"linkchat-backend\"}[1m]) / rate(linkchat_mysql_buffer_pool_read_requests_total{job=\"linkchat-backend\"}[1m]))",
+          "legendFormat": "Buffer Pool 命中率",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "端到端延迟 P50 / P95 / P99（k6 探针，按档位）",
+      "description": "探针消息从发送到接收确认的端到端延迟，按 stage（QPS 档位）分档。用顶部「压测 Run ID」变量过滤单次压测。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 6, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{__name__=~\"k6_im_lat_[0-9]+_p50\",run_id=~\"$run_id\"}",
+          "legendFormat": "{{stage}} · P50",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "{__name__=~\"k6_im_lat_[0-9]+_p95\",run_id=~\"$run_id\"}",
+          "legendFormat": "{{stage}} · P95",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "{__name__=~\"k6_im_lat_[0-9]+_p99\",run_id=~\"$run_id\"}",
+          "legendFormat": "{{stage}} · P99",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "QPS：发起 / ACK 成功 / 投递",
+      "description": "发起 QPS 是压测目标速率；ACK 成功仅代表 Kafka 接受；投递量在广播下会按连接数放大。三者口径不同。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate({__name__=~\"k6_im_offered_[0-9]+_total\",run_id=~\"$run_id\"}[1m]))",
+          "legendFormat": "发起 QPS",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate({__name__=~\"k6_im_ack_ok_[0-9]+_total\",run_id=~\"$run_id\"}[1m]))",
+          "legendFormat": "ACK 成功 QPS",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate({__name__=~\"k6_im_delivery_[0-9]+_total\",run_id=~\"$run_id\"}[1m]))",
+          "legendFormat": "投递 QPS",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "VU 数与建连速率（压测机 vs 服务端）",
+      "description": "k6 的 VU 数、建连速率，与服务端在线连接数叠加对比，用于确认服务端是否真的注册了对应连接。",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": false, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_vus{run_id=~\"$run_id\"}",
+          "legendFormat": "k6 VU 数",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "rate(k6_im_connections_opened_total{scenario=\"qps_ceiling\",run_id=~\"$run_id\"}[1m])",
+          "legendFormat": "建连速率/s",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "linkchat_ws_active_connections{job=\"linkchat-backend\"}",
+          "legendFormat": "服务端在线连接",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "range": true,
+          "instant": false
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["linkchat", "loadtest", "im"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "selected": true, "text": "Prometheus", "value": "prometheus" },
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "run_id",
+        "label": "压测 Run ID",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(k6_im_lat_1_p95, run_id)",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "sort": 2,
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "options": [],
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
+  },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "LinkChat · 压测监控看板",
+  "uid": "linkchat-loadtest",
+  "version": 1,
+  "weekStart": ""
+}
