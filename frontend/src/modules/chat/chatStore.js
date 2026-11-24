@@ -2,14 +2,14 @@ import { defineStore } from "pinia";
 import { computed, reactive, watch } from "vue";
 import {
   createFriendRequest,
-  createRoom as createRoomRequest,
+  createGroup as createGroupRequest,
   getAttachmentAccessURLs,
   getConversations,
   getOfflineMessages,
   getSendMessageStatus,
   getFriendRequests,
   getFriends,
-  joinRoom as joinRoomRequest,
+  joinGroup as joinGroupRequest,
   loginUser,
   logoutUser,
   operateFriendRequest,
@@ -19,6 +19,7 @@ import {
   updateUserProfile,
 } from "../../services/http/api.js";
 import { useFileUpload } from "../../composables/useFileUpload.js";
+import { hydratePreferences } from "../../composables/useUserPreferences.js";
 import { ConversationType } from "../../constants/conversation.js";
 import { MessageType } from "../../constants/message.js";
 import {
@@ -76,7 +77,7 @@ const sendStatusPolls = new Map();
 const pendingUploadTasks = new Map();
 const historyRequests = new Map();
 const messageProcessingByConversation = new Map();
-let pendingRoomEnterConversationID = "";
+let pendingGroupEnterConversationID = "";
 
 let sessionGeneration = 0;
 let startupCatchupGeneration = -1;
@@ -547,7 +548,7 @@ const handleMessageSendAck = (ack) => {
   }
 };
 
-/** 收到对应 clientMsgId 的 ACK 后轮询持久化状态；最多三次。 */
+/** 收到对应 clientMsgId 的 ACK 后以 50ms 起步指数退避轮询；最多三次。 */
 const pollSendMessageStatus = async (clientMsgId, conversationId, session, attempt) => {
   if (!isSessionActive(session)) return;
   const message = findPendingMessage(clientMsgId, conversationId);
@@ -587,7 +588,7 @@ const pollSendMessageStatus = async (clientMsgId, conversationId, session, attem
           clientMsgId,
           setTimeout(
             () => pollSendMessageStatus(clientMsgId, conversationId, session, attempt + 1),
-            500 * 2 ** attempt,
+            50 * 2 ** attempt,
           ),
         );
       }
@@ -611,7 +612,7 @@ const pollSendMessageStatus = async (clientMsgId, conversationId, session, attem
     clientMsgId,
     setTimeout(
       () => pollSendMessageStatus(clientMsgId, conversationId, session, attempt + 1),
-      500 * 2 ** attempt,
+      50 * 2 ** attempt,
     ),
   );
 };
@@ -620,7 +621,7 @@ const startSendStatusPolling = (clientMsgId, conversationId, session = captureSe
   if (sendStatusPolls.has(clientMsgId)) return;
   sendStatusPolls.set(
     clientMsgId,
-    setTimeout(() => pollSendMessageStatus(clientMsgId, conversationId, session, 1), 500),
+    setTimeout(() => pollSendMessageStatus(clientMsgId, conversationId, session, 1), 50),
   );
 };
 
@@ -679,7 +680,7 @@ const syncConversationFromLocal = async (
   if (!conversationId || !isSessionActive(session)) return;
   const conversation = findConversation(state.conversations, conversationId);
   if (!conversation) {
-    throw new Error(`房间消息对应的会话不存在：${conversationId}`);
+    throw new Error(`群聊消息对应的会话不存在：${conversationId}`);
   }
   return enqueueConversationMessage(conversationId, async () => {
     const localBoundary = Number(conversation.lastContinuousSeq) || 0;
@@ -694,7 +695,7 @@ const syncConversationFromLocal = async (
 
     const nextBoundary = Number(messages.at(-1)?.seq) || localBoundary;
     if (nextBoundary < targetSeq) {
-      throw new Error("房间消息尚未补齐到通知位置");
+      throw new Error("群聊消息尚未补齐到通知位置");
     }
     if (nextBoundary <= localBoundary) return;
 
@@ -719,8 +720,8 @@ const syncConversationFromLocal = async (
   });
 };
 
-/** 大型房间轻量通知没有消息正文，按其 seq 从本地边界补齐。 */
-const syncRoomMessageNotice = async (notice) => {
+/** 大型群聊轻量通知没有消息正文，按其 seq 从本地边界补齐。 */
+const syncGroupMessageNotice = async (notice) => {
   const conversationId = notice?.conversationId || "";
   const targetSeq = Number(notice?.seq) || 0;
   if (!conversationId || targetSeq <= 0) return;
@@ -749,8 +750,8 @@ const wsClient = createWsClient({
     state.connection = connection;
   },
   onOpen: () => {
-    if (pendingRoomEnterConversationID === state.activeConversationId) {
-      sendRoomEnter(pendingRoomEnterConversationID);
+    if (pendingGroupEnterConversationID === state.activeConversationId) {
+      sendGroupEnter(pendingGroupEnterConversationID);
     }
   },
   onBeforeReconnect: async () => {
@@ -765,7 +766,7 @@ const wsClient = createWsClient({
   onMessagePush: upsertIncomingMessage,
   onMessageSendAck: handleMessageSendAck,
   onMessageReadNotice: handleMessageReadNotice,
-  onRoomMessageNotice: syncRoomMessageNotice,
+  onGroupMessageNotice: syncGroupMessageNotice,
   onFriendRequestNotice: handleFriendRequestNotice,
   onErrorNotice: (notice) => {
     console.error("服务端错误通知", notice);
@@ -775,19 +776,19 @@ const wsClient = createWsClient({
   },
 });
 
-const sendRoomEnter = (conversationId) => {
+const sendGroupEnter = (conversationId) => {
   const conversation = findConversation(state.conversations, conversationId);
   if (
     !conversation ||
-    conversation.convType !== ConversationType.ROOM ||
+    conversation.convType !== ConversationType.GROUP ||
     state.activeConversationId !== conversationId ||
     !wsClient.isConnected()
   )
     return false;
 
-  const sent = wsClient.sendRoomEnter({ roomId: conversation.targetId });
-  if (sent && pendingRoomEnterConversationID === conversationId) {
-    pendingRoomEnterConversationID = "";
+  const sent = wsClient.sendGroupEnter({ groupId: conversation.targetId });
+  if (sent && pendingGroupEnterConversationID === conversationId) {
+    pendingGroupEnterConversationID = "";
   }
   return sent;
 };
@@ -827,7 +828,7 @@ const connectSocket = ({ initialCatchupComplete = false } = {}) => {
 const clearAuthState = () => {
   sessionGeneration += 1;
   startupCatchupGeneration = -1;
-  pendingRoomEnterConversationID = "";
+  pendingGroupEnterConversationID = "";
   pendingMessages.clear();
   pendingSendRequests.clear();
   for (const clientMsgId of sendStatusPolls.keys()) clearSendStatusPoll(clientMsgId);
@@ -879,11 +880,13 @@ export const ensureChatAuth = async () => {
   if (!authBootstrapPromise) {
     const generation = sessionGeneration;
     authBootstrapPromise = refreshSession()
-      .then((auth) => {
+      .then(async (auth) => {
         if (generation !== sessionGeneration) return false;
         state.authenticated = true;
         state.currentUser = authUserProfile(auth);
         persistSession(auth, Boolean(localStorage.getItem("im_user")));
+        // 从 IndexedDB 按用户加载偏好配置，覆盖首屏快照
+        await hydratePreferences(auth.userId);
         return true;
       })
       .catch(async () => {
@@ -913,6 +916,8 @@ export const useChatStore = defineStore("chat", () => {
     state.authenticated = true;
     state.currentUser = authUserProfile(auth);
     persistSession(auth, remember);
+    // 从 IndexedDB 按用户加载偏好配置，覆盖首屏快照
+    await hydratePreferences(auth.userId);
     return auth;
   };
 
@@ -1043,11 +1048,11 @@ export const useChatStore = defineStore("chat", () => {
     state.activeConversationId = conversationId;
     const conversation = findConversation(state.conversations, conversationId);
     if (conversation) conversation.unread = 0;
-    if (conversation?.convType === ConversationType.ROOM) {
-      pendingRoomEnterConversationID = conversationId;
-      sendRoomEnter(conversationId);
+    if (conversation?.convType === ConversationType.GROUP) {
+      pendingGroupEnterConversationID = conversationId;
+      sendGroupEnter(conversationId);
     } else {
-      pendingRoomEnterConversationID = "";
+      pendingGroupEnterConversationID = "";
     }
     if (state.authenticated) await loadHistory(conversationId, 0);
   };
@@ -1289,56 +1294,57 @@ export const useChatStore = defineStore("chat", () => {
     return conversation;
   };
 
-  const createRoom = async (form) => {
-    const room = await createRoomRequest(form);
+  const createGroup = async (form) => {
+    const group = await createGroupRequest(form);
     await loadWorkspace();
-    return room;
+    return group;
   };
 
-  const joinRoom = async (inviteCode) => {
+  const joinGroup = async (inviteCode) => {
     const session = captureSession();
-    const room = await joinRoomRequest(inviteCode);
-    if (!isSessionActive(session)) return room;
+    const group = await joinGroupRequest(inviteCode);
+    if (!isSessionActive(session)) return group;
 
     const conversation = {
-      ...findConversation(state.conversations, room.conversationId),
-      conversationId: room.conversationId,
-      convType: ConversationType.ROOM,
-      targetId: room.roomId,
-      displayName: room.roomName,
-      avatar: room.avatar,
+      ...findConversation(state.conversations, group.conversationId),
+      conversationId: group.conversationId,
+      convType: ConversationType.GROUP,
+      targetId: group.groupId,
+      displayName: group.groupName,
+      avatar: group.avatar,
       unread: 0,
-      latestSeq: Number(room.latestSeq) || 0,
-      lastContinuousSeq: Number(room.latestSeq) || 0,
-      room: {
-        roomId: room.roomId,
-        roomName: room.roomName,
-        avatar: room.avatar,
-        description: room.description,
-        memberCount: room.memberCount,
+      latestSeq: Number(group.latestSeq) || 0,
+      lastContinuousSeq: Number(group.latestSeq) || 0,
+      group: {
+        groupId: group.groupId,
+        groupName: group.groupName,
+        avatar: group.avatar,
+        description: group.description,
+        memberCount: group.memberCount,
       },
     };
-    // 入房水位是同步起点，不代表入房前的消息已下载到本地。
+    // 入群水位是同步起点，不代表入群前的消息已下载到本地。
     await insertConversations(session.userId, [conversation]);
-    if (!isSessionActive(session)) return room;
+    if (!isSessionActive(session)) return group;
 
     state.conversations = sortConversations([
-      ...state.conversations.filter((item) => item.conversationId !== room.conversationId),
+      ...state.conversations.filter((item) => item.conversationId !== group.conversationId),
       conversation,
     ]);
-    await syncConversationFromLocal(room.conversationId, { session });
-    return room;
+    await syncConversationFromLocal(group.conversationId, { session });
+    return group;
   };
 
   const retryConnection = () =>
     startupCatchupGeneration === sessionGeneration ? wsClient.reconnect() : loadWorkspace();
 
-  const logout = async () => {
-    try {
-      if (state.authenticated) await logoutUser();
-    } finally {
-      await clearAuthState();
-    }
+  const logout = () => {
+    // 立即发出后端退出请求（fire-and-forget）：认证靠 withCredentials 的 cookie，
+    // 请求在 .post() 调用瞬间即发出，不受随后清 localStorage 影响；失败静默即可。
+    if (state.authenticated) void logoutUser().catch(() => {});
+    // 立即清本地状态：im_user 同步删除、IndexedDB 清库挂到 cacheClearPromise 后台执行，
+    // 均不阻塞页面切换到 login。
+    clearAuthState();
   };
 
   return {
@@ -1358,8 +1364,8 @@ export const useChatStore = defineStore("chat", () => {
     handleFriendRequest,
     addFriendRequest: createFriendRequest,
     startConversation,
-    createRoom,
-    joinRoom,
+    createGroup,
+    joinGroup,
     retryConnection,
     pauseUpload,
     resumeUpload,

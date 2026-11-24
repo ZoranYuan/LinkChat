@@ -38,9 +38,6 @@ export const createAttachmentResolver = (getAccessURLs) => {
       if (card.fileName) message.fileName = card.fileName;
       if (card.contentType) message.mimeType = card.contentType;
       if (Number.isFinite(Number(card.size))) message.fileSize = Number(card.size);
-      if (Number.isFinite(Number(card.width))) message.width = Number(card.width);
-      if (Number.isFinite(Number(card.height))) message.height = Number(card.height);
-      if (Number.isFinite(Number(card.durationMs))) message.durationMs = Number(card.durationMs);
     }
 
     return messages;

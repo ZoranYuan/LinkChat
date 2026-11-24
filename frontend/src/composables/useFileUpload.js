@@ -1,14 +1,13 @@
 import { ref } from "vue";
 import {
   completeFileUpload,
+  getPartSize,
   initFileUpload,
   presignMultipartParts,
-  uploadDirectObjectToStorage,
   uploadMultipartPartToStorage,
 } from "../services/http/api.js";
 import { UploadStatus } from "../constants/upload.js";
 
-const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
 const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 const DEFAULT_MAX_HASH_FILE_SIZE = 512 * 1024 * 1024;
@@ -18,7 +17,6 @@ const MAX_RETRIES = 3;
 const MAX_COMPLETE_REPAIR_ROUNDS = 2;
 
 export function useFileUpload(options = {}) {
-  const chunkSize = options.chunkSize || DEFAULT_CHUNK_SIZE;
   const concurrency = options.concurrency || DEFAULT_CONCURRENCY;
   const maxFileSize = options.maxFileSize || DEFAULT_MAX_FILE_SIZE;
   const maxHashFileSize = options.maxHashFileSize || DEFAULT_MAX_HASH_FILE_SIZE;
@@ -26,6 +24,8 @@ export function useFileUpload(options = {}) {
   const progress = ref(0);
   const paused = ref(false);
   const canceled = ref(false);
+  // 分片规格由服务端下发（OpenIM PartSize），不再用本地常量切片
+  let partSize = 0;
   // 收集所有的上传任务，当取消时，取消上传中的任务
   const activeRequests = new Set();
   let releasePause = null;
@@ -71,10 +71,11 @@ export function useFileUpload(options = {}) {
     partNumber,
     partURLs,
     completedParts,
+    completedEtags,
     totalChunks,
   ) => {
-    const start = (partNumber - 1) * chunkSize;
-    const chunk = file.slice(start, Math.min(file.size, start + chunkSize));
+    const start = (partNumber - 1) * partSize;
+    const chunk = file.slice(start, Math.min(file.size, start + partSize));
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
       try {
         const partURL = partURLs.get(partNumber);
@@ -83,7 +84,10 @@ export function useFileUpload(options = {}) {
         const controller = new AbortController();
         activeRequests.add(controller);
         try {
-          await uploadMultipartPartToStorage(partURL, chunk, controller.signal);
+          const response = await uploadMultipartPartToStorage(partURL, chunk, controller.signal);
+          // MinIO/S3 每片 PUT 成功后在响应头返回 ETag，complete 阶段需回传
+          const etag = response?.headers?.etag || response?.headers?.ETag;
+          if (etag) completedEtags.set(partNumber, etag.replace(/"/g, ""));
         } finally {
           activeRequests.delete(controller);
         }
@@ -129,6 +133,7 @@ export function useFileUpload(options = {}) {
     currentUploadId,
     partNumbers,
     completedParts,
+    completedEtags,
     totalChunks,
   ) => {
     if (!partNumbers.length) return;
@@ -152,6 +157,7 @@ export function useFileUpload(options = {}) {
           partNumber,
           partURLs,
           completedParts,
+          completedEtags,
           totalChunks,
         );
       }
@@ -159,12 +165,16 @@ export function useFileUpload(options = {}) {
     await Promise.all(Array.from({ length: Math.min(concurrency, partNumbers.length) }, worker));
   };
 
-  const completeWithRepair = async (file, currentUploadId, completedParts, totalChunks) => {
+  const completeWithRepair = async (file, currentUploadId, completedParts, completedEtags, totalChunks) => {
     for (let round = 0; round <= MAX_COMPLETE_REPAIR_ROUNDS; round += 1) {
       try {
         if (canceled.value) throw new Error("上传已取消");
         status.value = UploadStatus.COMPLETING;
-        const result = await completeFileUpload(currentUploadId);
+        // 标准 complete：回传每片的 (partNumber, etag)
+        const parts = [...completedEtags.entries()]
+          .map(([partNumber, etag]) => ({ partNumber, etag }))
+          .sort((a, b) => a.partNumber - b.partNumber);
+        const result = await completeFileUpload(currentUploadId, parts);
         if (result?.status !== UploadStatus.COMPLETED || !result.fileId) {
           throw new Error("合并成功但未返回文件标识。");
         }
@@ -178,6 +188,7 @@ export function useFileUpload(options = {}) {
           currentUploadId,
           repairParts,
           completedParts,
+          completedEtags,
           totalChunks,
         );
       }
@@ -186,37 +197,18 @@ export function useFileUpload(options = {}) {
   };
 
   const uploadMultipart = async (file, initialized) => {
-    const totalChunks = Math.ceil(file.size / chunkSize);
+    const totalChunks = initialized.totalChunks;
     const completedParts = new Set(initialized.uploadedParts || []);
+    const completedEtags = new Map();
     updateMultipartProgress(completedParts, totalChunks);
 
     const queue = Array.from({ length: totalChunks }, (_, index) => index + 1).filter(
       (partNumber) => !completedParts.has(partNumber),
     );
     status.value = UploadStatus.UPLOADING;
-    await uploadParts(file, initialized.uploadId, queue, completedParts, totalChunks);
+    await uploadParts(file, initialized.uploadId, queue, completedParts, completedEtags, totalChunks);
     if (canceled.value) throw new Error("上传已取消");
-    return completeWithRepair(file, initialized.uploadId, completedParts, totalChunks);
-  };
-
-  // 直传完成后通知后端校验对象并落库。
-  const uploadDirect = async (file, initialized) => {
-    status.value = UploadStatus.UPLOADING;
-    const controller = new AbortController();
-    activeRequests.add(controller);
-    try {
-      await uploadDirectObjectToStorage(initialized.url, file, controller.signal);
-      progress.value = 100;
-    } finally {
-      activeRequests.delete(controller);
-    }
-    if (canceled.value) throw new Error("上传已取消");
-    status.value = UploadStatus.COMPLETING;
-    const result = await completeFileUpload(initialized.uploadId);
-    if (result?.status !== UploadStatus.COMPLETED || !result.fileId) {
-      throw new Error("上传完成但未返回文件标识。");
-    }
-    return result;
+    return completeWithRepair(file, initialized.uploadId, completedParts, completedEtags, totalChunks);
   };
 
   const upload = async (file) => {
@@ -227,15 +219,20 @@ export function useFileUpload(options = {}) {
       status.value = UploadStatus.HASHING;
       const fileHash = await createActualSHA256(file);
       if (canceled.value) throw new Error("上传已取消");
-      const totalChunks = Math.ceil(file.size / chunkSize);
+
+      // 标准流程：先向服务端问分片规格（partSize/totalChunks），本地不再自算
       status.value = UploadStatus.INITIALIZING;
+      const spec = await getPartSize(file.size);
+      partSize = spec.partSize;
+      const userId = currentUserId();
+      const objectName = `${userId}/${createObjectName(file.name)}`;
       const initialized = await initFileUpload({
+        name: objectName,
         fileName: file.name,
         contentType: file.type || "application/octet-stream",
         size: file.size,
         fileHash,
-        chunkSize,
-        totalChunks,
+        partSize,
       });
       if (canceled.value) throw new Error("上传已取消");
 
@@ -246,14 +243,8 @@ export function useFileUpload(options = {}) {
         return { fileId: initialized.fileId, status: initialized.status };
       }
 
-      let result;
-      if (initialized.uploadMode === "direct") {
-        result = await uploadDirect(file, initialized);
-      } else if (initialized.uploadMode === "multipart") {
-        result = await uploadMultipart(file, initialized);
-      } else {
-        throw new Error("服务端返回了未知的上传模式。");
-      }
+      // 新版统一走分片直传，没有直传分支
+      const result = await uploadMultipart(file, initialized);
       if (canceled.value) throw new Error("上传已取消");
       status.value = UploadStatus.COMPLETED;
       progress.value = 100;
@@ -302,6 +293,27 @@ export function useFileUpload(options = {}) {
     resume,
     cancel,
   };
+}
+
+// 与 authService.readStoredUser 保持同一存储源，用于构造 name 的 userID 前缀
+function currentUserId() {
+  if (typeof window === "undefined") return "unknown";
+  try {
+    const raw =
+      window.localStorage?.getItem("im_user") || window.sessionStorage?.getItem("im_user") || "{}";
+    return JSON.parse(raw)?.userId || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+// 对象名用 uuid + 原扩展名，避免同名文件互相覆盖
+function createObjectName(fileName = "") {
+  const ext = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")) : "";
+  const uuid =
+    globalThis.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${uuid}${ext}`;
 }
 
 async function createActualSHA256(file) {

@@ -30,7 +30,7 @@ export const createConversationRecord = (userId, conversation = {}) => {
         }
       : null,
     peerUser: conversation.peerUser,
-    room: conversation.room,
+    group: conversation.group,
     // 本地消息同步边界，初始值为 0，之后由消息落库流程维护。
     lastContinuousSeq: Number(conversation.lastContinuousSeq) || 0,
     // 对端最高已读水位，仅用于私聊最后一条本人消息的“已读/已发送”展示。

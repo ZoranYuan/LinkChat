@@ -1,35 +1,47 @@
 <script setup>
-import { LogOut, MessageCircle, Settings, Users } from "@lucide/vue";
+import { computed } from "vue";
+import { LogOut, MessageCircle, Moon, Settings, Sun, Users } from "@lucide/vue";
+import { useTheme } from "../../composables/useTheme.js";
 
-defineProps({
+const props = defineProps({
   activeSection: { type: String, required: true },
   currentUser: { type: Object, required: true },
 });
 
 defineEmits(["select", "logout"]);
+
+const { theme, toggle } = useTheme();
+
+// 导航激活项索引，驱动滑动指示条位置（每项 46px + 4px gap）
+const activeIndex = computed(() => ({ conversations: 0, contacts: 1, profile: 2 })[props.activeSection] ?? 0);
 </script>
 
 <template>
   <aside
-    class="hidden h-full w-41 flex-none flex-col items-center rounded-2xl border border-[#e5e0f3] bg-white px-3 py-4.5 text-sm text-[#98a2b3] shadow-[0_14px_35px_rgba(58,43,110,0.08)] min-[768px]:flex"
+    class="hidden h-full w-41 flex-none flex-col items-center rounded-2xl border border-[var(--im-border-strong)] bg-[var(--im-surface)] px-3 py-4.5 text-sm text-[var(--im-text-muted)] shadow-[var(--im-shadow-sm)] min-[768px]:flex"
   >
     <div class="flex w-full items-center gap-2.5 px-2">
       <span
-        class="grid size-9 flex-none place-items-center rounded-[11px] bg-linear-to-br from-[#7355ff] to-[#4724d8] text-white shadow-[0_8px_18px_rgba(91,53,245,0.2)]"
+        class="grid size-9 flex-none place-items-center rounded-[11px] bg-linear-to-br from-[var(--im-primary)] to-[var(--im-primary-hover)] text-white shadow-[var(--im-shadow-md)]"
       >
         <MessageCircle :size="20" />
       </span>
-      <strong class="text-sm font-extrabold tracking-[-0.03em] text-[#241b43]">LinkChat</strong>
+      <strong class="text-sm font-extrabold tracking-[-0.03em] text-[var(--im-text-strong)]">LinkChat</strong>
     </div>
 
-    <nav class="mt-9 flex w-full flex-1 flex-col gap-1" aria-label="主要导航">
+    <nav class="relative mt-9 flex w-full flex-1 flex-col gap-1" aria-label="主要导航">
+      <span
+        class="pointer-events-none absolute left-0 top-0 h-11.5 w-full rounded-[10px] bg-linear-to-br from-[var(--im-primary)] to-[var(--im-primary-hover)] shadow-[var(--im-shadow-md)] transition-transform duration-300 ease-out"
+        :style="{ transform: `translateY(${activeIndex * 50}px)` }"
+        aria-hidden="true"
+      />
       <button
         :class="
           activeSection === 'conversations'
-            ? 'bg-linear-to-br from-[#6d4aff] to-[#4a29e5] text-white shadow-[0_12px_24px_rgba(91,53,245,0.22)]'
-            : 'text-[#8d91a3] hover:bg-[#f1efff] hover:text-[#5b35f5]'
+            ? 'text-white'
+            : 'text-[var(--im-text-muted)] hover:text-[var(--im-primary)]'
         "
-        class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-4 text-[11px] transition-[background,color,box-shadow] duration-150"
+        class="relative z-10 flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-4 text-[var(--im-fs-11)] transition-[color,transform] duration-150 active:scale-[0.98]"
         type="button"
         title="消息"
         @click="$emit('select', 'conversations')"
@@ -39,10 +51,10 @@ defineEmits(["select", "logout"]);
       <button
         :class="
           activeSection === 'contacts'
-            ? 'bg-linear-to-br from-[#6d4aff] to-[#4a29e5] text-white shadow-[0_12px_24px_rgba(91,53,245,0.22)]'
-            : 'text-[#8d91a3] hover:bg-[#f1efff] hover:text-[#5b35f5]'
+            ? 'text-white'
+            : 'text-[var(--im-text-muted)] hover:text-[var(--im-primary)]'
         "
-        class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-4 text-[11px] transition-[background,color,box-shadow] duration-150"
+        class="relative z-10 flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-4 text-[var(--im-fs-11)] transition-[color,transform] duration-150 active:scale-[0.98]"
         type="button"
         title="联系人"
         @click="$emit('select', 'contacts')"
@@ -52,10 +64,10 @@ defineEmits(["select", "logout"]);
       <button
         :class="
           activeSection === 'profile'
-            ? 'bg-linear-to-br from-[#6d4aff] to-[#4a29e5] text-white shadow-[0_12px_24px_rgba(91,53,245,0.22)]'
-            : 'text-[#8d91a3] hover:bg-[#f1efff] hover:text-[#5b35f5]'
+            ? 'text-white'
+            : 'text-[var(--im-text-muted)] hover:text-[var(--im-primary)]'
         "
-        class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-4 text-[11px] transition-[background,color,box-shadow] duration-150"
+        class="relative z-10 flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-4 text-[var(--im-fs-11)] transition-[color,transform] duration-150 active:scale-[0.98]"
         type="button"
         title="我的"
         @click="$emit('select', 'profile')"
@@ -66,13 +78,13 @@ defineEmits(["select", "logout"]);
 
     <div class="mt-auto flex w-full flex-col gap-1">
       <button
-        class="flex min-h-13 w-full items-center gap-2.5 rounded-[10px] px-2.5 text-left transition-colors duration-150 hover:bg-[#f8f6ff]"
+        class="flex min-h-13 w-full items-center gap-2.5 rounded-[10px] px-2.5 text-left transition-colors duration-150 hover:bg-[var(--im-primary-softer)]"
         type="button"
         title="个人资料"
         @click="$emit('select', 'profile')"
       >
         <span
-          class="relative grid size-9 flex-none place-items-center overflow-hidden rounded-full bg-[#eee9ff] text-sm font-bold text-[#5b35f5]"
+          class="relative grid size-9 flex-none place-items-center overflow-hidden rounded-full bg-[var(--im-primary-soft)] text-sm font-bold text-[var(--im-primary)]"
         >
           <img
             v-if="currentUser.avatar"
@@ -85,13 +97,23 @@ defineEmits(["select", "logout"]);
           }}</span>
         </span>
         <span class="min-w-0"
-          ><strong class="block truncate text-[11px] font-semibold text-[#342b4d]">{{
+          ><strong class="block truncate text-[var(--im-fs-11)] font-semibold text-[var(--im-text-strong)]">{{
             currentUser.nickName || currentUser.name || currentUser.username || "我的账号"
           }}</strong>
         </span>
       </button>
       <button
-        class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-3 text-[11px] text-[#8d91a3] transition-colors duration-150 hover:bg-[#fff0f3] hover:text-[#dc6570]"
+        class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-3 text-[var(--im-fs-11)] text-[var(--im-text-muted)] transition-colors duration-150 hover:bg-[var(--im-primary-soft)] hover:text-[var(--im-primary)]"
+        type="button"
+        :title="theme === 'dark' ? '切换到浅色' : '切换到深色'"
+        @click="toggle"
+      >
+        <Sun v-if="theme === 'dark'" :size="15" />
+        <Moon v-else :size="15" />
+        <span>{{ theme === 'dark' ? '浅色' : '深色' }}</span>
+      </button>
+      <button
+        class="flex min-h-11.5 w-full flex-row items-center justify-start gap-3 rounded-[10px] px-3 text-[var(--im-fs-11)] text-[var(--im-text-muted)] transition-colors duration-150 hover:bg-[var(--im-danger-soft)] hover:text-[var(--im-danger)]"
         type="button"
         title="退出登录"
         @click="$emit('logout')"

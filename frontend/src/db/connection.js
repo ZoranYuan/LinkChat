@@ -4,9 +4,10 @@ import {
   CONVERSATION_KEY_PATH,
   CONVERSATION_STORE_NAME,
 } from "./models/conversation.js";
+import { PREFERENCES_KEY_PATH, PREFERENCES_STORE_NAME } from "./models/preferences.js";
 
 const DB_NAME = "im-chat-cache";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 /** 创建消息表及会话、会话序号索引。 */
 const createMessageStore = (db) => {
@@ -41,6 +42,10 @@ export const openIndexedDb = () =>
       }
       if (!db.objectStoreNames.contains(CONVERSATION_STORE_NAME)) {
         createConversationStore(db);
+      }
+      // 用户偏好：一个用户一条记录，按 userId 主键隔离
+      if (!db.objectStoreNames.contains(PREFERENCES_STORE_NAME)) {
+        db.createObjectStore(PREFERENCES_STORE_NAME, { keyPath: PREFERENCES_KEY_PATH });
       }
     };
     request.onsuccess = () => resolve(request.result);

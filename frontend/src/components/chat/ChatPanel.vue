@@ -38,7 +38,7 @@ const emit = defineEmits([
   "back",
   "details",
   "assistant",
-  "share-room",
+  "share-group",
   "send",
   "attachment",
   "load-older",
@@ -104,7 +104,8 @@ const submit = () => {
   if (!text) return;
   emit("send", text);
   draft.value = "";
-  scheduleScrollToBottom(true);
+  // 不在这里滚动：消息尚未进入 props.messages，滚的是旧位置；
+  // 统一由 watch(messages.length) 在消息渲染后滚一次，避免双重滚动跳动。
 };
 
 const handleEnter = (event) => {
@@ -128,11 +129,37 @@ const isLastMineMessageRead = (message) => {
   const readWatermark = Number(props.conversation?.readWatermark) || 0;
   return seq > 0 && seq <= readWatermark;
 };
-const isRoom = (conversation) => Number(conversation?.convType) === ConversationType.ROOM;
+const isGroup = (conversation) => Number(conversation?.convType) === ConversationType.GROUP;
 const conversationDisplayName = (conversation) => conversation?.displayName || "未命名会话";
-const memberCount = (conversation) => conversation?.room?.memberCount || 0;
+const memberCount = (conversation) => conversation?.group?.memberCount || 0;
 const displayType = (message) => messageViewType(message.cType);
-const senderName = (message) => message.senderUsername || message.senderId || "成员";
+
+// 名字优先级：消息自带字段（后端补齐后为 username/nickname） > 会话对方资料 > 短 ID。
+// 后端 MessageResponse 目前只返回 senderId；私聊可用 peerUser 补全，群聊暂时回退短 ID。
+const senderNames = (message) => {
+  const peer = props.conversation?.peerUser;
+  const isPeer = !!peer && String(peer.userId) === String(message.senderId);
+  return {
+    username: message.senderUsername || (isPeer ? peer.userName || "" : ""),
+    nickname:
+      message.senderNickname ||
+      (isPeer ? peer.nickName || "" : "") ||
+      message.senderUsername ||
+      "",
+  };
+};
+const senderName = (message) => {
+  const { username, nickname } = senderNames(message);
+  return nickname || username || String(message.senderId || "成员").slice(0, 8);
+};
+// 群聊里展示为「用户名/昵称」，两者相同则只显示一个。
+const senderLabel = (message) => {
+  const { username, nickname } = senderNames(message);
+  if (username && nickname && String(username) !== String(nickname)) {
+    return `${username}/${nickname}`;
+  }
+  return senderName(message);
+};
 const messageTime = (message) => {
   if (!message?.sendTime) return "";
   const date = new Date(Number(message.sendTime));
@@ -142,8 +169,12 @@ const messageTime = (message) => {
   }
   return `${date.getMonth() + 1}/${date.getDate()}`;
 };
+// key 必须在消息整个生命周期内稳定：本地发送时只有 clientMsgId，服务端 ack 后
+// Object.assign 会补上 messageId。若优先用 messageId，key 会在 ack 瞬间改变，
+// TransitionGroup 会当成「删旧元素+插新元素」触发 leave/enter，表现为消息闪烁。
+// clientMsgId 本地生成、ack 后保留、mergeMessageLists 也保留，全程稳定，故优先。
 const messageKey = (message) =>
-  message.messageId || message.clientMsgId || `${message.conversationId}:${message.seq}`;
+  message.clientMsgId || message.messageId || `${message.conversationId}:${message.seq}`;
 const uploadStageText = (message) => {
   switch (message.uploadStage) {
     case "hashing":
@@ -278,7 +309,7 @@ watch(
 <template>
   <section
     :class="[
-      'chat-panel min-w-2xs flex-col overflow-hidden bg-[#faf9ff] text-sm',
+      'chat-panel min-w-2xs flex-col overflow-hidden bg-[var(--im-primary-softer)] text-sm',
       mobile
         ? visible
           ? 'fixed inset-0 z-40 flex h-full w-full'
@@ -288,11 +319,11 @@ watch(
   >
     <template v-if="conversation">
       <header
-        class="flex min-h-16 flex-none items-center gap-3 border-b border-[#edf1f7] bg-white px-[22px] max-[767px]:px-4"
+        class="flex min-h-16 flex-none items-center gap-3 border-b border-[var(--im-border)] bg-[var(--im-surface)] px-[22px] max-[767px]:px-4"
       >
         <button
           v-if="mobile"
-          class="grid size-9 place-items-center rounded-lg bg-transparent text-[#667085] hover:bg-[#f3f6fb]"
+          class="grid size-9 place-items-center rounded-lg bg-transparent text-[var(--im-text-secondary)] hover:bg-[var(--im-surface-muted)]"
           type="button"
           title="返回"
           @click="$emit('back')"
@@ -300,8 +331,8 @@ watch(
           <ArrowLeft :size="21" />
         </button>
         <span
-          :class="isRoom(conversation) ? 'bg-[#6d4aff]' : 'bg-[#8b72d6]'"
-          class="grid size-[42px] flex-none place-items-center overflow-hidden rounded-full text-sm font-bold text-white shadow-[0_10px_22px_rgba(91,53,245,0.2)]"
+          :class="isGroup(conversation) ? 'bg-[var(--im-primary)]' : 'bg-[var(--im-primary-tint)]'"
+          class="grid size-[42px] flex-none place-items-center overflow-hidden rounded-full text-sm font-bold text-white shadow-[var(--im-shadow-md)]"
         >
           <img
             v-if="conversation.avatar"
@@ -309,41 +340,41 @@ watch(
             :src="conversation.avatar"
             :alt="conversationDisplayName(conversation)"
           />
-          <Users v-else-if="isRoom(conversation)" :size="18" />
+          <Users v-else-if="isGroup(conversation)" :size="18" />
           <span v-else>{{ conversationDisplayName(conversation).slice(0, 1) }}</span>
         </span>
         <div class="min-w-0 flex-1">
-          <h2 class="truncate text-[15px] font-extrabold text-[#111827]">
+          <h2 class="truncate text-[var(--im-fs-15)] font-extrabold text-[var(--im-text-strong)]">
             {{ conversationDisplayName(conversation) }}
           </h2>
-          <p class="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#8a98ac]">
-            {{ isRoom(conversation) ? `${memberCount(conversation)} 位成员` : "私聊" }}
+          <p class="mt-0.5 flex items-center gap-1.5 text-[var(--im-fs-11)] text-[var(--im-text-secondary)]">
+            {{ isGroup(conversation) ? `${memberCount(conversation)} 位成员` : "私聊" }}
           </p>
         </div>
         <div class="flex items-center gap-1">
           <button
-            v-if="isRoom(conversation)"
-            class="flex min-h-9 items-center gap-1.5 rounded-lg border border-[#e8e1ff] bg-[#f8f5ff] px-3 text-[11px] font-semibold text-[#6847e8] hover:bg-[#f0ebff]"
+            v-if="isGroup(conversation)"
+            class="flex min-h-9 items-center gap-1.5 rounded-lg border border-[var(--im-primary-border)] bg-[var(--im-primary-softer)] px-3 text-[var(--im-fs-11)] font-semibold text-[var(--im-primary-hover)] hover:bg-[var(--im-primary-soft)]"
             type="button"
-            title="打开房间 AI 助手"
+            title="打开群聊 AI 助手"
             @click="$emit('assistant')"
           >
-            <span class="grid size-5 place-items-center rounded-md bg-[#6d4aff] text-[9px] font-extrabold text-white">AI</span>
-            <span class="max-[420px]:hidden">房间助手</span>
+            <span class="grid size-5 place-items-center rounded-md bg-[var(--im-primary)] text-[var(--im-fs-9)] font-extrabold text-white">AI</span>
+            <span class="max-[420px]:hidden">群聊助手</span>
           </button>
           <button
-            v-if="isRoom(conversation)"
-            class="flex min-h-9 items-center gap-1.5 rounded-lg border border-[#e8eaf0] bg-white px-3 text-[11px] font-semibold text-[#667085] transition-colors hover:border-[#cfc5ff] hover:bg-[#f8f7ff] hover:text-[#5b35f5] max-[420px]:px-2.5"
+            v-if="isGroup(conversation)"
+            class="flex min-h-9 items-center gap-1.5 rounded-lg border border-[var(--im-border)] bg-[var(--im-surface)] px-3 text-[var(--im-fs-11)] font-semibold text-[var(--im-text-secondary)] transition-colors hover:border-[var(--im-primary-border)] hover:bg-[var(--im-primary-softer)] hover:text-[var(--im-primary)] max-[420px]:px-2.5"
             type="button"
-            title="分享房间"
+            title="分享群聊"
             :disabled="shareLoading"
-            @click="$emit('share-room')"
+            @click="$emit('share-group')"
           >
             <Share2 :size="15" />
             <span class="max-[420px]:hidden">{{ shareLoading ? "生成中" : "分享" }}</span>
           </button>
           <button
-            class="grid size-9 place-items-center rounded-lg bg-transparent text-[#667085] hover:bg-[#f3efff] hover:text-[#5b35f5]"
+            class="grid size-9 place-items-center rounded-lg bg-transparent text-[var(--im-text-secondary)] hover:bg-[var(--im-primary-soft)] hover:text-[var(--im-primary)]"
             type="button"
             title="会话详情"
             @click="$emit('details')"
@@ -356,13 +387,13 @@ watch(
 
       <div
         ref="messageList"
-        class="flex min-h-0 flex-1 flex-col items-stretch overflow-y-auto scroll-smooth bg-[linear-gradient(180deg,#fbfaff_0%,#f7f8fc_100%)] px-[clamp(14px,2.2vw,28px)] pb-3 pt-[22px] max-[767px]:px-3"
+        class="flex min-h-0 flex-1 flex-col items-stretch overflow-y-auto scroll-smooth bg-[linear-gradient(180deg,var(--im-primary-softer)_0%,var(--im-surface-muted)_100%)] px-[clamp(14px,2.2vw,28px)] py-[30px] max-[767px]:px-3"
         @scroll="handleMessageScroll"
       >
         <div ref="messageContent" class="flex min-h-full flex-col items-stretch">
           <button
             v-if="hasMore"
-            class="mx-auto mb-5 flex min-h-8 items-center gap-1.5 rounded-full border border-[#e4e9f2] bg-white px-3 text-[11px] text-[#7d8999] shadow-sm hover:bg-[#f5f8ff]"
+            class="mx-auto mb-5 flex min-h-8 items-center gap-1.5 rounded-full border border-[var(--im-border)] bg-[var(--im-surface)] px-3 text-[var(--im-fs-11)] text-[var(--im-text-secondary)] shadow-sm hover:bg-[var(--im-primary-softer)]"
             type="button"
             :disabled="loading"
             @click="$emit('load-older')"
@@ -373,18 +404,19 @@ watch(
           </button>
           <div
             v-if="loading && !messages.length"
-            class="flex min-h-40 flex-col items-center justify-center gap-2 text-xs text-[#8a98ac]"
+            class="flex min-h-40 flex-col items-center justify-center gap-2 text-xs text-[var(--im-text-secondary)]"
           >
             <LoaderCircle class="animate-spin" :size="22" /><span>正在加载消息</span>
           </div>
           <div
             v-else-if="!messages.length"
-            class="flex min-h-40 flex-col items-center justify-center gap-1 text-center text-sm text-[#8a98ac]"
+            class="flex min-h-40 flex-col items-center justify-center gap-1 text-center text-sm text-[var(--im-text-secondary)]"
           >
             <span>还没有消息</span
-            ><small class="text-xs text-[#a8b1be]">发送一条消息开始聊天</small>
+            ><small class="text-xs text-[var(--im-text-faint)]">发送一条消息开始聊天</small>
           </div>
 
+          <div class="flex min-h-0 flex-col gap-[30px]">
           <article
             v-for="message in messages"
             :key="messageKey(message)"
@@ -395,17 +427,17 @@ watch(
                   ? 'flex-row-reverse'
                   : 'flex-row'
             "
-            class="mx-auto mb-4.5 flex w-full max-w-195 items-start gap-3 min-[1500px]:max-w-210"
+            class="mx-auto flex w-full max-w-195 items-start gap-3 min-[1500px]:max-w-210"
           >
             <template v-if="displayType(message) === 'system'"
-              ><span class="rounded-full bg-[#eef2f8] px-3 py-1 text-[11px] text-[#8a98ac]">{{
+              ><span class="rounded-full bg-[var(--im-surface-muted)] px-3 py-1 text-[var(--im-fs-11)] text-[var(--im-text-secondary)]">{{
                 message.content
               }}</span></template
             >
             <template v-else>
               <span
-                class="grid size-8.5 flex-none place-items-center overflow-hidden rounded-full text-xs font-bold text-white shadow-[0_6px_16px_rgba(37,52,86,0.08)]"
-                :style="{ backgroundColor: isMine(message) ? '#5b35f5' : '#8b72d6' }"
+                class="grid size-8.5 flex-none place-items-center overflow-hidden rounded-full text-xs font-bold text-white shadow-[var(--im-shadow-sm)]"
+                :style="{ backgroundColor: isMine(message) ? 'var(--im-primary)' : 'var(--im-primary-tint)' }"
                 >{{ senderName(message).slice(0, 1) }}</span
               >
               <div
@@ -413,9 +445,9 @@ watch(
                 class="flex max-w-[min(78%,560px)] flex-col gap-[7px] max-[767px]:max-w-[84%]"
               >
                 <span
-                  v-if="isRoom(conversation) && !isMine(message)"
-                  class="text-xs text-[#8b98aa]"
-                  >{{ senderName(message) }}</span
+                  v-if="isGroup(conversation) && !isMine(message)"
+                  class="text-xs text-[var(--im-text-muted)]"
+                  >{{ senderLabel(message) }}</span
                 >
                 <div
                   :class="isMine(message) ? 'flex-row-reverse' : 'flex-row'"
@@ -425,28 +457,28 @@ watch(
                 <component
                   :is="message.mediaUrl ? 'a' : 'div'"
                   v-if="displayType(message) === 'file'"
-                  class="group flex w-full max-w-[min(320px,70vw)] items-center gap-3 rounded-xl bg-white px-3.5 py-3 text-left shadow-[0_10px_28px_rgba(91,53,245,0.08)] transition-colors"
-                  :class="message.mediaUrl ? 'cursor-pointer hover:bg-[#f8f6ff]' : 'cursor-default'"
+                  class="group flex w-full max-w-[min(320px,70vw)] items-center gap-3 rounded-xl bg-[var(--im-surface)] px-3.5 py-3 text-left shadow-[var(--im-shadow-md)] transition-colors"
+                  :class="message.mediaUrl ? 'cursor-pointer hover:bg-[var(--im-primary-softer)]' : 'cursor-default'"
                   :href="message.mediaUrl || undefined"
                   :target="message.mediaUrl ? '_blank' : undefined"
                   :rel="message.mediaUrl ? 'noreferrer' : undefined"
                 >
                   <span
-                    class="grid size-11 flex-none place-items-center rounded-lg bg-[#eee9ff] text-[#5b35f5]"
+                    class="grid size-11 flex-none place-items-center rounded-lg bg-[var(--im-primary-soft)] text-[var(--im-primary)]"
                   >
                     <FileText :size="24" />
                   </span>
                   <span class="grid min-w-0 flex-1 gap-1">
-                    <strong class="truncate text-[13px] text-[#1f2937]">{{
+                    <strong class="truncate text-[var(--im-fs-13)] text-[var(--im-text-strong)]">{{
                       shortFileName(message.fileName || message.content)
                     }}</strong>
-                    <small class="truncate text-xs text-[#8a98aa]">
+                    <small class="truncate text-xs text-[var(--im-text-muted)]">
                       {{ fileSizeText(message.fileSize) || "文件" }} · {{ fileTypeText(message) }}
                     </small>
                   </span>
                   <Download
                     v-if="message.mediaUrl"
-                    class="flex-none text-[#8b72d6] transition-colors group-hover:text-[#5b35f5]"
+                    class="flex-none text-[var(--im-primary-tint)] transition-colors group-hover:text-[var(--im-primary)]"
                     :size="18"
                   />
                 </component>
@@ -468,7 +500,7 @@ watch(
                   />
                   <div
                     v-else
-                    class="grid size-32 place-items-center rounded-xl bg-[#eee9ff] text-[#8b72d6]"
+                    class="grid size-32 place-items-center rounded-xl bg-[var(--im-primary-soft)] text-[var(--im-primary-tint)]"
                   >
                     <ImageIcon :size="30" />
                   </div>
@@ -487,7 +519,7 @@ watch(
                 </div>
                 <div
                   v-else-if="displayType(message) === 'video'"
-                  class="relative max-w-[min(280px,70vw)] overflow-hidden rounded-xl bg-white shadow-[0_10px_28px_rgba(91,53,245,0.08)]"
+                  class="relative max-w-[min(280px,70vw)] overflow-hidden rounded-xl bg-[var(--im-surface)] shadow-[var(--im-shadow-md)]"
                 >
                   <video
                     v-if="message.mediaUrl"
@@ -496,10 +528,10 @@ watch(
                     controls
                     preload="metadata"
                   ></video>
-                  <div v-else class="grid h-32 w-48 place-items-center text-[#8b72d6]">
+                  <div v-else class="grid h-32 w-48 place-items-center text-[var(--im-primary-tint)]">
                     <Video :size="30" />
                   </div>
-                  <span class="block px-3 py-2 text-xs text-[#667085]">{{
+                  <span class="block px-3 py-2 text-xs text-[var(--im-text-secondary)]">{{
                     shortFileName(message.fileName)
                   }}</span>
                   <div
@@ -519,14 +551,14 @@ watch(
                   v-else
                   :class="
                     isMine(message)
-                      ? 'rounded-[14px_6px_14px_14px] bg-[#e4dcff] text-[#3c2c72]'
-                      : 'rounded-[6px_14px_14px_14px] bg-white text-[#293548]'
+                      ? 'rounded-[14px_6px_14px_14px] bg-[var(--im-primary-soft)] text-[var(--im-text-strong)]'
+                      : 'rounded-[6px_14px_14px_14px] bg-[var(--im-surface)] text-[var(--im-text)]'
                   "
-                  class="w-fit max-w-full px-4 py-3 text-[13px] leading-[1.7] shadow-[0_10px_28px_rgba(91,53,245,0.08)]"
+                  class="w-fit max-w-full px-4 py-3 text-[var(--im-fs-13)] leading-[1.7] shadow-[var(--im-shadow-md)]"
                 >
                   {{ message.content }}
                 </div>
-                <div class="flex items-center gap-1 text-[11px] text-[#9aa6b7]">
+                <div class="flex items-center gap-1 text-[var(--im-fs-11)] text-[var(--im-text-faint)]">
                   <time>{{ messageTime(message) }}</time>
                   <small v-if="shouldShowMessageStatus(message)">{{
                     messageStatusText(message)
@@ -535,7 +567,7 @@ watch(
                   </div>
                   <button
                     v-if="isMine(message) && (message.sendStatus === 'failed' || message.error)"
-                    class="grid size-4 flex-none place-items-center rounded-full bg-[#d94f61] text-[10px] font-bold text-white hover:bg-[#bf394e]"
+                    class="grid size-4 flex-none place-items-center rounded-full bg-[var(--im-danger)] text-[var(--im-fs-10)] font-bold text-white hover:bg-[var(--im-danger)]"
                     type="button"
                     aria-label="重试发送"
                     @click="$emit('retry-message', message)"
@@ -544,11 +576,11 @@ watch(
                 </div>
                 <div
                   v-if="isMine(message) && isUploadPending(message)"
-                  class="flex items-center gap-1 text-[11px] text-[#8b72d6]"
+                  class="flex items-center gap-1 text-[var(--im-fs-11)] text-[var(--im-primary-tint)]"
                 >
                   <button
                     v-if="message.uploadStage === 'uploading'"
-                    class="hover:text-[#5b35f5]"
+                    class="hover:text-[var(--im-primary)]"
                     type="button"
                     title="暂停上传"
                     @click="$emit('pause-upload', message.clientMsgId)"
@@ -557,7 +589,7 @@ watch(
                   </button>
                   <button
                     v-if="message.uploadStage === 'paused'"
-                    class="hover:text-[#5b35f5]"
+                    class="hover:text-[var(--im-primary)]"
                     type="button"
                     title="继续上传"
                     @click="$emit('resume-upload', message.clientMsgId)"
@@ -565,7 +597,7 @@ watch(
                     <Play :size="13" />
                   </button>
                   <button
-                    class="hover:text-[#dc6570]"
+                    class="hover:text-[var(--im-danger)]"
                     type="button"
                     title="取消上传"
                     @click="$emit('cancel-upload', message.clientMsgId)"
@@ -576,11 +608,12 @@ watch(
               </div>
             </template>
           </article>
+          </div>
         </div>
       </div>
 
       <footer
-        class="flex flex-none flex-col gap-2 border-t border-[#ebe7f5] bg-[#fbfaff] px-8 pb-4 pt-2.5 max-[767px]:px-3 max-[767px]:pb-3"
+        class="flex flex-none flex-col gap-2 border-t border-[var(--im-border)] bg-[var(--im-primary-softer)] px-8 pb-4 pt-2.5 max-[767px]:px-3 max-[767px]:pb-3"
       >
         <div class="mx-auto w-full max-w-260">
           <div
@@ -598,17 +631,17 @@ watch(
               @pointercancel="stopComposerResize"
             >
               <span
-                class="mx-auto block h-1 w-10 rounded-full bg-[#e5defa] transition-colors group-hover:bg-[#cfc5ff] group-active:bg-[#a493ff]"
+                class="mx-auto block h-1 w-10 rounded-full bg-[var(--im-primary-border)] transition-colors group-hover:bg-[var(--im-primary-border)] group-active:bg-[var(--im-primary-tint)]"
               ></span>
             </button>
             <div
-              class="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-[#e6e0f4] bg-white shadow-[0_8px_26px_rgba(91,53,245,0.06)]"
+              class="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-[var(--im-primary-border)] bg-[var(--im-surface)] shadow-[var(--im-shadow-md)]"
             >
               <div
-                class="flex h-11 flex-none items-center gap-1 border-b border-[#f0ecf8] px-3 pt-1 text-[#77718c]"
+                class="flex h-11 flex-none items-center gap-1 border-b border-[var(--im-border-soft)] px-3 pt-1 text-[var(--im-text-secondary)]"
               >
                 <button
-                  class="grid size-7 place-items-center rounded-lg bg-transparent transition-colors hover:bg-[#f3efff] hover:text-[#5b35f5] disabled:cursor-not-allowed disabled:opacity-40"
+                  class="grid size-7 place-items-center rounded-lg bg-transparent transition-colors hover:bg-[var(--im-primary-soft)] hover:text-[var(--im-primary)] disabled:cursor-not-allowed disabled:opacity-40"
                   type="button"
                   title="发送文件、图片或视频"
                   @click="fileInput?.click()"
@@ -620,15 +653,15 @@ watch(
                 v-model="draft"
                 rows="1"
                 placeholder="Enter 发送 · Shift + Enter 换行"
-                class="min-h-0 min-w-0 text-sm placeholder:text-sm flex-1 resize-none overflow-y-auto border-0 bg-transparent px-4 py-3 leading-6 outline-0 placeholder:text-[#b0aabd]"
+                class="min-h-0 min-w-0 text-sm placeholder:text-sm flex-1 resize-none overflow-y-auto border-0 bg-transparent px-4 py-3 leading-6 outline-0 placeholder:text-[var(--im-text-faint)]"
                 @keydown.enter="handleEnter"
               >
               </textarea>
               <div
-                class="flex h-14 flex-none items-center justify-end border-t border-[#f4f1f9] px-3"
+                class="flex h-14 flex-none items-center justify-end border-t border-[var(--im-primary-soft)] px-3"
               >
                 <button
-                  class="flex h-10 min-w-23 items-center justify-center gap-2 rounded-[10px] px-4 bg-linear-to-br from-[#7355ff] to-[#4b2bd7] text-[13px] font-bold text-white shadow-[0_10px_20px_rgba(91,53,245,0.2)] transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-[0_14px_26px_rgba(91,53,245,0.28)] disabled:cursor-not-allowed disabled:opacity-50"
+                  class="flex h-10 min-w-23 items-center justify-center gap-2 rounded-[10px] px-4 bg-linear-to-br from-[var(--im-primary)] to-[var(--im-primary-hover)] text-[var(--im-fs-13)] font-bold text-white shadow-[var(--im-shadow-md)] transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-[var(--im-shadow-md)] disabled:cursor-not-allowed disabled:opacity-50"
                   type="button"
                   title="发送消息"
                   :disabled="!draft.trim() || connection !== 'connected'"
@@ -647,13 +680,13 @@ watch(
 
     <div
       v-else
-      class="flex h-full flex-col items-center justify-center gap-3 bg-[#faf9ff] text-center text-[#8a98ac]"
+      class="flex h-full flex-col items-center justify-center gap-3 bg-[var(--im-primary-softer)] text-center text-[var(--im-text-secondary)]"
     >
-      <span class="grid size-14 place-items-center rounded-2xl bg-[#eee9ff] text-[#5b35f5]">
+      <span class="grid size-14 place-items-center rounded-2xl bg-[var(--im-primary-soft)] text-[var(--im-primary)]">
         <Send :size="28" />
       </span>
-      <h2 class="m-0 text-base font-bold text-[#475467]">选择一个会话</h2>
-      <p class="m-0 text-xs">从左侧会话列表中选择联系人或房间</p>
+      <h2 class="m-0 text-base font-bold text-[var(--im-text-secondary)]">选择一个会话</h2>
+      <p class="m-0 text-xs">从左侧会话列表中选择联系人或群聊</p>
     </div>
   </section>
 </template>

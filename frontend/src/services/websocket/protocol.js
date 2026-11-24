@@ -7,7 +7,7 @@ message WsFrame { string op = 1; bytes data = 2; }
 message EventBatch { repeated WsFrame frames = 1; string batch_id = 2; }
 message EventBatchAck { string batch_id = 1; }
 message MessageReadRequest { string message_id = 1; }
-message RoomEnterRequest { string room_id = 1; }
+message GroupEnterRequest { string group_id = 1; }
 message ConnectionVisibilityRequest { optional bool hidden = 1; }
 message MessageSendRequest {
   string client_msg_id = 1; string conversation_id = 19; int32 c_type = 4;
@@ -20,7 +20,7 @@ message MessageSendAck {
   int64 send_time = 5; string conversation_id = 6; reserved 7, 8;
   reserved "message_id", "seq", "attachment_id";
 }
-message RoomMessageNotice { string conversation_id = 1; string message_id = 2; int64 seq = 3; }
+message GroupMessageNotice { string conversation_id = 1; reserved 2; reserved "message_id"; int64 seq = 3; }
 message MessageReadNotice { string user_id = 1; string conversation_id = 2; int64 last_read_seq = 3; int32 conv_type = 4; string avatar = 6; }
 message FriendRequestNotice { string request_id = 1; string applicant_user_id = 2; string peer_user_id = 3; string message = 4; int64 apply_time = 5; }
 message ErrorNotice { string request_op = 1; string code = 2; string message = 3; }
@@ -40,10 +40,10 @@ const types = {
   connectionVisibilityRequest: root.lookupType("im.ws.ConnectionVisibilityRequest"),
   messageSendRequest: root.lookupType("im.ws.MessageSendRequest"),
   messageSendAck: root.lookupType("im.ws.MessageSendAck"),
-  roomMessageNotice: root.lookupType("im.ws.RoomMessageNotice"),
+  groupMessageNotice: root.lookupType("im.ws.GroupMessageNotice"),
   messagePush: root.lookupType("im.ws.MessagePush"),
   messageReadRequest: root.lookupType("im.ws.MessageReadRequest"),
-  roomEnterRequest: root.lookupType("im.ws.RoomEnterRequest"),
+  groupEnterRequest: root.lookupType("im.ws.GroupEnterRequest"),
   messageReadNotice: root.lookupType("im.ws.MessageReadNotice"),
   friendRequestNotice: root.lookupType("im.ws.FriendRequestNotice"),
   errorNotice: root.lookupType("im.ws.ErrorNotice"),

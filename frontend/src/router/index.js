@@ -6,7 +6,7 @@ import LoginView from "../views/LoginView.vue";
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/login", name: "login", component: LoginView, meta: { guestOnly: true } },
+    { path: "/login", name: "login", component: LoginView },
     { path: "/chat", name: "chat", component: ChatView, meta: { requiresAuth: true } },
     { path: "/", redirect: "/chat" },
     { path: "/:pathMatch(.*)*", redirect: "/chat" },
@@ -14,10 +14,11 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
+  if (to.path === "/login") return true;
+
   const authenticated = hasChatAuth() || (await ensureChatAuth());
   if (to.meta.requiresAuth && !authenticated)
     return { name: "login", query: { redirect: to.fullPath } };
-  if (to.meta.guestOnly && authenticated) return "/chat";
   return true;
 });
 

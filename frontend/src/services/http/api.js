@@ -69,7 +69,13 @@ http.interceptors.response.use(unwrapResponse, async (error) => {
   const requestConfig = error.requestConfig || error.config;
   const requestURL = requestConfig?.url || "";
   const isAuthRequest = /\/users\/(login|register|refresh)$/.test(requestURL);
-  if (status === 401 && !isAuthRequest && requestConfig && !requestConfig._retry) {
+  if (
+    status === 401 &&
+    !isAuthRequest &&
+    !requestConfig?.skipAuthRefresh &&
+    requestConfig &&
+    !requestConfig._retry
+  ) {
     requestConfig._retry = true;
     try {
       await refreshAccessToken();
@@ -101,7 +107,9 @@ export const registerUser = ({ phone, password, reconfirmPassword }) =>
     reconfirmPassword,
   });
 
-export const logoutUser = () => http.post("/users/logout");
+// 退出请求标记 skipAuthRefresh：即便返回 401 也不触发 token 刷新 / 硬跳，
+// 退出流程由前端统一处理跳转，避免拦截器与 router 跳转打架。
+export const logoutUser = () => http.post("/users/logout", null, { skipAuthRefresh: true });
 
 export { refreshAccessToken as refreshSession };
 
@@ -126,13 +134,13 @@ export const createFriendRequest = ({ peerUserId, message }) =>
 export const operateFriendRequest = ({ requestId, action }) =>
   http.post("/friend-requests/actions", { requestId, action });
 
-export const createRoom = ({ roomName, description = "", avatar = "" }) =>
-  http.post("/rooms", { roomName, description, avatar });
+export const createGroup = ({ groupName, description = "", avatar = "" }) =>
+  http.post("/groups", { groupName, description, avatar });
 
-export const getRoomInviteCode = (roomId) => http.get(`/rooms/${roomId}/invite-code`);
+export const getGroupInviteCode = (groupId) => http.get(`/groups/${groupId}/invite-code`);
 
-const roomAgentRequest = (roomId, body, signal) =>
-  fetch(`/room-agent/rooms/${encodeURIComponent(roomId)}/agent`, {
+const groupAgentRequest = (groupId, body, signal) =>
+  fetch(`/group-agent/groups/${encodeURIComponent(groupId)}/agent`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -148,12 +156,12 @@ const readErrorBody = async (response) => {
   return body.detail ?? body.message ?? `HTTP ${response.status}`;
 };
 
-/** POST 房间助手请求并按 SSE 帧顺序回调事件。 */
-export const streamRoomAgent = async (roomId, body, onEvent, signal) => {
-  let response = await roomAgentRequest(roomId, body, signal);
+/** POST 群聊助手请求并按 SSE 帧顺序回调事件。 */
+export const streamGroupAgent = async (groupId, body, onEvent, signal) => {
+  let response = await groupAgentRequest(groupId, body, signal);
   if (response.status === 401) {
     await refreshAccessToken();
-    response = await roomAgentRequest(roomId, body, signal);
+    response = await groupAgentRequest(groupId, body, signal);
   }
   if (!response.ok) throw new Error(await readErrorBody(response));
   if (!response.body) throw new Error("浏览器未提供 SSE 响应流");
@@ -185,7 +193,7 @@ export const streamRoomAgent = async (roomId, body, onEvent, signal) => {
   }
 };
 
-export const joinRoom = (inviteCode) => http.post("/rooms/join", { inviteCode });
+export const joinGroup = (inviteCode) => http.post("/groups/join", { inviteCode });
 
 export const getConversations = () => http.get("/conversations");
 
@@ -205,18 +213,21 @@ export const getOfflineMessages = ({ conversationId, afterSeq = 0, snapshotSeq, 
     params: { conversationId, afterSeq, snapshotSeq, limit },
   });
 
-export const initFileUpload = (payload) => http.post("/files/uploads/init", payload);
+// 分片规格协商（OpenIM PartLimit / PartSize）：先问规格，再算分片
+export const getPartLimit = () => http.get("/files/uploads/part-limit");
 
-export const uploadDirectObjectToStorage = (url, file, signal) =>
-  axios.put(url, file, {
-    headers: { "Content-Type": file.type || "application/octet-stream" },
-    signal,
-  });
+export const getPartSize = (size) => http.post("/files/uploads/part-size", { size });
 
-export const completeFileUpload = (uploadId) => http.post(`/files/uploads/${uploadId}/complete`);
+// payload: { name, fileName, contentType, size, fileHash, partSize }
+// name 必须以当前 userID 为前缀，如 `${userID}/${uuid}${ext}`
+export const initFileUpload = (payload) => http.post("/files/uploads/initiate-multipart", payload);
+
+// parts: [{ partNumber, etag }]，每片 PUT 成功后从响应头 ETag 收集
+export const completeFileUpload = (uploadId, parts = []) =>
+  http.post(`/files/uploads/${uploadId}/complete-multipart`, { parts });
 
 export const presignMultipartParts = (uploadId, partNumbers) =>
-  http.post(`/files/uploads/${uploadId}/parts/presign`, { partNumbers });
+  http.post(`/files/uploads/${uploadId}/parts/auth-sign`, { partNumbers });
 
 export const uploadMultipartPartToStorage = (url, chunk, signal) =>
   axios.put(url, chunk, {
@@ -225,7 +236,7 @@ export const uploadMultipartPartToStorage = (url, chunk, signal) =>
   });
 
 export const getAttachmentAccessURLs = (attachmentIds = []) =>
-  http.post("/files/attachments/access-urls", {
+  http.post("/files/attachments/access-url", {
     attachmentIds,
   });
 

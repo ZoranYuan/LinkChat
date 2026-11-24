@@ -16,10 +16,10 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
-      "/room-agent": {
+      "/group-agent": {
         target: "http://dl_container:8000",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/room-agent/, "/api/v1"),
+        rewrite: (path) => path.replace(/^\/group-agent/, "/api/v1"),
       },
     },
   },

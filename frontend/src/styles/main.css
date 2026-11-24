@@ -1,7 +1,125 @@
 @import "tailwindcss";
 
+/* ============================================================
+   LinkChat 语义主题变量
+   - 默认（:root）= 浅色 · 紫色精炼
+   - [data-theme="dark"] = 深色专业（同套紫色语义，反相适配）
+   组件统一引用变量，切换 data-theme 即整站换肤。
+   ============================================================ */
 :root {
   color-scheme: light;
+
+  /* ============================================================
+     字号体系（全局可调）
+     - --im-font-scale 是总缩放因子，由设置切换（见 useFontScale）
+     - 所有 --im-fs-* 都是它的派生值，组件统一引用，改一处全站生效
+     - 同时覆盖 Tailwind 内置 --text-*，让 text-xs/text-sm 等也跟随
+     ============================================================ */
+  --im-font-scale: 1;
+
+  --im-fs-9: calc(9px * var(--im-font-scale));
+  --im-fs-10: calc(10px * var(--im-font-scale));
+  --im-fs-11: calc(11px * var(--im-font-scale));
+  --im-fs-12: calc(12px * var(--im-font-scale));
+  --im-fs-13: calc(13px * var(--im-font-scale));
+  --im-fs-14: calc(14px * var(--im-font-scale));
+  --im-fs-15: calc(15px * var(--im-font-scale));
+  --im-fs-16: calc(16px * var(--im-font-scale));
+  --im-fs-17: calc(17px * var(--im-font-scale));
+  --im-fs-18: calc(18px * var(--im-font-scale));
+  --im-fs-19: calc(19px * var(--im-font-scale));
+  --im-fs-20: calc(20px * var(--im-font-scale));
+  --im-fs-22: calc(22px * var(--im-font-scale));
+  --im-fs-24: calc(24px * var(--im-font-scale));
+  --im-fs-29: calc(29px * var(--im-font-scale));
+
+  /* 覆盖 Tailwind v4 内置字号 token（保留其自带行高） */
+  --text-xs: var(--im-fs-12);
+  --text-sm: var(--im-fs-14);
+  --text-base: var(--im-fs-16);
+  --text-lg: var(--im-fs-18);
+  --text-xl: var(--im-fs-20);
+  --text-2xl: var(--im-fs-24);
+  --text-3xl: var(--im-fs-29);
+
+  /* 主色系：单一强调色，去掉多重渐变 */
+  --im-primary: #5b35f5;
+  --im-primary-hover: #4a29e5;
+  --im-primary-soft: #f1edfe;     /* 主色浅底：激活项/hover */
+  --im-primary-softer: #f8f6ff;   /* 更浅：次级 hover */
+  --im-primary-border: #cfc5ff;   /* 主色边框/focus ring */
+  --im-primary-tint: #8b72d6;     /* 主色中间调（头像/次要按钮） */
+  --im-on-primary: #ffffff;       /* 主色上的文字 */
+
+  /* 页面与表面 */
+  --im-page: #f3f1fb;             /* 全局背景 */
+  --im-surface: #ffffff;          /* 卡片/面板 */
+  --im-surface-subtle: #fcfbff;   /* 聊天区等微差异背景 */
+  --im-surface-muted: #f8f8fb;    /* 搜索框/输入框底 */
+  --im-hover: #f8f7ff;            /* 通用 hover 底 */
+
+  /* 文字 */
+  --im-text: #17122c;             /* 主文字 */
+  --im-text-strong: #241b43;      /* 标题 */
+  --im-text-secondary: #667085;   /* 次级文字 */
+  --im-text-muted: #9893a6;       /* 弱化文字 */
+  --im-text-faint: #aaa6b5;       /* 更弱/占位 */
+  --im-text-on-surface: #202033;  /* 面板内文字 */
+
+  /* 边框 */
+  --im-border: #ebe9f7;
+  --im-border-strong: #e9e5f2;
+  --im-border-soft: #eeeaf7;
+
+  /* 语义色 */
+  --im-danger: #c34d65;
+  --im-danger-soft: #fff0f3;
+  --im-success: #62c894;
+  --im-success-soft: #edf8f2;
+
+  /* 阴影（收敛为统一的两档，去掉厚重渐变阴影） */
+  --im-shadow-sm: 0 2px 8px rgba(27, 18, 44, 0.06);
+  --im-shadow-md: 0 8px 24px rgba(91, 53, 245, 0.12);
+  --im-shadow-focus: 0 0 0 3px rgba(91, 53, 245, 0.12);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* 主色在深色下仍保持足够饱和，保证按钮上的白字可读 */
+  --im-primary: #7c5cfa;
+  --im-primary-hover: #6d4aff;
+  --im-primary-soft: #2a2340;
+  --im-primary-softer: #221d33;
+  --im-primary-border: #4a3d78;
+  --im-primary-tint: #8b72d6;
+  --im-on-primary: #ffffff;
+
+  --im-page: #14111f;
+  --im-surface: #1e1a2e;
+  --im-surface-subtle: #191528;
+  --im-surface-muted: #262139;
+  --im-hover: #2a2340;
+
+  --im-text: #ece8f5;
+  --im-text-strong: #faf8ff;
+  --im-text-secondary: #b9b2cc;
+  --im-text-muted: #948da8;
+  --im-text-faint: #7c7590;
+  --im-text-on-surface: #ece8f5;
+
+  --im-border: #312a45;
+  --im-border-strong: #393152;
+  --im-border-soft: #2b2440;
+
+  --im-danger: #f09595;
+  --im-danger-soft: #3a2226;
+  --im-success: #5dcaa5;
+  --im-success-soft: #1b3329;
+
+  --im-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --im-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --im-shadow-focus: 0 0 0 3px rgba(164, 147, 255, 0.2);
 }
 
 html,
@@ -12,17 +130,19 @@ body,
 }
 
 html {
-  background: #f3f1fb;
+  background: var(--im-page);
 }
 
 body {
   min-width: 320px;
   margin: 0;
   overflow-x: hidden;
-  background: #f3f1fb;
-  color: #17122c;
+  background: var(--im-page);
+  color: var(--im-text);
   font-family: "Aptos", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: var(--im-fs-13);
   text-rendering: optimizeLegibility;
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 button,
@@ -56,7 +176,7 @@ img {
 
 ::-webkit-scrollbar-thumb {
   border-radius: 8px;
-  background: #d9d6e5;
+  background: var(--im-border-strong);
 }
 
 /* The main workspace stays intentionally simple: navigation, conversations, chat. */
@@ -85,7 +205,7 @@ img {
   min-width: 0;
 }
 
-.room-side-panel-shell {
+.group-side-panel-shell {
   position: relative;
   display: flex;
   flex: 0 0 340px;
@@ -93,8 +213,8 @@ img {
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  border-left: 1px solid #ebe9f7;
-  background: white;
+  border-left: 1px solid var(--im-border);
+  background: var(--im-surface);
 }
 
 .details-panel {
@@ -103,31 +223,41 @@ img {
   min-width: 0;
 }
 
-.room-assistant-panel {
+.group-assistant-panel {
   flex: 1 1 auto;
   width: 100%;
 }
 
-.room-side-panel-enter-active,
-.room-side-panel-leave-active {
+.group-side-panel-enter-active,
+.group-side-panel-leave-active {
   transition: opacity 160ms ease, transform 180ms ease;
 }
 
-.room-side-panel-enter-from,
-.room-side-panel-leave-to {
+.group-side-panel-enter-from,
+.group-side-panel-leave-to {
   opacity: 0;
   transform: translateX(12px);
 }
 
-.room-side-panel-content-enter-active,
-.room-side-panel-content-leave-active {
+.group-side-panel-content-enter-active,
+.group-side-panel-content-leave-active {
   transition: opacity 140ms ease, transform 160ms ease;
 }
 
-.room-side-panel-content-enter-from,
-.room-side-panel-content-leave-to {
+.group-side-panel-content-enter-from,
+.group-side-panel-content-leave-to {
   opacity: 0;
   transform: translateX(8px);
+}
+
+.workspace-loading-enter-active,
+.workspace-loading-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.workspace-loading-enter-from,
+.workspace-loading-leave-to {
+  opacity: 0;
 }
 
 @media (max-width: 1023px) {
@@ -167,7 +297,7 @@ img {
     width: 100%;
   }
 
-  .room-side-panel-shell {
+  .group-side-panel-shell {
     position: static;
     display: block;
     width: 0;
@@ -178,12 +308,12 @@ img {
     background: transparent;
   }
 
-  .room-side-panel-enter-from,
-  .room-side-panel-leave-to {
+  .group-side-panel-enter-from,
+  .group-side-panel-leave-to {
     transform: none;
   }
 
-  .room-assistant-panel {
+  .group-assistant-panel {
     flex: 0 0 auto;
     width: 100%;
     border-left: 0;

@@ -1,12 +1,13 @@
 import { decodeFrame, decodePayload, encodeFrame } from "./protocol.js";
 
+// WS 帧 op 与后端 eventport.TypeXxx 一一对应，统一 ws: 前缀。
 const payloadTypes = {
-  message_push: "messagePush",
-  message_send_ack: "messageSendAck",
-  message_read_notice: "messageReadNotice",
-  room_message_notice: "roomMessageNotice",
-  friend_request_notice: "friendRequestNotice",
-  error_notice: "errorNotice",
+  "ws:message_push": "messagePush",
+  "ws:message_send_ack": "messageSendAck",
+  "ws:message_read_notice": "messageReadNotice",
+  "ws:group_message_notice": "groupMessageNotice",
+  "ws:friend_request_notice": "friendRequestNotice",
+  "ws:error_notice": "errorNotice",
 };
 
 const DEVICE_ID_KEY = "im_device_id";
@@ -83,7 +84,7 @@ export function createWsClient(callbacks = {}) {
     return `${protocol}//${window.location.host}/api/v1/ws?${params.toString()}`;
   };
 
-  /** 解码单个业务帧，并分发给消息推送、已读或大型房间通知回调。 */
+  /** 解码单个业务帧，并分发给消息推送、已读或大型群聊通知回调。 */
   const dispatchApplicationFrame = (frame) => {
     const payloadType = payloadTypes[frame.op];
     if (!payloadType) {
@@ -93,17 +94,17 @@ export function createWsClient(callbacks = {}) {
     const payload = decodePayload(payloadType, frame.data);
 
     switch (frame.op) {
-      case "message_push":
+      case "ws:message_push":
         return callbacks.onMessagePush(payload);
-      case "message_send_ack":
+      case "ws:message_send_ack":
         return callbacks.onMessageSendAck?.(payload);
-      case "message_read_notice":
+      case "ws:message_read_notice":
         return callbacks.onMessageReadNotice(payload);
-      case "room_message_notice":
-        return callbacks.onRoomMessageNotice(payload);
-      case "friend_request_notice":
+      case "ws:group_message_notice":
+        return callbacks.onGroupMessageNotice(payload);
+      case "ws:friend_request_notice":
         return callbacks.onFriendRequestNotice(payload);
-      case "error_notice":
+      case "ws:error_notice":
         return callbacks.onErrorNotice(payload);
     }
   };
@@ -114,7 +115,7 @@ export function createWsClient(callbacks = {}) {
 
     try {
       const frame = decodeFrame(event.data);
-      if (frame.op !== "event_batch") {
+      if (frame.op !== "ws:event_batch") {
         throw new Error(`未知的 WebSocket 帧：${frame.op}`);
       }
 
@@ -141,7 +142,7 @@ export function createWsClient(callbacks = {}) {
           currentSocket.readyState === WebSocket.OPEN
         ) {
           currentSocket.send(
-            encodeFrame("event_batch_ack", "eventBatchAck", {
+            encodeFrame("ws:event_batch_ack", "eventBatchAck", {
               batchId: batch.batchId,
             }),
           );
@@ -193,7 +194,7 @@ export function createWsClient(callbacks = {}) {
   };
 
   const reportPageVisibility = () =>
-    send("connection_visibility", "connectionVisibilityRequest", { hidden: !isPageVisible() });
+    send("ws:connection_visibility", "connectionVisibilityRequest", { hidden: !isPageVisible() });
 
   const handleVisibilityChange = () => {
     if (!isPageVisible()) {
@@ -289,8 +290,8 @@ export function createWsClient(callbacks = {}) {
     reconnect,
     isConnected: () => socket?.readyState === WebSocket.OPEN,
     isConnecting: () => socket?.readyState === WebSocket.CONNECTING,
-    sendMessage: (payload) => send("message_send", "messageSendRequest", payload),
-    sendMessageRead: (payload) => send("message_read", "messageReadRequest", payload),
-    sendRoomEnter: (payload) => send("room_enter", "roomEnterRequest", payload),
+    sendMessage: (payload) => send("ws:message_send", "messageSendRequest", payload),
+    sendMessageRead: (payload) => send("ws:message_read", "messageReadRequest", payload),
+    sendGroupEnter: (payload) => send("ws:group_enter", "groupEnterRequest", payload),
   };
 }

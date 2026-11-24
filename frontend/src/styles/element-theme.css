@@ -1,0 +1,51 @@
+/* Element Plus 组件主题适配：映射到 LinkChat 的语义变量，切换主题时同步变色 */
+:root {
+  --el-color-primary: var(--im-primary);
+  --el-color-primary-light-3: var(--im-primary-tint);
+  --el-color-primary-light-5: var(--im-primary-tint);
+  --el-color-primary-light-7: var(--im-primary-border);
+  --el-color-primary-light-8: var(--im-primary-border);
+  --el-color-primary-light-9: var(--im-primary-soft);
+  --el-color-primary-dark-2: var(--im-primary-hover);
+  --el-text-color-primary: var(--im-text);
+  --el-text-color-regular: var(--im-text-secondary);
+  --el-border-color: var(--im-border-strong);
+  --el-border-color-light: var(--im-border);
+  --el-fill-color-blank: var(--im-surface);
+}
+
+/* 字号设置滑块：轨道与刻度更贴合整体风格 */
+.font-size-slider.el-slider {
+  --el-slider-main-bg-color: var(--im-primary);
+  --el-slider-runway-bg-color: var(--im-border-strong);
+  --el-slider-stop-bg-color: var(--im-primary-tint);
+  --el-slider-button-wrapper-color: var(--im-surface);
+  --el-slider-button-color: var(--im-primary);
+  width: 100%;
+  margin: 0;
+  padding: 0 6px;
+}
+
+.font-size-slider .el-slider__marks-text {
+  color: var(--im-text-muted);
+  font-size: var(--im-fs-10);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   动态效果：消息入场 + 导航指示条 + 交互反馈
+   ============================================================ */
+
+/* 消息列表不做入场动画：TransitionGroup 的 FLIP 会克隆 display:none 占位节点，
+   反复增删改变 flex 高度，触发自动滚动跳动（表现为闪烁）。
+   本项目消息只追加、无删除/重排，静态渲染最稳；动画保留在导航指示条与 hover 反馈上。 */
+
+/* 尊重系统「减少动态效果」：禁用装饰性过渡 */
+@media (prefers-reduced-motion: reduce) {
+  .font-size-slider,
+  [class*="-enter-active"],
+  [class*="-leave-active"] {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
